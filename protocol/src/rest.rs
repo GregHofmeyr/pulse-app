@@ -3230,6 +3230,11 @@ pub struct Build {
     pub last_reply_id: Option<MessageId>,
     /// Per caller: the newest comment you have seen (gateway events carry `None`).
     pub replies_seen: Option<MessageId>,
+    /// Per caller: you starred it (#617; favourites are each person's own). Gateway events carry `false`; absent from
+    /// older servers (optional in TypeScript: absent reads as not starred).
+    #[serde(default)]
+    #[ts(as = "Option<bool>", optional)]
+    pub favourite: bool,
 }
 
 /// A build's link, with what the server fetched of its page (absent until it lands, or when it couldn't be fetched).
@@ -3313,6 +3318,37 @@ pub struct BulkArchiveRequest {
     pub before: String,
     #[serde(default)]
     pub dry_run: bool,
+}
+
+/// `POST /channels/{id}/builds/archive-many`: archive (or restore) these builds of the channel, at most 100. Each is
+/// done only if the caller may archive it (its author, or the server's owner); the rest are skipped.
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+pub struct ArchiveBuildsRequest {
+    pub message_ids: Vec<MessageId>,
+    pub archived: bool,
+}
+
+/// `POST /channels/{id}/builds/delete-many`: delete these builds of the channel for good, at most 100, each only if
+/// the caller may (its author, or the server's owner); the rest are skipped.
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+pub struct DeleteBuildsRequest {
+    pub message_ids: Vec<MessageId>,
+}
+
+/// `POST /channels/{id}/builds/favourite-many`: star (or unstar) these builds of the channel for yourself, at most
+/// 100; any that aren't live builds of the channel are skipped.
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+pub struct FavouriteBuildsRequest {
+    pub message_ids: Vec<MessageId>,
+    pub favourite: bool,
+}
+
+/// What a batch over a channel's builds did: `done` were changed (or already as asked), `skipped` weren't (not in the
+/// channel, gone, or not the caller's to change).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct BuildsBatchResult {
+    pub done: u32,
+    pub skipped: u32,
 }
 
 /// What a bulk archive matched (newest first) and, unless a dry run, how many it archived.

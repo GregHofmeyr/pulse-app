@@ -93,7 +93,7 @@
 
 <div bind:this={el} {id} class="build-peek pop-in" class:menu-surface={!docked} class:docked role="dialog" tabindex="-1" aria-label={`Peek: ${b.title}`} style={place} use:float={!docked}
   onmouseenter={onEnter} onmouseleave={onLeave}>
-  {#if game}<span class="caption">{game}</span>{/if}
+  {#if game}<span class="caption">{game}{#if b.game_guessed}<span class="auto-picked">{' · auto picked'}</span>{/if}</span>{/if}
   <span class="title">{b.title}</span>
   {#if isArchived(message)}<span class="badge">ARCHIVED</span>{/if}
   {#if notes}<p class="notes">{notes}</p>{/if}

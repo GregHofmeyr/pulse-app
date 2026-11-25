@@ -5,10 +5,11 @@
 
 pub mod archive;
 pub mod compat;
+pub mod favourites;
 pub mod routes;
 pub mod unfurl;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use pulse_protocol::ids::{GameId, MessageId, ServerId, UserId};
 use pulse_protocol::rest::{Build, BuildLink, EmbedProvider, EmbedThumb, Message, build_limits};
@@ -57,6 +58,7 @@ impl BuildRow {
     fn into_build(
         self,
         thread: Option<crate::messages::threads::ThreadSummary>,
+        favourite: bool,
     ) -> AppResult<Build> {
         let parse_game = |g: Option<String>| -> AppResult<Option<GameId>> {
             Ok(g.map(|g| g.parse())
@@ -98,6 +100,7 @@ impl BuildRow {
             reply_count: thread.as_ref().map_or(0, |t| t.reply_count),
             last_reply_id: thread.as_ref().and_then(|t| t.last_reply_id),
             replies_seen: thread.and_then(|t| t.replies_seen),
+            favourite,
         })
     }
 }
@@ -127,11 +130,16 @@ pub async fn attach(db: &SqlitePool, me: Option<UserId>, msgs: &mut [Message]) -
     }
     let build_ids: Vec<String> = rows.iter().map(|r| r.message_id.clone()).collect();
     let mut threads = crate::messages::threads::summaries(db, me, &build_ids).await?;
+    let starred = match me {
+        Some(me) => favourites::starred(db, me, &build_ids).await?,
+        None => HashSet::new(),
+    };
     let mut by_msg: HashMap<String, Build> = HashMap::new();
     for row in rows {
         let id = row.message_id.clone();
         let t = threads.remove(&id);
-        by_msg.insert(id, row.into_build(t)?);
+        let fav = starred.contains(&id);
+        by_msg.insert(id, row.into_build(t, fav)?);
     }
     for m in msgs.iter_mut().filter(|m| !m.deleted) {
         m.build = by_msg.remove(&m.id.to_string()).map(Box::new);

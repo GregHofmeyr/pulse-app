@@ -14,7 +14,7 @@ import type { Gif } from './protocol/Gif'
 import type { ServerLayout } from './protocol/ServerLayout'
 import type { ClipFacets } from './protocol/ClipFacets'
 import type { BuildFacets } from './protocol/BuildFacets'
-import { buildsOnEvent, type BuildFeed } from './builds'
+import { buildsOnEvent, withMyBuildView, type BuildFeed } from './builds'
 import type { ClipView } from './protocol/ClipView'
 import type { CustomEmoji } from './protocol/CustomEmoji'
 import type { Sound } from './protocol/Sound'
@@ -1099,9 +1099,10 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
       // Like the loaded copy (upsertEdited): the edit's reactions say me:false for everyone.
       const latest = prev?.id === m.id ? { ...s.latest, [c]: { ...m, reactions: prev.reactions } } : s.latest
       // A QotY option's copy follows the edit too, loaded or not.
-      const follow = (old: Message) => withMyQuoteState({ ...m, reactions: old.reactions }, old, s.me?.id)
+      // A build's copy keeps your star and seen point (#617), which the event's never carries.
+      const follow = (old: Message) => withMyBuildView(withMyQuoteState({ ...m, reactions: old.reactions }, old, s.me?.id), old)
       // The pins popover's copy too (#178), with the pin it was listed with.
-      const listed = (list: PinnedMessage[]) => list.map((x) => (x.message.id === m.id ? { ...x, message: { ...m, pin: x.pin } } : x))
+      const listed = (list: PinnedMessage[]) => list.map((x) => (x.message.id === m.id ? { ...x, message: withMyBuildView({ ...m, pin: x.pin }, x.message) } : x))
       const q = mapPins(mapOpenRoot(mapQotyMessages(s, m.id, follow), m.id, follow), c, listed)
       if (m.clip) return clipUpdated(q, m)
       if (m.build) return buildsOnEvent(q, { t: 'MessageUpdated', d: { message: m } })
@@ -1162,6 +1163,12 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
     case 'BuildsArchived': {
       const { message_ids: ids, archived_at, archived_by } = e.d
       const open = s.openRoot && ids.includes(s.openRoot.id) && s.openRoot.build ? { ...s.openRoot, build: { ...s.openRoot.build, archived_at, archived_by } } : s.openRoot
+      return buildsOnEvent(open === s.openRoot ? s : { ...s, openRoot: open }, e)
+    }
+    // Your star on builds (#617): their copies in the feeds, and an open build page's.
+    case 'BuildFavouriteChanged': {
+      const { message_ids: ids, favourite } = e.d
+      const open = s.openRoot && ids.includes(s.openRoot.id) && s.openRoot.build ? { ...s.openRoot, build: { ...s.openRoot.build, favourite } } : s.openRoot
       return buildsOnEvent(open === s.openRoot ? s : { ...s, openRoot: open }, e)
     }
     // Toasts and the [NEW] count live outside the reducer.

@@ -6,7 +6,8 @@ use std::time::{Duration, Instant};
 
 use pulse_protocol::ids::{AttachmentId, ChannelId, GameId, MessageId};
 use pulse_protocol::rest::{
-    BuildFacets, BulkArchiveRequest, BulkArchiveResult, CreateBuildRequest, Message,
+    ArchiveBuildsRequest, BuildFacets, BuildsBatchResult, BulkArchiveRequest, BulkArchiveResult,
+    CreateBuildRequest, DeleteBuildsRequest, FavouriteBuildsRequest, Message,
     SetBuildArchivedRequest, UpdateBuildRequest,
 };
 use tauri::{AppHandle, Emitter, State};
@@ -18,13 +19,16 @@ use crate::commands::Core;
 
 impl Api {
     /// A page of a builds channel's builds (30), newest first by when they were saved; `before` pages back. Archived
-    /// ones only with `archived`; `game` narrows to one game, `q` to builds with those words.
+    /// ones only with `archived`; `game` narrows to one game, `favourite` to your starred ones, `q` to builds with those
+    /// words.
+    #[allow(clippy::too_many_arguments)]
     pub async fn list_builds(
         &self,
         token: &str,
         channel: ChannelId,
         game: Option<GameId>,
         archived: bool,
+        favourite: bool,
         q: Option<&str>,
         before: Option<MessageId>,
     ) -> Result<Vec<Message>, ApiError> {
@@ -37,6 +41,9 @@ impl Api {
         }
         if archived {
             req = req.query(&[("archived", "true")]);
+        }
+        if favourite {
+            req = req.query(&[("favourite", "true")]);
         }
         if let Some(q) = q.map(str::trim).filter(|q| !q.is_empty()) {
             req = req.query(&[("q", q)]);
@@ -138,6 +145,77 @@ impl Api {
         Self::clip_parse(
             self.http
                 .post(self.url(&["channels", &channel.to_string(), "builds", "archive"])?)
+                .bearer_auth(token)
+                .json(body)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// Archives (or restores) up to 100 of a channel's builds in one go; the ones the caller may not change are
+    /// skipped (multi-select).
+    pub async fn archive_many_builds(
+        &self,
+        token: &str,
+        channel: ChannelId,
+        body: &ArchiveBuildsRequest,
+    ) -> Result<BuildsBatchResult, ApiError> {
+        Self::clip_parse(
+            self.http
+                .post(self.url(&["channels", &channel.to_string(), "builds", "archive-many"])?)
+                .bearer_auth(token)
+                .json(body)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// Deletes up to 100 of a channel's builds in one go; the ones the caller may not delete are skipped.
+    pub async fn delete_many_builds(
+        &self,
+        token: &str,
+        channel: ChannelId,
+        body: &DeleteBuildsRequest,
+    ) -> Result<BuildsBatchResult, ApiError> {
+        Self::clip_parse(
+            self.http
+                .post(self.url(&["channels", &channel.to_string(), "builds", "delete-many"])?)
+                .bearer_auth(token)
+                .json(body)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// Stars (or unstars) a build for the caller (#617: favourites are each person's own).
+    pub async fn set_build_favourite(
+        &self,
+        token: &str,
+        id: MessageId,
+        favourite: bool,
+    ) -> Result<(), ApiError> {
+        let url = self.url(&["builds", &id.to_string(), "favourite"])?;
+        let req = if favourite {
+            self.http.put(url)
+        } else {
+            self.http.delete(url)
+        };
+        Self::clip_ok_empty(req.bearer_auth(token).send().await).await
+    }
+
+    /// Stars (or unstars) up to 100 of a channel's builds for the caller.
+    pub async fn favourite_many_builds(
+        &self,
+        token: &str,
+        channel: ChannelId,
+        body: &FavouriteBuildsRequest,
+    ) -> Result<BuildsBatchResult, ApiError> {
+        Self::clip_parse(
+            self.http
+                .post(self.url(&["channels", &channel.to_string(), "builds", "favourite-many"])?)
                 .bearer_auth(token)
                 .json(body)
                 .send()
@@ -415,21 +493,33 @@ pub async fn cancel_build_save(core: State<'_, Core>, nonce: String) -> Result<(
     Ok(())
 }
 
+/// `favourite` (only your starred builds) may be absent: not starred-only.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn list_builds(
     app: AppHandle,
     core: State<'_, Core>,
     channel_id: ChannelId,
     game: Option<GameId>,
     archived: bool,
+    favourite: Option<bool>,
     q: Option<String>,
     before: Option<MessageId>,
 ) -> Result<Vec<Message>, ApiError> {
     let (api, token) = core.current()?;
+    let favourite = favourite.unwrap_or(false);
     core.check(
         &app,
-        api.list_builds(&token, channel_id, game, archived, q.as_deref(), before)
-            .await,
+        api.list_builds(
+            &token,
+            channel_id,
+            game,
+            archived,
+            favourite,
+            q.as_deref(),
+            before,
+        )
+        .await,
     )
 }
 
@@ -479,6 +569,62 @@ pub async fn bulk_archive_builds(
     core.check(
         &app,
         api.bulk_archive_builds(&token, channel_id, &body).await,
+    )
+}
+
+#[tauri::command]
+pub async fn archive_many_builds(
+    app: AppHandle,
+    core: State<'_, Core>,
+    channel_id: ChannelId,
+    body: ArchiveBuildsRequest,
+) -> Result<BuildsBatchResult, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(
+        &app,
+        api.archive_many_builds(&token, channel_id, &body).await,
+    )
+}
+
+#[tauri::command]
+pub async fn delete_many_builds(
+    app: AppHandle,
+    core: State<'_, Core>,
+    channel_id: ChannelId,
+    body: DeleteBuildsRequest,
+) -> Result<BuildsBatchResult, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(
+        &app,
+        api.delete_many_builds(&token, channel_id, &body).await,
+    )
+}
+
+#[tauri::command]
+pub async fn set_build_favourite(
+    app: AppHandle,
+    core: State<'_, Core>,
+    message_id: MessageId,
+    favourite: bool,
+) -> Result<(), ApiError> {
+    let (api, token) = core.current()?;
+    core.check(
+        &app,
+        api.set_build_favourite(&token, message_id, favourite).await,
+    )
+}
+
+#[tauri::command]
+pub async fn favourite_many_builds(
+    app: AppHandle,
+    core: State<'_, Core>,
+    channel_id: ChannelId,
+    body: FavouriteBuildsRequest,
+) -> Result<BuildsBatchResult, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(
+        &app,
+        api.favourite_many_builds(&token, channel_id, &body).await,
     )
 }
 
@@ -575,7 +721,15 @@ mod tests {
         let (api, seen) = capture("[]").await;
         let (ch, game, before) = (ChannelId::new(), GameId::new(), MessageId::new());
         let got = api
-            .list_builds("t", ch, Some(game), true, Some("raven build"), Some(before))
+            .list_builds(
+                "t",
+                ch,
+                Some(game),
+                true,
+                true,
+                Some("raven build"),
+                Some(before),
+            )
             .await
             .unwrap();
         assert!(got.is_empty());
@@ -588,6 +742,7 @@ mod tests {
         assert!(line.contains(&format!("game={game}")), "{line}");
         assert!(line.contains("archived=true"), "{line}");
         assert!(line.contains("q=raven+build"), "{line}");
+        assert!(line.contains("favourite=true"), "{line}");
         assert!(line.contains(&format!("before={before}")), "{line}");
     }
 
@@ -595,7 +750,7 @@ mod tests {
     async fn list_builds_without_filters_sends_none() {
         let (api, seen) = capture("[]").await;
         let ch = ChannelId::new();
-        api.list_builds("t", ch, None, false, None, None)
+        api.list_builds("t", ch, None, false, false, None, None)
             .await
             .unwrap();
         let req = first(&seen);
@@ -627,6 +782,91 @@ mod tests {
         assert_eq!(json["game_id"], game.to_string());
         assert_eq!(json["before"], "2026-10-25T00:00:00Z");
         assert_eq!(json["dry_run"], true);
+    }
+
+    #[tokio::test]
+    async fn archive_many_posts_its_ids() {
+        let (api, seen) = capture(r#"{"done":1,"skipped":1}"#).await;
+        let (ch, a, b) = (ChannelId::new(), MessageId::new(), MessageId::new());
+        let body = ArchiveBuildsRequest {
+            message_ids: vec![a, b],
+            archived: true,
+        };
+        let got = api.archive_many_builds("t", ch, &body).await.unwrap();
+        assert_eq!(
+            got,
+            BuildsBatchResult {
+                done: 1,
+                skipped: 1
+            }
+        );
+        let req = first(&seen);
+        assert!(
+            req.starts_with(&format!("POST /channels/{ch}/builds/archive-many ")),
+            "{req}"
+        );
+        let json: serde_json::Value =
+            serde_json::from_str(req.split("\r\n\r\n").nth(1).unwrap()).unwrap();
+        assert_eq!(
+            json["message_ids"],
+            serde_json::json!([a.to_string(), b.to_string()])
+        );
+        assert_eq!(json["archived"], true);
+    }
+
+    #[tokio::test]
+    async fn delete_many_posts_its_ids() {
+        let (api, seen) = capture(r#"{"done":1,"skipped":0}"#).await;
+        let (ch, a) = (ChannelId::new(), MessageId::new());
+        let body = DeleteBuildsRequest {
+            message_ids: vec![a],
+        };
+        let got = api.delete_many_builds("t", ch, &body).await.unwrap();
+        assert_eq!(got.done, 1);
+        let req = first(&seen);
+        assert!(
+            req.starts_with(&format!("POST /channels/{ch}/builds/delete-many ")),
+            "{req}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_star_is_a_put_and_unstarring_a_delete() {
+        let (api, seen) = capture("").await;
+        let id = MessageId::new();
+        api.set_build_favourite("t", id, true).await.unwrap();
+        api.set_build_favourite("t", id, false).await.unwrap();
+        let seen = seen.lock().unwrap().clone();
+        assert!(
+            seen[0].starts_with(&format!("PUT /builds/{id}/favourite ")),
+            "{}",
+            seen[0]
+        );
+        assert!(
+            seen[1].starts_with(&format!("DELETE /builds/{id}/favourite ")),
+            "{}",
+            seen[1]
+        );
+    }
+
+    #[tokio::test]
+    async fn favourite_many_posts_its_ids() {
+        let (api, seen) = capture(r#"{"done":1,"skipped":0}"#).await;
+        let (ch, a) = (ChannelId::new(), MessageId::new());
+        let body = FavouriteBuildsRequest {
+            message_ids: vec![a],
+            favourite: true,
+        };
+        let got = api.favourite_many_builds("t", ch, &body).await.unwrap();
+        assert_eq!(got.done, 1);
+        let req = first(&seen);
+        assert!(
+            req.starts_with(&format!("POST /channels/{ch}/builds/favourite-many ")),
+            "{req}"
+        );
+        let json: serde_json::Value =
+            serde_json::from_str(req.split("\r\n\r\n").nth(1).unwrap()).unwrap();
+        assert_eq!(json["favourite"], true);
     }
 
     #[tokio::test]

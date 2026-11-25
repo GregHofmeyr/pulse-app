@@ -30,6 +30,7 @@ pub fn router() -> Router<AppState> {
             get(get_one).put(edit).delete(super::archive::remove),
         )
         .merge(super::archive::router())
+        .merge(super::favourites::router())
 }
 
 pub(crate) fn bad(msg: &str) -> AppError {
@@ -254,6 +255,9 @@ struct ListQuery {
     archived: bool,
     /// Words to find in a build's title, game, link title or notes.
     q: Option<String>,
+    /// Only the builds you have starred (#617).
+    #[serde(default)]
+    favourite: bool,
 }
 
 /// The search index's query for `q`'s words (`None`: no words, nothing to narrow by).
@@ -272,7 +276,8 @@ fn push_match(qb: &mut sqlx::QueryBuilder<sqlx::Sqlite>, fts: String) {
 }
 
 /// `GET /channels/{id}/builds`: a page of a builds channel's live builds, newest first by when they were saved (an
-/// edit never moves one). Archived builds only with `archived=true`; `game` narrows it to one game.
+/// edit never moves one). Archived builds only with `archived=true`; `game` narrows it to one game, `q` to builds
+/// matching its words and `favourite=true` to the ones you have starred.
 async fn list(
     State(s): State<AppState>,
     AuthUser(me): AuthUser,
@@ -303,6 +308,13 @@ async fn list(
     }
     if let Some(fts) = words(q.q.as_deref()) {
         push_match(&mut qb, fts);
+    }
+    if q.favourite {
+        qb.push(
+            " AND b.message_id IN (SELECT f.message_id FROM build_favourites f WHERE f.user_id = ",
+        )
+        .push_bind(me.to_string())
+        .push(")");
     }
     qb.push(" ORDER BY b.message_id DESC LIMIT ")
         .push_bind(limit);

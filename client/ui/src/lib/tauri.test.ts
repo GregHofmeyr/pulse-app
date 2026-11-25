@@ -116,11 +116,29 @@ describe('profile pictures', () => {
 
 describe('builds', () => {
   it('listBuilds sends every filter, absent ones as null', async () => {
-    await api.listBuilds('C1', { game: 'G1', archived: true, q: 'raven' }, 'M9')
+    await api.listBuilds('C1', { game: 'G1', archived: true, q: 'raven', favourite: true }, 'M9')
     await api.listBuilds('C1')
     expect(invoke.mock.calls).toEqual([
-      ['list_builds', { channelId: 'C1', game: 'G1', archived: true, q: 'raven', before: 'M9' }],
-      ['list_builds', { channelId: 'C1', game: null, archived: false, q: null, before: null }],
+      ['list_builds', { channelId: 'C1', game: 'G1', archived: true, favourite: true, q: 'raven', before: 'M9' }],
+      ['list_builds', { channelId: 'C1', game: null, archived: false, favourite: false, q: null, before: null }],
+    ])
+  })
+
+  it('archiveManyBuilds and deleteManyBuilds send the ids to the batch commands', async () => {
+    await api.archiveManyBuilds('C1', ['M1', 'M2'], true)
+    await api.deleteManyBuilds('C1', ['M3'])
+    expect(invoke.mock.calls).toEqual([
+      ['archive_many_builds', { channelId: 'C1', body: { message_ids: ['M1', 'M2'], archived: true } }],
+      ['delete_many_builds', { channelId: 'C1', body: { message_ids: ['M3'] } }],
+    ])
+  })
+
+  it('setBuildFavourite and favouriteManyBuilds star builds for you', async () => {
+    await api.setBuildFavourite('M1', true)
+    await api.favouriteManyBuilds('C1', ['M1', 'M2'], false)
+    expect(invoke.mock.calls).toEqual([
+      ['set_build_favourite', { messageId: 'M1', favourite: true }],
+      ['favourite_many_builds', { channelId: 'C1', body: { message_ids: ['M1', 'M2'], favourite: false } }],
     ])
   })
 })

@@ -796,6 +796,14 @@ pub enum Event {
         archived_at: String,
         archived_by: UserId,
     },
+    /// Only to the user's own sessions (#617): they starred or unstarred these builds of a builds channel (never to a
+    /// version-4 client).
+    BuildFavouriteChanged {
+        user_id: UserId,
+        channel_id: ChannelId,
+        message_ids: Vec<MessageId>,
+        favourite: bool,
+    },
     /// Only to the user's own sessions: they chose a view of a clips channel.
     ClipViewChanged {
         user_id: UserId,
@@ -990,6 +998,7 @@ impl Event {
             | Self::ThreadSeen { channel_id, .. }
             | Self::ClipViewChanged { channel_id, .. }
             | Self::BuildsArchived { channel_id, .. }
+            | Self::BuildFavouriteChanged { channel_id, .. }
             | Self::SoundPlayed { channel_id, .. }
             | Self::VoiceDisconnected { channel_id, .. }
             | Self::CallEnded { channel_id, .. }
@@ -1134,6 +1143,7 @@ impl Event {
             | Self::FrequentEmoji { user_id, .. }
             | Self::ThreadSeen { user_id, .. }
             | Self::ClipViewChanged { user_id, .. }
+            | Self::BuildFavouriteChanged { user_id, .. }
             | Self::SoundFavourites { user_id, .. }
             | Self::FrequentSounds { user_id, .. }
             | Self::PrivateNicknameChanged { user_id, .. }

@@ -26,6 +26,7 @@ import type { CreateBuildRequest } from './protocol/CreateBuildRequest'
 import type { UpdateBuildRequest } from './protocol/UpdateBuildRequest'
 import type { BulkArchiveRequest } from './protocol/BulkArchiveRequest'
 import type { BulkArchiveResult } from './protocol/BulkArchiveResult'
+import type { BuildsBatchResult } from './protocol/BuildsBatchResult'
 import type { Category } from './protocol/Category'
 import type { SaveLayoutRequest } from './protocol/SaveLayoutRequest'
 import type { CreatePlanRequest } from './protocol/CreatePlanRequest'
@@ -660,16 +661,18 @@ export const api = {
     invoke<Message[]>('list_clips', { channelId, before: before ?? null, game: game ?? null, author: author ?? null }),
   clipFacets: (channelId: string) => invoke<ClipFacets>('clip_facets', { channelId }),
   setClipView: (channelId: string, view: ClipView) => invoke<void>('set_clip_view', { channelId, view }),
-  /** A page of a builds channel's builds (30), newest first by when saved; `before` pages back (#617). */
+  /** A page of a builds channel's builds (30), newest first by when saved; `before` pages back; `favourite`: only your
+   *  starred ones (#617). */
   listBuilds: (
     channelId: string,
-    f: { game?: string; archived?: boolean; q?: string } = {},
+    f: { game?: string; archived?: boolean; q?: string; favourite?: boolean } = {},
     before?: string,
   ) =>
     invoke<Message[]>('list_builds', {
       channelId,
       game: f.game ?? null,
       archived: f.archived ?? false,
+      favourite: f.favourite ?? false,
       q: f.q ?? null,
       before: before ?? null,
     }),
@@ -681,6 +684,15 @@ export const api = {
   bulkArchiveBuilds: (channelId: string, body: BulkArchiveRequest) =>
     invoke<BulkArchiveResult>('bulk_archive_builds', { channelId, body }),
   deleteBuild: (messageId: string) => invoke<void>('delete_build', { messageId }),
+  /** Multi-select (#617): up to 100 of a channel's builds at once; the ones you may not change come back as `skipped`. */
+  archiveManyBuilds: (channelId: string, messageIds: string[], archived: boolean) =>
+    invoke<BuildsBatchResult>('archive_many_builds', { channelId, body: { message_ids: messageIds, archived } }),
+  deleteManyBuilds: (channelId: string, messageIds: string[]) =>
+    invoke<BuildsBatchResult>('delete_many_builds', { channelId, body: { message_ids: messageIds } }),
+  /** Your own star on a build (favourites are personal); `BuildFavouriteChanged` updates every copy. */
+  setBuildFavourite: (messageId: string, favourite: boolean) => invoke<void>('set_build_favourite', { messageId, favourite }),
+  favouriteManyBuilds: (channelId: string, messageIds: string[], favourite: boolean) =>
+    invoke<BuildsBatchResult>('favourite_many_builds', { channelId, body: { message_ids: messageIds, favourite } }),
   // the build pop-out (#620). The main window opens, updates and closes it; the pop-out itself may call only the last three
   openBuildWindow: (snapshot: BuildSnapshot, onTop: boolean) => invoke<void>('open_build_window', { snapshot, onTop }),
   updateBuildWindow: (snapshot: BuildSnapshot) => invoke<void>('update_build_window', { snapshot }),

@@ -182,12 +182,11 @@ async fn pin(
     // copy from the check, logged.
     match load(&s.db, None, id).await {
         Ok(Some(now)) => msg = now,
-        Ok(None) => {}
+        Ok(None) => crate::messages::neutral(&mut msg),
         Err(e) => {
             tracing::error!(error = ?e, %id, "couldn't read a pinned message back");
-            for r in &mut msg.reactions {
-                r.me = false;
-            }
+            // the check's copy is the pinner's own view: published as everyone's
+            crate::messages::neutral(&mut msg);
         }
     }
     msg.pin = Some(pin.clone());

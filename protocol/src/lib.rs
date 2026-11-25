@@ -162,6 +162,10 @@ pub fn export_all(dir: &Path) -> Result<(), ExportError> {
     rest::SetBuildArchivedRequest::export_all(&cfg)?;
     rest::BulkArchiveRequest::export_all(&cfg)?;
     rest::BulkArchiveResult::export_all(&cfg)?;
+    rest::ArchiveBuildsRequest::export_all(&cfg)?;
+    rest::DeleteBuildsRequest::export_all(&cfg)?;
+    rest::BuildsBatchResult::export_all(&cfg)?;
+    rest::FavouriteBuildsRequest::export_all(&cfg)?;
     rest::BuildBrief::export_all(&cfg)?;
     rest::BuildFacets::export_all(&cfg)?;
     rest::NameStyle::export_all(&cfg)?;
