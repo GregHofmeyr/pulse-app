@@ -15,6 +15,7 @@ pub mod hotkeys;
 pub mod idle;
 pub mod invite_links;
 pub mod ipc;
+pub mod ipc_gate;
 pub mod keybinds;
 pub mod links;
 pub mod logging;
@@ -126,296 +127,11 @@ pub(crate) async fn wind_down(app: &tauri::AppHandle) {
     }
 }
 
-pub fn run() {
-    startup::begin();
-    let mut builder = tauri::Builder::default();
-    // Must be the first plugin: a second launch exits before anything else starts.
-    if session::single_instance(std::env::var("PULSE_PROFILE").ok().as_deref()) {
-        builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            bring_to_front(app)
-        }));
-    }
-    // App updates (updater.rs, #82), Windows only: driven from Rust, so no webview permission is granted.
-    #[cfg(windows)]
-    {
-        builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
-    }
-    builder
-        .plugin(tauri_plugin_dialog::init())
-        // `pulse://invite/<code>` links (#476); a second launch's link arrives through single-instance
-        .plugin(tauri_plugin_deep_link::init())
-        .setup(|app| {
-            use tauri::Manager;
-            app.manage(invite_links::Pending::default());
-            {
-                use tauri_plugin_deep_link::DeepLinkExt;
-                // the installed app answers `pulse://` for this user; a dev build leaves the registration alone. A few
-                // registry writes, but off the startup path: a link clicked before they land opened this exe anyway
-                #[cfg(windows)]
-                if !cfg!(debug_assertions) {
-                    let h = app.handle().clone();
-                    tauri::async_runtime::spawn_blocking(move || {
-                        if let Err(e) = h.deep_link().register_all() {
-                            tracing::warn!(error = %e, "couldn't register pulse:// links");
-                        }
-                    });
-                }
-                let h = app.handle().clone();
-                app.deep_link().on_open_url(move |e| {
-                    invite_links::opened(&h, e.urls().into_iter().map(|u| u.to_string()))
-                });
-                if let Ok(Some(urls)) = app.deep_link().get_current() {
-                    invite_links::opened(app.handle(), urls.into_iter().map(|u| u.to_string()));
-                }
-            }
-            let profile = std::env::var("PULSE_PROFILE").ok();
-            let dir = session::profile_dir(&app.path().app_data_dir()?, profile.as_deref());
-            // Log file per profile; the guard must live as long as the app.
-            let log_dir = session::profile_dir(&app.path().app_log_dir()?, profile.as_deref());
-            // Last session's crash / unexpected exit, captured before this session writes to the log.
-            reports::crash::detect(&log_dir, reports::unix_now());
-            reports::crash::mark_running(&log_dir);
-            // "Send crash reports automatically" off: what was just captured waits for the user.
-            let report_settings = reports::settings::Store::load(&dir);
-            if !report_settings.auto_send_crashes() {
-                reports::crash::hold_pending(&log_dir);
-            }
-            app.manage(report_settings);
-            app.manage(reports::LogDir(log_dir.clone()));
-            reports::system::mark_started(); // a report's uptime (#605)
-            netwatch::path::load_salt(&dir); // masked network labels (#605)
-            match logging::init(&log_dir) {
-                Ok(guard) => {
-                    app.manage(LogGuard(std::sync::Mutex::new(Some(guard))));
-                }
-                Err(e) => eprintln!("logging unavailable ({}): {e}", log_dir.display()),
-            }
-            tracing::info!(profile = ?profile, data = %logging::redact_home(&dir), "profile");
-            // Loaded (and acted on) above, before logging was up: report how that went now.
-            app.state::<reports::settings::Store>().log_loaded();
-            startup::mark("logging_ready"); // (since process start: covers crash checks + log setup)
-            // Downloaded models (#77): local (not roaming) data, one copy for every profile.
-            models::install_low_delay(app.path().app_local_data_dir()?.join("models"));
-            let webview_dir = session::profile_dir(&app.path().app_local_data_dir()?, profile.as_deref());
-            // The link-preview pop-out shares the main webview's data directory.
-            let webview_data = webview_dir.join("webview");
-            create_main_window(app, &webview_data, window_bg::load(&dir))?;
-            app.manage(window_bg::Dir(dir.clone()));
-            app.manage(embed_window::WebviewData(webview_data));
-            app.manage(embed_window::WindowOwner::default());
-            startup::mark("window_built");
-            let emitter = app.handle().clone();
-            let outbox = outbox::Outbox::new(std::sync::Arc::new(
-                move |nonce: &str,
-                      status: outbox::Status,
-                      message: Option<&pulse_protocol::rest::Message>| {
-                    use tauri::Emitter;
-                    let _ = emitter.emit(
-                        "pulse://outbox",
-                        serde_json::json!({ "nonce": nonce, "status": status, "message": message }),
-                    );
-                },
-            ));
-            let media_root =
-                session::profile_dir(&app.path().app_cache_dir()?, profile.as_deref()).join("media");
-            let h = app.handle().clone();
-            let fh = app.handle().clone();
-            let vh = app.handle().clone();
-            app.manage(
-                commands::Core::new(
-                    session::Store::new(dir.clone(), profile.as_deref()),
-                    outbox,
-                    media_root,
-                    Box::new(move || media::clear_webview_cache(&h)),
-                )
-                .with_clips(
-                    webview_dir.join("clips"),
-                    Box::new(move |p| {
-                        let _ = fh.asset_protocol_scope().forbid_file(p);
-                    }),
-                )
-                .with_videos(video::Videos::new(Box::new(move |p| {
-                    vh.asset_protocol_scope().is_allowed(p)
-                })))
-                .with_attachments(
-                    session::profile_dir(&app.path().app_cache_dir()?, profile.as_deref())
-                        .join("attachments"),
-                ),
-            );
-            // A clicked notification brings the window up, then the page opens the conversation.
-            let h = app.handle().clone();
-            app.manage(notify::Notifier::new(
-                notify::app_id(&app.config().identifier, cfg!(debug_assertions)),
-                std::sync::Arc::new(move |click: notify::Click| {
-                    use tauri::Emitter;
-                    bring_to_front(&h);
-                    let _ = h.emit(notify::CLICK_EVENT, click);
-                }),
-            ));
-            app.manage(gifs::Gifs::default());
-            // "Listening to" (#275): nothing runs until the page says "Read media activity" is on
-            let (h, h2) = (app.handle().clone(), app.handle().clone());
-            app.manage(activity::MediaActivity::new(
-                std::sync::Arc::new(move |f| h.state::<commands::Core>().send_frame(f)),
-                std::sync::Arc::new(move |state| {
-                    use tauri::Emitter;
-                    let _ = h2.emit("pulse://media-activity", state);
-                }),
-            ));
-            // "Playing" (#380): nothing runs until the page sends its switches, and never outside Windows
-            let (h, h2) = (app.handle().clone(), app.handle().clone());
-            app.manage(games::GameActivity::new(
-                std::sync::Arc::new(move |f| h.state::<commands::Core>().send_frame(f)),
-                std::sync::Arc::new(move |state| {
-                    use tauri::Emitter;
-                    let _ = h2.emit("pulse://game-activity", state);
-                }),
-            ));
-            // Clip drop (#382): offers new NVIDIA / Game Bar recordings; nothing runs until the page's Clip drop switch says so
-            let h = app.handle().clone();
-            app.manage(games::clipdrop::ClipDrop::new(std::sync::Arc::new(
-                move |offer| {
-                    use tauri::Emitter;
-                    let _ = h.emit("pulse://clip-drop", offer);
-                },
-            )));
-            // Idle (#53): polls the system's last input on Windows; nothing runs elsewhere
-            let h = app.handle().clone();
-            app.manage(idle::Idle::start(std::sync::Arc::new(move |f| {
-                h.state::<commands::Core>().send_frame(f)
-            })));
-            app.manage(voice::mictest::MicTest::default());
-            app.manage(soundboard::Cache::default());
-            app.manage(soundboard::Prepared::default());
-            app.manage(soundboard::Clicks::default());
-            app.manage(soundboard::Trimming::default());
-            app.manage(soundboard::Players::default());
-            app.manage(soundboard::Echoes::default());
-            app.manage(stream::PickerMemory::default());
-            app.manage(stream::ghost_out::GhostOutput::default());
-            let h = app.handle().clone();
-            app.manage(stream::audio::StreamAudio::new(std::sync::Arc::new(
-                move |channel_id| {
-                    use tauri::Emitter;
-                    let _ = h.emit(
-                        "stream://audio_closed",
-                        serde_json::json!({ "channel_id": channel_id }),
-                    );
-                },
-            )));
-            #[cfg(unix)]
-            {
-                let h = app.handle().clone();
-                match ipc::socket_path() {
-                    // Needs a runtime: run the listener on Tauri's.
-                    Ok(path) => {
-                        tauri::async_runtime::spawn(async move {
-                            if let Err(e) = ipc::serve(&path, move |c| commands::hotkey(&h, c)) {
-                                tracing::warn!(path = %logging::redact_home(&path), error = %e, "hotkey socket unavailable");
-                            }
-                        });
-                    }
-                    Err(e) => tracing::warn!(error = %e, "hotkey socket unavailable"),
-                }
-            }
-            let binds = keybinds::Store::load(&dir);
-            let saved = binds.get();
-            binds.set_problems(hotkeys::install(app, &saved.binds, saved.enabled)?);
-            app.manage(binds);
-            let handle = app.handle().clone();
-            app.manage(voice::VoiceManager::new(std::sync::Arc::new(
-                move |e: voice::VoiceEvent| {
-                    use tauri::Emitter;
-                    let _ = handle.emit("voice://event", &e);
-                },
-            )));
-            // voice comes back by itself after LiveKit gives up reconnecting
-            let h = app.handle().clone();
-            tauri::async_runtime::spawn(async move {
-                h.state::<voice::VoiceManager>().run_rejoins().await
-            });
-            // #355: a call reconnects or rejoins at once when the network changes or the machine wakes. The gateway
-            // is probed too: a socket on the old path is found dead within seconds (not at the next heartbeat's
-            // deadline, ~20 s), and a reconnect waiting out its backoff tries at once.
-            let h = app.handle().clone();
-            // the path at startup, logged masked (#605): what later changes are compared with
-            std::thread::spawn(|| netwatch::path::refresh(&netwatch::Route::now()));
-            netwatch::spawn(move |change| {
-                let path = netwatch::path::refresh(&change.to);
-                reports::tally::network_change(change.resumed, path.network);
-                h.state::<voice::VoiceManager>().network_changed();
-                h.state::<commands::Core>().probe_gateway();
-            });
-            // App updates (#82): the launch check starts now, so the page usually has the answer when it asks. On
-            // Windows the installer ends the process: first clear the crash marker (an update isn't a crash) and
-            // flush the log. If the installer doesn't start after all, Pulse carries on: both come back (#233).
-            let (h, h2) = (app.handle().clone(), app.handle().clone());
-            // #460: did the last install (if any) work? A failed one backs off installing by itself for a while
-            let failed_update = update_attempt::check(
-                &dir,
-                &app.package_info().version,
-                reports::unix_now(),
-            );
-            app.manage(updater::Updates::new(std::sync::Arc::new(updater::Handover::new(
-                move || {
-                    tracing::info!("update: handing over to the installer");
-                    reports::crash::clear_running(&h.state::<reports::LogDir>().0);
-                    if let Some(guard) = h.try_state::<LogGuard>() {
-                        drop(guard.0.lock().unwrap().take());
-                    }
-                },
-                move || {
-                    let log_dir = &h2.state::<reports::LogDir>().0;
-                    reports::crash::mark_running(log_dir);
-                    if let Some(guard) = h2.try_state::<LogGuard>() {
-                        match logging::reopen(log_dir) {
-                            Ok(g) => *guard.0.lock().unwrap() = Some(g),
-                            Err(e) => eprintln!("logging unavailable after a failed update: {e}"),
-                        }
-                    }
-                    tracing::warn!("update: the installer didn't start; carrying on with this version");
-                },
-            )), dir.clone(), failed_update));
-            // The stored login is read once (keychain reads block: not on the UI thread) and goes to both the launch
-            // update check and the gateway: a stored login connects now, while the webview boots, so Ready no longer
-            // waits for the UI and a separate /me round trip.
-            let (stored_tx, stored_rx) = tokio::sync::oneshot::channel();
-            updater::start_launch_check(app.handle(), stored_rx);
-            updater::spawn_periodic(app.handle());
-            let h = app.handle().clone();
-            tauri::async_runtime::spawn_blocking(move || {
-                let core = h.state::<commands::Core>();
-                let stored = core.read_stored();
-                let _ = stored_tx.send(stored.clone());
-                core.start_preloaded(&h, stored);
-            });
-            // The updater's leftover installers in %TEMP% (#460), once any installer that just ran is done with its own
-            #[cfg(windows)]
-            {
-                let name = app.package_info().name.clone();
-                tauri::async_runtime::spawn(async move {
-                    tokio::time::sleep(std::time::Duration::from_secs(60)).await;
-                    let _ = tauri::async_runtime::spawn_blocking(move || {
-                        update_attempt::delete_stale_installers(&std::env::temp_dir(), &name)
-                    })
-                    .await;
-                });
-            }
-            startup::mark("setup_done");
-            Ok(())
-        })
-        .on_window_event(|window, event| {
-            // Back at the app (or woken from sleep): a dead connection should show now, not at the
-            // next heartbeat.
-            if let tauri::WindowEvent::Focused(true) = event {
-                use tauri::Manager;
-                if let Some(core) = window.try_state::<commands::Core>() {
-                    core.probe_gateway();
-                }
-            }
-        })
-        .register_asynchronous_uri_scheme_protocol(media::SCHEME, media::handle)
-        .invoke_handler(tauri::generate_handler![
+/// Every app command, once: expanded into the real handler (`generate_handler!`) and into [`registered_commands`],
+/// so a test checks the IPC gate (ipc_gate.rs) against exactly what is registered. `$then` gets the list.
+macro_rules! app_commands {
+    ($then:ident) => {
+        $then! {
             invite_links::take_invite_link,
             commands::login,
             commands::login_mfa,
@@ -762,7 +478,321 @@ pub fn run() {
             updater::update_install_idle,
             updater::update_signed_out,
             updater::update_failed,
-        ])
+        }
+    };
+}
+
+macro_rules! handler_of {
+    ($($($seg:ident)::+),* $(,)?) => { tauri::generate_handler![$($($seg)::+),*] };
+}
+
+macro_rules! names_of {
+    ($($($seg:ident)::+),* $(,)?) => { &[$(stringify!($($seg)::+)),*] };
+}
+
+/// The name of every registered app command (the function's name, as the page invokes it).
+pub fn registered_commands() -> impl Iterator<Item = &'static str> {
+    const PATHS: &[&str] = app_commands!(names_of);
+    PATHS
+        .iter()
+        .map(|p| p.rsplit("::").next().unwrap_or(p).trim())
+}
+
+pub fn run() {
+    startup::begin();
+    let mut builder = tauri::Builder::default();
+    // Must be the first plugin: a second launch exits before anything else starts.
+    if session::single_instance(std::env::var("PULSE_PROFILE").ok().as_deref()) {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            bring_to_front(app)
+        }));
+    }
+    // App updates (updater.rs, #82), Windows only: driven from Rust, so no webview permission is granted.
+    #[cfg(windows)]
+    {
+        builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+    }
+    // The IPC gate (#620) runs before every app command: which window may call it.
+    let handler: Box<dyn Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sync> =
+        Box::new(app_commands!(handler_of));
+    builder
+        .plugin(tauri_plugin_dialog::init())
+        // `pulse://invite/<code>` links (#476); a second launch's link arrives through single-instance
+        .plugin(tauri_plugin_deep_link::init())
+        .setup(|app| {
+            use tauri::Manager;
+            app.manage(invite_links::Pending::default());
+            {
+                use tauri_plugin_deep_link::DeepLinkExt;
+                // the installed app answers `pulse://` for this user; a dev build leaves the registration alone. A few
+                // registry writes, but off the startup path: a link clicked before they land opened this exe anyway
+                #[cfg(windows)]
+                if !cfg!(debug_assertions) {
+                    let h = app.handle().clone();
+                    tauri::async_runtime::spawn_blocking(move || {
+                        if let Err(e) = h.deep_link().register_all() {
+                            tracing::warn!(error = %e, "couldn't register pulse:// links");
+                        }
+                    });
+                }
+                let h = app.handle().clone();
+                app.deep_link().on_open_url(move |e| {
+                    invite_links::opened(&h, e.urls().into_iter().map(|u| u.to_string()))
+                });
+                if let Ok(Some(urls)) = app.deep_link().get_current() {
+                    invite_links::opened(app.handle(), urls.into_iter().map(|u| u.to_string()));
+                }
+            }
+            let profile = std::env::var("PULSE_PROFILE").ok();
+            let dir = session::profile_dir(&app.path().app_data_dir()?, profile.as_deref());
+            // Log file per profile; the guard must live as long as the app.
+            let log_dir = session::profile_dir(&app.path().app_log_dir()?, profile.as_deref());
+            // Last session's crash / unexpected exit, captured before this session writes to the log.
+            reports::crash::detect(&log_dir, reports::unix_now());
+            reports::crash::mark_running(&log_dir);
+            // "Send crash reports automatically" off: what was just captured waits for the user.
+            let report_settings = reports::settings::Store::load(&dir);
+            if !report_settings.auto_send_crashes() {
+                reports::crash::hold_pending(&log_dir);
+            }
+            app.manage(report_settings);
+            app.manage(reports::LogDir(log_dir.clone()));
+            reports::system::mark_started(); // a report's uptime (#605)
+            netwatch::path::load_salt(&dir); // masked network labels (#605)
+            match logging::init(&log_dir) {
+                Ok(guard) => {
+                    app.manage(LogGuard(std::sync::Mutex::new(Some(guard))));
+                }
+                Err(e) => eprintln!("logging unavailable ({}): {e}", log_dir.display()),
+            }
+            tracing::info!(profile = ?profile, data = %logging::redact_home(&dir), "profile");
+            // Loaded (and acted on) above, before logging was up: report how that went now.
+            app.state::<reports::settings::Store>().log_loaded();
+            startup::mark("logging_ready"); // (since process start: covers crash checks + log setup)
+            // Downloaded models (#77): local (not roaming) data, one copy for every profile.
+            models::install_low_delay(app.path().app_local_data_dir()?.join("models"));
+            let webview_dir = session::profile_dir(&app.path().app_local_data_dir()?, profile.as_deref());
+            // The link-preview pop-out shares the main webview's data directory.
+            let webview_data = webview_dir.join("webview");
+            create_main_window(app, &webview_data, window_bg::load(&dir))?;
+            app.manage(window_bg::Dir(dir.clone()));
+            app.manage(embed_window::WebviewData(webview_data));
+            app.manage(embed_window::WindowOwner::default());
+            startup::mark("window_built");
+            let emitter = app.handle().clone();
+            let outbox = outbox::Outbox::new(std::sync::Arc::new(
+                move |nonce: &str,
+                      status: outbox::Status,
+                      message: Option<&pulse_protocol::rest::Message>| {
+                    use tauri::Emitter;
+                    let _ = emitter.emit(
+                        "pulse://outbox",
+                        serde_json::json!({ "nonce": nonce, "status": status, "message": message }),
+                    );
+                },
+            ));
+            let media_root =
+                session::profile_dir(&app.path().app_cache_dir()?, profile.as_deref()).join("media");
+            let h = app.handle().clone();
+            let fh = app.handle().clone();
+            let vh = app.handle().clone();
+            app.manage(
+                commands::Core::new(
+                    session::Store::new(dir.clone(), profile.as_deref()),
+                    outbox,
+                    media_root,
+                    Box::new(move || media::clear_webview_cache(&h)),
+                )
+                .with_clips(
+                    webview_dir.join("clips"),
+                    Box::new(move |p| {
+                        let _ = fh.asset_protocol_scope().forbid_file(p);
+                    }),
+                )
+                .with_videos(video::Videos::new(Box::new(move |p| {
+                    vh.asset_protocol_scope().is_allowed(p)
+                })))
+                .with_attachments(
+                    session::profile_dir(&app.path().app_cache_dir()?, profile.as_deref())
+                        .join("attachments"),
+                ),
+            );
+            // A clicked notification brings the window up, then the page opens the conversation.
+            let h = app.handle().clone();
+            app.manage(notify::Notifier::new(
+                notify::app_id(&app.config().identifier, cfg!(debug_assertions)),
+                std::sync::Arc::new(move |click: notify::Click| {
+                    use tauri::Emitter;
+                    bring_to_front(&h);
+                    let _ = h.emit(notify::CLICK_EVENT, click);
+                }),
+            ));
+            app.manage(gifs::Gifs::default());
+            // "Listening to" (#275): nothing runs until the page says "Read media activity" is on
+            let (h, h2) = (app.handle().clone(), app.handle().clone());
+            app.manage(activity::MediaActivity::new(
+                std::sync::Arc::new(move |f| h.state::<commands::Core>().send_frame(f)),
+                std::sync::Arc::new(move |state| {
+                    use tauri::Emitter;
+                    let _ = h2.emit("pulse://media-activity", state);
+                }),
+            ));
+            // "Playing" (#380): nothing runs until the page sends its switches, and never outside Windows
+            let (h, h2) = (app.handle().clone(), app.handle().clone());
+            app.manage(games::GameActivity::new(
+                std::sync::Arc::new(move |f| h.state::<commands::Core>().send_frame(f)),
+                std::sync::Arc::new(move |state| {
+                    use tauri::Emitter;
+                    let _ = h2.emit("pulse://game-activity", state);
+                }),
+            ));
+            // Clip drop (#382): offers new NVIDIA / Game Bar recordings; nothing runs until the page's Clip drop switch says so
+            let h = app.handle().clone();
+            app.manage(games::clipdrop::ClipDrop::new(std::sync::Arc::new(
+                move |offer| {
+                    use tauri::Emitter;
+                    let _ = h.emit("pulse://clip-drop", offer);
+                },
+            )));
+            // Idle (#53): polls the system's last input on Windows; nothing runs elsewhere
+            let h = app.handle().clone();
+            app.manage(idle::Idle::start(std::sync::Arc::new(move |f| {
+                h.state::<commands::Core>().send_frame(f)
+            })));
+            app.manage(voice::mictest::MicTest::default());
+            app.manage(soundboard::Cache::default());
+            app.manage(soundboard::Prepared::default());
+            app.manage(soundboard::Clicks::default());
+            app.manage(soundboard::Trimming::default());
+            app.manage(soundboard::Players::default());
+            app.manage(soundboard::Echoes::default());
+            app.manage(stream::PickerMemory::default());
+            app.manage(stream::ghost_out::GhostOutput::default());
+            let h = app.handle().clone();
+            app.manage(stream::audio::StreamAudio::new(std::sync::Arc::new(
+                move |channel_id| {
+                    use tauri::Emitter;
+                    let _ = h.emit(
+                        "stream://audio_closed",
+                        serde_json::json!({ "channel_id": channel_id }),
+                    );
+                },
+            )));
+            #[cfg(unix)]
+            {
+                let h = app.handle().clone();
+                match ipc::socket_path() {
+                    // Needs a runtime: run the listener on Tauri's.
+                    Ok(path) => {
+                        tauri::async_runtime::spawn(async move {
+                            if let Err(e) = ipc::serve(&path, move |c| commands::hotkey(&h, c)) {
+                                tracing::warn!(path = %logging::redact_home(&path), error = %e, "hotkey socket unavailable");
+                            }
+                        });
+                    }
+                    Err(e) => tracing::warn!(error = %e, "hotkey socket unavailable"),
+                }
+            }
+            let binds = keybinds::Store::load(&dir);
+            let saved = binds.get();
+            binds.set_problems(hotkeys::install(app, &saved.binds, saved.enabled)?);
+            app.manage(binds);
+            let handle = app.handle().clone();
+            app.manage(voice::VoiceManager::new(std::sync::Arc::new(
+                move |e: voice::VoiceEvent| {
+                    use tauri::Emitter;
+                    let _ = handle.emit("voice://event", &e);
+                },
+            )));
+            // voice comes back by itself after LiveKit gives up reconnecting
+            let h = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                h.state::<voice::VoiceManager>().run_rejoins().await
+            });
+            // #355: a call reconnects or rejoins at once when the network changes or the machine wakes. The gateway
+            // is probed too: a socket on the old path is found dead within seconds (not at the next heartbeat's
+            // deadline, ~20 s), and a reconnect waiting out its backoff tries at once.
+            let h = app.handle().clone();
+            // the path at startup, logged masked (#605): what later changes are compared with
+            std::thread::spawn(|| netwatch::path::refresh(&netwatch::Route::now()));
+            netwatch::spawn(move |change| {
+                let path = netwatch::path::refresh(&change.to);
+                reports::tally::network_change(change.resumed, path.network);
+                h.state::<voice::VoiceManager>().network_changed();
+                h.state::<commands::Core>().probe_gateway();
+            });
+            // App updates (#82): the launch check starts now, so the page usually has the answer when it asks. On
+            // Windows the installer ends the process: first clear the crash marker (an update isn't a crash) and
+            // flush the log. If the installer doesn't start after all, Pulse carries on: both come back (#233).
+            let (h, h2) = (app.handle().clone(), app.handle().clone());
+            // #460: did the last install (if any) work? A failed one backs off installing by itself for a while
+            let failed_update = update_attempt::check(
+                &dir,
+                &app.package_info().version,
+                reports::unix_now(),
+            );
+            app.manage(updater::Updates::new(std::sync::Arc::new(updater::Handover::new(
+                move || {
+                    tracing::info!("update: handing over to the installer");
+                    reports::crash::clear_running(&h.state::<reports::LogDir>().0);
+                    if let Some(guard) = h.try_state::<LogGuard>() {
+                        drop(guard.0.lock().unwrap().take());
+                    }
+                },
+                move || {
+                    let log_dir = &h2.state::<reports::LogDir>().0;
+                    reports::crash::mark_running(log_dir);
+                    if let Some(guard) = h2.try_state::<LogGuard>() {
+                        match logging::reopen(log_dir) {
+                            Ok(g) => *guard.0.lock().unwrap() = Some(g),
+                            Err(e) => eprintln!("logging unavailable after a failed update: {e}"),
+                        }
+                    }
+                    tracing::warn!("update: the installer didn't start; carrying on with this version");
+                },
+            )), dir.clone(), failed_update));
+            // The stored login is read once (keychain reads block: not on the UI thread) and goes to both the launch
+            // update check and the gateway: a stored login connects now, while the webview boots, so Ready no longer
+            // waits for the UI and a separate /me round trip.
+            let (stored_tx, stored_rx) = tokio::sync::oneshot::channel();
+            updater::start_launch_check(app.handle(), stored_rx);
+            updater::spawn_periodic(app.handle());
+            let h = app.handle().clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                let core = h.state::<commands::Core>();
+                let stored = core.read_stored();
+                let _ = stored_tx.send(stored.clone());
+                core.start_preloaded(&h, stored);
+            });
+            // The updater's leftover installers in %TEMP% (#460), once any installer that just ran is done with its own
+            #[cfg(windows)]
+            {
+                let name = app.package_info().name.clone();
+                tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+                    let _ = tauri::async_runtime::spawn_blocking(move || {
+                        update_attempt::delete_stale_installers(&std::env::temp_dir(), &name)
+                    })
+                    .await;
+                });
+            }
+            startup::mark("setup_done");
+            Ok(())
+        })
+        .on_window_event(|window, event| {
+            // Back at the app (or woken from sleep): a dead connection should show now, not at the
+            // next heartbeat.
+            if let tauri::WindowEvent::Focused(true) = event {
+                use tauri::Manager;
+                if let Some(core) = window.try_state::<commands::Core>() {
+                    core.probe_gateway();
+                }
+            }
+        })
+        .register_asynchronous_uri_scheme_protocol(media::SCHEME, media::handle)
+        .invoke_handler(move |invoke| {
+            ipc_gate::guard(invoke, &handler)
+        })
         .build(tauri::generate_context!())
         .expect("error while building Pulse")
         .run(|app, event| {
