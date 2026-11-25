@@ -42,13 +42,14 @@ pub async fn starred(db: &SqlitePool, me: UserId, ids: &[String]) -> AppResult<H
     Ok(rows.into_iter().collect())
 }
 
-/// Stars (or unstars) live builds for `me`; a build gone meanwhile is left alone.
+/// Stars (or unstars) live builds for `me`; a build gone meanwhile is left alone. How many stars changed.
 async fn set_in(
     c: &mut SqliteConnection,
     me: UserId,
     ids: &[MessageId],
     on: bool,
-) -> AppResult<()> {
+) -> AppResult<u64> {
+    let mut changed = 0;
     for id in ids {
         let q = if on {
             sqlx::query(
@@ -61,9 +62,13 @@ async fn set_in(
             sqlx::query("DELETE FROM build_favourites WHERE user_id = ? AND message_id = ?")
                 .bind(me.to_string())
         };
-        q.bind(id.to_string()).execute(&mut *c).await?;
+        changed += q
+            .bind(id.to_string())
+            .execute(&mut *c)
+            .await?
+            .rows_affected();
     }
-    Ok(())
+    Ok(changed)
 }
 
 async fn one(s: AppState, me: UserId, id: MessageId, on: bool) -> AppResult<StatusCode> {
@@ -74,8 +79,12 @@ async fn one(s: AppState, me: UserId, id: MessageId, on: bool) -> AppResult<Stat
     builds_channel(&s, me, channel).await?;
     let _order = s.hub.in_order().await;
     let mut tx = begin_write(&s.db).await?;
-    set_in(&mut tx, me, &[id], on).await?;
+    let changed = set_in(&mut tx, me, &[id], on).await?;
     tx.commit().await?;
+    // starred already, not starred, or the build gone meanwhile: nothing to tell
+    if changed == 0 {
+        return Ok(StatusCode::NO_CONTENT);
+    }
     s.hub
         .publish(
             &s.db,

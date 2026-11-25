@@ -350,3 +350,123 @@ async fn a_version_4_client_never_hears_a_star() {
         "{got:?}"
     );
 }
+
+/// A pinned build goes out as everyone sees it: the pinner's star (and seen point) stay theirs.
+#[tokio::test]
+async fn a_pin_carries_no_ones_star() {
+    let w = world().await;
+    let a = w.build(&w.sam.1, "A").await;
+    assert_eq!(w.star(&w.alex.1, a.id, true).await.status(), 204);
+    let mut sams = hello(&w.app, &w.sam.1).await;
+    let r = w
+        .app
+        .http
+        .put(w.app.url(&format!("/messages/{}/pin", a.id)))
+        .bearer_auth(&w.alex.1)
+        .json(&json!({ "duration": "forever" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    loop {
+        match next_frame_beating(&mut sams, Duration::from_secs(3)).await {
+            Some(ServerFrame::Event(Event::MessagePinned { pinned, .. })) => {
+                let b = pinned.message.build.unwrap();
+                assert!(!b.favourite, "alex's star went out to sam");
+                assert_eq!(b.replies_seen, None);
+                break;
+            }
+            Some(_) => continue,
+            None => panic!("expected MessagePinned"),
+        }
+    }
+    // and the pins list is each caller's own view
+    let pins: Vec<pulse_protocol::rest::PinnedMessage> =
+        get_json(&w.app, &w.alex.1, &format!("/channels/{}/pins", w.ch)).await;
+    assert!(pins[0].message.build.as_ref().unwrap().favourite);
+    let pins: Vec<pulse_protocol::rest::PinnedMessage> =
+        get_json(&w.app, &w.sam.1, &format!("/channels/{}/pins", w.ch)).await;
+    assert!(!pins[0].message.build.as_ref().unwrap().favourite);
+}
+
+/// The copy a pin falls back to when its read-back fails is made neutral the same way.
+#[tokio::test]
+async fn a_message_made_neutral_keeps_no_ones_view() {
+    let w = world().await;
+    let a = w.build(&w.sam.1, "A").await;
+    assert_eq!(w.star(&w.alex.1, a.id, true).await.status(), 204);
+    let mut m: Message = get_json(&w.app, &w.alex.1, &format!("/builds/{}", a.id)).await;
+    assert!(m.build.as_ref().unwrap().favourite);
+    m.build.as_mut().unwrap().replies_seen = Some(MessageId::new());
+    pulse_server::messages::neutral(&mut m);
+    let b = m.build.unwrap();
+    assert!(!b.favourite);
+    assert_eq!(b.replies_seen, None);
+}
+
+/// A star that changes nothing (again, or on a build that's gone) tells no one.
+#[tokio::test]
+async fn a_star_that_changes_nothing_sends_no_event() {
+    let w = world().await;
+    let text = general(&w.app, &w.alex.1, w.server).await;
+    let a = w.build(&w.alex.1, "A").await;
+    let mut sams = hello(&w.app, &w.sam.1).await;
+    assert_eq!(w.star(&w.sam.1, a.id, true).await.status(), 204);
+    assert_eq!(w.star(&w.sam.1, a.id, true).await.status(), 204);
+    assert_eq!(w.star(&w.alex.1, a.id, false).await.status(), 204);
+    send(&w.app, &w.alex.1, text.id, "after").await;
+    assert_eq!(
+        starred_events(&events_until(&mut sams, "after").await),
+        vec![(vec![a.id], true)]
+    );
+}
+
+/// `favourite=true` lists only the caller's own starred builds, with the other filters.
+#[tokio::test]
+async fn the_favourite_filter_lists_your_stars() {
+    let w = world().await;
+    let a = w.build(&w.alex.1, "Raven crit").await;
+    let b = w.build(&w.alex.1, "Ember tank").await;
+    let c = w.build(&w.alex.1, "Raven dodge").await;
+    for id in [a.id, b.id] {
+        assert_eq!(w.star(&w.sam.1, id, true).await.status(), 204);
+    }
+    assert_eq!(w.star(&w.alex.1, c.id, true).await.status(), 204);
+    let ids = |v: Vec<Message>| v.into_iter().map(|m| m.id).collect::<Vec<_>>();
+    let base = format!("/channels/{}/builds?favourite=true", w.ch);
+    assert_eq!(
+        ids(get_json(&w.app, &w.sam.1, &base).await),
+        vec![b.id, a.id]
+    );
+    assert_eq!(ids(get_json(&w.app, &w.alex.1, &base).await), vec![c.id]);
+    assert_eq!(
+        ids(get_json(&w.app, &w.sam.1, &format!("{base}&q=raven")).await),
+        vec![a.id]
+    );
+    // archived ones only with archived=true, as without the filter
+    let r = w
+        .app
+        .http
+        .put(w.app.url(&format!("/builds/{}/archived", a.id)))
+        .bearer_auth(&w.alex.1)
+        .json(&json!({ "archived": true }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    assert_eq!(ids(get_json(&w.app, &w.sam.1, &base).await), vec![b.id]);
+    assert_eq!(
+        ids(get_json(&w.app, &w.sam.1, &format!("{base}&archived=true")).await),
+        vec![b.id, a.id]
+    );
+    // false is the plain list
+    assert_eq!(
+        ids(get_json(
+            &w.app,
+            &w.sam.1,
+            &format!("/channels/{}/builds?favourite=false", w.ch)
+        )
+        .await),
+        vec![c.id, b.id]
+    );
+}
