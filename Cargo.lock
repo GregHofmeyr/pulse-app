@@ -5336,7 +5336,7 @@ dependencies = [
 
 [[package]]
 name = "pulse-client"
-version = "0.2.19"
+version = "0.2.20"
 dependencies = [
  "anyhow",
  "audioadapter-buffers",
@@ -5402,7 +5402,7 @@ dependencies = [
 
 [[package]]
 name = "pulse-protocol"
-version = "0.2.19"
+version = "0.2.20"
 dependencies = [
  "serde",
  "serde_json",
@@ -5412,7 +5412,7 @@ dependencies = [
 
 [[package]]
 name = "pulse-server"
-version = "0.2.19"
+version = "0.2.20"
 dependencies = [
  "anyhow",
  "argon2",

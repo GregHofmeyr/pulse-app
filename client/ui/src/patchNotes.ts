@@ -24,6 +24,45 @@ export type PatchNotes = {
 }
 
 export const patchNotes: PatchNotes = {
+  id: '0.2.20',
+  version: '0.2.20',
+  date: '25 November 2026',
+  new: [
+    'Builds channels: a new kind of channel for saving game builds and loadouts. Browse them as a gallery or a list, filter by game in the right panel, show or hide archived builds, and archive old builds in bulk by date',
+    'Add a build in seconds by pasting a link or an image, or use the full form for screenshots, notes and the game',
+    'Every build has its own page with comments, and its video plays right inside Pulse',
+    'Pin a build to the side to keep it in view, take a quick peek without leaving where you are, find builds from Ctrl+K with "builds:", or pop one out into its own small window that stays on top',
+    'The right panel has a switcher: when members, voice chat, search and a pinned build all want the space, flip between them without closing any',
+    'Voice clarity EQ (in Voice settings): cuts rumble and boominess from your mic and adds a little clarity to your voice',
+    'Even out voice volumes (in Voice settings): brings quiet and loud people closer to the same volume, with each person\'s own volume still applied on top',
+    'Record a mic sample (in Voice settings): saves 15 seconds of your mic, before and after processing, to attach to a bug report',
+    '"Hide preview" while you\'re live takes your own tile off your grid (it keeps going for everyone watching); "Show my stream" brings it back',
+    'Open your own stream in full view or full screen, like anyone else\'s',
+  ],
+  fixes: [
+    'Voice: loud moments go through a proper limiter instead of crunchy clipping',
+    'Voice: noise suppression no longer garbles your first words after a silence',
+    'Voice: your mic is sent as mono at a sensible bitrate, for clearer speech',
+    'Voice: when your network changes, Pulse rejoins the call straight away, and voices that stalled come back by themselves',
+    'Voice: echo cancellation stays on in Auto, whatever you\'re listening through',
+    'Voice: steadier audio, and a problem in the mic\'s processing no longer leaves you silent for the rest of the call',
+    'Picking a window to stream no longer minimises Pulse',
+    'Small stream previews are sharper',
+    'Stream tiles show the normal cursor instead of a magnifying glass',
+    'Chat: scrolling up to read older messages no longer snaps you back to the bottom',
+    'Reconnecting after a network change or a server update is quicker and smoother',
+  ],
+  qol: [
+    'When your mic already cleans up its own sound (SteelSeries Sonar, NVIDIA Broadcast and others), Voice settings suggest a lighter noise suppression',
+    'Voice: a little less delay in calls',
+    'Bug reports now include the voice settings in use, your audio devices\' formats, system info and a masked summary of your network, plus mic stats in the log, so problems are quicker to pin down',
+    'Pulse uses less memory over long sessions',
+  ],
+  message: 'Builds are here 🛠️\nAnd a clearer mic 🎙️',
+}
+
+/** The release before `patchNotes` (#235), shown collapsed below them; `null` = none. */
+export const previousPatchNotes: PatchNotes | null = {
   id: '0.2.19',
   version: '0.2.19',
   date: '20 November 2026',
@@ -39,25 +78,4 @@ export const patchNotes: PatchNotes = {
     'A message that failed to send no longer holds updates back (it\'s still there after the update)',
   ],
   message: 'Update fixes 🔧',
-}
-
-/** The release before `patchNotes` (#235), shown collapsed below them; `null` = none. */
-export const previousPatchNotes: PatchNotes | null = {
-  id: '0.2.18',
-  version: '0.2.18',
-  date: '20 November 2026',
-  new: [
-    'Updates install by themselves: when one is waiting and you\'ve left Pulse alone for 10 minutes, it updates and reopens. Never during a call, a stream, an upload or a message you haven\'t sent',
-    'Signed out, the login screen says when an update is available (signing in gets it)',
-  ],
-  fixes: [
-    'Updates: a server hiccup during an update check no longer hides an update that was already found, and the check tries again',
-    'Updates: if an update doesn\'t install, Pulse says so with a link to download it, and stops downloading it again at every launch',
-    'Very old versions of Pulse are now asked to update when they connect, so nobody gets stuck on one',
-  ],
-  qol: [
-    'Pulse starts faster: it waits less for the update check, and shows its logo instead of a blank window while it gets going',
-    'Old update installers no longer pile up in your temporary files',
-  ],
-  message: 'Smoother updates 🔄',
 }
