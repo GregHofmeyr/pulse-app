@@ -1,15 +1,16 @@
 //! The mic's tone stage (#590): "Voice clarity EQ". Three gentle biquads after the denoiser, before the gain and
 //! the limiter, at 48 kHz.
 //!
-//! - **High-pass, 80 Hz, 2nd order (Butterworth, Q 0.707).** Rumble, desk thumps and plosive pops carry a lot of
+//! - **High-pass, 65 Hz, 2nd order (Butterworth, Q 0.707).** Rumble, desk thumps and plosive pops carry a lot of
 //!   energy and little speech. Left in, they set the peak the limiter reacts to, so the whole voice gets turned
 //!   down for a "p". WebRTC's APM already runs its own 2nd-order high-pass (~100 Hz upstream; the corner isn't
 //!   verified for this build) *before* the denoiser; this one sits after it, so whatever reaches the gain is
-//!   guaranteed rumble-free whichever suppression runs, and together they roll off at ~24 dB/octave below 80 Hz.
-//!   Above 150 Hz it costs < 0.4 dB, so a deep voice's speech harmonics stay.
+//!   guaranteed rumble-free whichever suppression runs, and together they roll off at ~24 dB/octave lower down.
+//!   It was 80 Hz; stacked on the APM's it thinned deep voices, whose fundamental (~85–110 Hz) sat on the slope,
+//!   so it is 65 Hz now (the APM's own corner is still to be measured). Above 150 Hz it costs < 0.2 dB.
 //! - **Low-mid cut, −2 dB at 220 Hz (peaking, Q 1.0).** The "boom" of a deep voice, or a mic close up (proximity
 //!   effect), piles up around 150–300 Hz. A bell there, not a low shelf, leaves the fundamental under it and the
-//!   warmth above it mostly alone: the whole stage is −1.7 dB at 110 Hz, −2.1 dB at 220 Hz, −0.4 dB at 500 Hz. −2 dB is about the smallest broad cut that's
+//!   warmth above it mostly alone: the whole stage is −1.1 dB at 110 Hz, −2.1 dB at 220 Hz, −0.4 dB at 500 Hz. −2 dB is about the smallest broad cut that's
 //!   audible: enough to take the muddiness off without making a light voice thin.
 //! - **Presence lift, +1.5 dB at 3.5 kHz (peaking, Q 0.8).** Consonants live here; a little more makes speech easier
 //!   to follow through Opus and over game audio. Kept at +1.5 dB (not more) because there is no de-esser: more lift
@@ -23,7 +24,7 @@
 
 use super::leveller::Biquad;
 
-pub const HIGH_PASS_HZ: f64 = 80.0;
+pub const HIGH_PASS_HZ: f64 = 65.0;
 pub const LOW_MID_HZ: f64 = 220.0;
 pub const LOW_MID_DB: f64 = -2.0;
 pub const PRESENCE_HZ: f64 = 3_500.0;
@@ -121,7 +122,7 @@ mod tests {
     /// The stage's gain (dB) on a steady sine at `hz`, measured after it has settled.
     fn gain_db(hz: f64) -> f64 {
         let mut t = ToneStage::new(RATE, true);
-        let n = RATE as usize; // 1 s: the 80 Hz high-pass settles well within it
+        let n = RATE as usize; // 1 s: the 65 Hz high-pass settles well within it
         let mut x: Vec<f32> = (0..2 * n)
             .map(|i| (0.25 * (std::f64::consts::TAU * hz * i as f64 / RATE as f64).sin()) as f32)
             .collect();
@@ -145,19 +146,21 @@ mod tests {
 
     #[test]
     fn rumble_is_cut_hard() {
-        assert!(gain_db(20.0) < -23.0, "{}", gain_db(20.0));
-        assert!(gain_db(40.0) < -11.0, "{}", gain_db(40.0));
+        assert!(gain_db(20.0) < -19.5, "{}", gain_db(20.0));
+        assert!(gain_db(40.0) < -8.0, "{}", gain_db(40.0));
     }
 
     #[test]
-    fn the_high_pass_corner_is_80_hz() {
+    fn the_high_pass_corner_is_65_hz() {
         // −3 dB from the Butterworth, plus the low-mid bell's skirt
-        assert_near(80.0, -3.3, 0.3);
+        assert_near(65.0, -3.2, 0.3);
     }
 
     #[test]
     fn a_deep_voice_fundamental_is_only_trimmed() {
-        assert_near(110.0, -1.7, 0.3);
+        // −1.7 dB with the old 80 Hz corner; and a deeper one, at 90 Hz, keeps most of its level too
+        assert_near(110.0, -1.1, 0.3);
+        assert_near(90.0, -1.4, 0.3);
     }
 
     #[test]
