@@ -21,6 +21,8 @@ import type { ReportUi } from './report'
 import type { Server } from './protocol/Server'
 import type { Channel } from './protocol/Channel'
 import type { BuildFacets } from './protocol/BuildFacets'
+import type { CreateBuildRequest } from './protocol/CreateBuildRequest'
+import type { UpdateBuildRequest } from './protocol/UpdateBuildRequest'
 import type { BulkArchiveRequest } from './protocol/BulkArchiveRequest'
 import type { BulkArchiveResult } from './protocol/BulkArchiveResult'
 import type { Category } from './protocol/Category'
@@ -678,6 +680,14 @@ export const api = {
   bulkArchiveBuilds: (channelId: string, body: BulkArchiveRequest) =>
     invoke<BulkArchiveResult>('bulk_archive_builds', { channelId, body }),
   deleteBuild: (messageId: string) => invoke<void>('delete_build', { messageId }),
+  /** Save a new build (#618): the core uploads `staged` screenshots in order under `body.nonce` (after any ids
+   *  `body.attachments` lists), then posts it. Retrying with the same nonce uploads nothing twice. */
+  createBuild: (channelId: string, body: CreateBuildRequest, staged: string[] = []) =>
+    invoke<Message>('create_build', { channelId, body, staged }),
+  /** The author's edit: `order` is the screenshots' final order, `id:<attachment id>` for kept ones and
+   *  `staged:<staged id>` for new ones (the core uploads those and writes `body.attachments`). */
+  updateBuild: (messageId: string, channelId: string, body: UpdateBuildRequest, order: string[]) =>
+    invoke<Message>('update_build', { messageId, channelId, body, order }),
   /** Builds across every builds channel you can read; `game` is a game's normalised name. */
   searchBuilds: (q: string, game?: string) => invoke<Message[]>('search_builds', { q, game: game ?? null }),
   clipStorage: (serverId: string) => invoke<ClipStorage>('clip_storage', { serverId }),

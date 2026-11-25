@@ -36,6 +36,13 @@ pub struct Outgoing {
     pub view_once: Vec<String>,
 }
 
+/// How a send's files go up: temporary (a big file), spoilers (#289), view once (#311), by staged id.
+struct Marks<'a> {
+    temp_days: Option<u8>,
+    spoilers: &'a [String],
+    view_once: &'a [String],
+}
+
 /// `attachments://progress`: bytes stored so far over all of a send's files.
 #[derive(Clone, Debug, Serialize, PartialEq)]
 pub struct Progress {
@@ -180,23 +187,66 @@ impl Jobs {
             .remove(nonce);
     }
 
-    /// Upload what isn't stored yet, then send the message. On success the staged files are
-    /// forgotten (and our converted copies deleted).
-    pub async fn run(
+    /// Upload a send's files (in order) under `nonce`, keeping what each try stored so a retry with the same nonce
+    /// uploads only the rest (#618: a build's screenshots go up this way before the build is posted). The staged files
+    /// stay staged until `finish`. A second call while one is going is refused (`AlreadySending`).
+    #[allow(clippy::too_many_arguments)]
+    pub async fn upload_staged(
         &self,
         api: &Api,
         token: &str,
         stager: &Stager,
-        out: &Outgoing,
+        channel: ChannelId,
+        nonce: &str,
+        staged: &[String],
         on_progress: impl Fn(Progress) + Send + Sync + 'static,
-    ) -> Result<Message, SendError> {
-        let job = self.job(&out.nonce);
+    ) -> Result<Vec<AttachmentId>, SendError> {
+        let job = self.job(nonce);
         if job.running.swap(true, Ordering::SeqCst) {
             return Err(SendError::AlreadySending);
         }
         let _running = Running(job.clone());
-        let files: Vec<Staged> = out
-            .staged
+        let none = Marks {
+            temp_days: None,
+            spoilers: &[],
+            view_once: &[],
+        };
+        Self::upload_files(
+            &job,
+            api,
+            token,
+            stager,
+            channel,
+            nonce,
+            staged,
+            &none,
+            on_progress,
+        )
+        .await
+    }
+
+    /// What `upload_staged` uploaded was used: forget the send and its staged files.
+    pub fn finish(&self, nonce: &str, staged: &[String], stager: &Stager) {
+        self.done(nonce);
+        for id in staged {
+            stager.remove(id);
+        }
+    }
+
+    /// Upload what isn't stored yet; the ids of all of `staged`, in order.
+    #[allow(clippy::too_many_arguments)]
+    async fn upload_files(
+        job: &Arc<Job>,
+        api: &Api,
+        token: &str,
+        stager: &Stager,
+        channel: ChannelId,
+        nonce: &str,
+        staged: &[String],
+        marks: &Marks<'_>,
+        on_progress: impl Fn(Progress) + Send + Sync + 'static,
+    ) -> Result<Vec<AttachmentId>, SendError> {
+        let files: Vec<Staged> = staged
             .iter()
             .map(|id| stager.get(id).ok_or(SendError::NotStaged))
             .collect::<Result<_, _>>()?;
@@ -205,7 +255,7 @@ impl Jobs {
         let done_bytes = Arc::new(AtomicU64::new(0));
         let report = {
             let (nonce, on_progress, done_bytes) =
-                (out.nonce.clone(), on_progress.clone(), done_bytes.clone());
+                (nonce.to_string(), on_progress.clone(), done_bytes.clone());
             move |now: u64| {
                 on_progress(Progress {
                     nonce: nonce.clone(),
@@ -238,7 +288,7 @@ impl Jobs {
                         None => {
                             api.start_attachment(
                                 token,
-                                out.channel,
+                                channel,
                                 &StartAttachmentRequest {
                                     name: f.name.clone(),
                                     size: f.size,
@@ -247,12 +297,12 @@ impl Jobs {
                                     height: f.height,
                                     duration_ms: None,
                                     temp_days: if f.size > MAX_BYTES {
-                                        out.temp_days
+                                        marks.temp_days
                                     } else {
                                         None
                                     },
-                                    spoiler: out.spoilers.contains(&f.id),
-                                    view_once: out.view_once.contains(&f.id),
+                                    spoiler: marks.spoilers.contains(&f.id),
+                                    view_once: marks.view_once.contains(&f.id),
                                 },
                             )
                             .await?
@@ -324,6 +374,40 @@ impl Jobs {
             report(0);
             ids.push(id);
         }
+        Ok(ids)
+    }
+
+    /// Upload what isn't stored yet, then send the message. On success the staged files are
+    /// forgotten (and our converted copies deleted).
+    pub async fn run(
+        &self,
+        api: &Api,
+        token: &str,
+        stager: &Stager,
+        out: &Outgoing,
+        on_progress: impl Fn(Progress) + Send + Sync + 'static,
+    ) -> Result<Message, SendError> {
+        let job = self.job(&out.nonce);
+        if job.running.swap(true, Ordering::SeqCst) {
+            return Err(SendError::AlreadySending);
+        }
+        let _running = Running(job.clone());
+        let ids = Self::upload_files(
+            &job,
+            api,
+            token,
+            stager,
+            out.channel,
+            &out.nonce,
+            &out.staged,
+            &Marks {
+                temp_days: out.temp_days,
+                spoilers: &out.spoilers,
+                view_once: &out.view_once,
+            },
+            on_progress,
+        )
+        .await?;
         let body = SendMessageRequest {
             content: out.content.clone(),
             reply_to_id: out.reply_to,
