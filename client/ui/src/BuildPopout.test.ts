@@ -64,6 +64,9 @@ describe('BuildPopout', () => {
     expect(document.querySelector('.build-view h1')?.textContent).toBe('Bunny crit')
     expect(document.querySelector('.build-view .notes strong')?.textContent).toBe('bunny')
     expect(text()).not.toContain('Comments')
+    // the stacked media rules, never the build page's filling row (#618)
+    expect(document.querySelector('.build-view')?.getAttribute('data-layout')).toBe('stacked')
+    expect(document.querySelector('.build-view .media.fill, .build-view .media.wide')).toBeNull()
     // only the pop-out's own three commands are ever called
     const used = new Set(invoke.mock.calls.map(([c]) => c))
     for (const c of used) expect(['build_window_snapshot', 'build_window_image_urls', 'set_build_window_on_top']).toContain(c)

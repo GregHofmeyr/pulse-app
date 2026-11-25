@@ -14,7 +14,7 @@
   import { api, errorText } from '../lib/tauri'
   import type { BuildLink } from '../lib/protocol/BuildLink'
 
-  let { link, messageId, enlarged = $bindable(false), canEnlarge = false, onError = () => {} }: {
+  let { link, messageId, enlarged = $bindable(false), canEnlarge = false, fill = false, onError = () => {} }: {
     link: BuildLink
     /** The build's id (the player's key, with the link). */
     messageId: string
@@ -22,6 +22,8 @@
     enlarged?: boolean
     /** There is room to fill (the page's wide layout): Enlarge is offered, and applies, only then. */
     canEnlarge?: boolean
+    /** The page's media row fills its width (wide, Comments hidden): the player grows with its column, past 640px. */
+    fill?: boolean
     onError?: (text: string) => void
   } = $props()
 
@@ -80,7 +82,7 @@
 </script>
 
 {#if video}
-  <div class="build-video" class:enlarged={enlarged && canEnlarge}>
+  <div class="build-video" class:enlarged={enlarged && canEnlarge} class:fill>
     <div class="screen">
       {#if active}
         <iframe bind:this={frameEl} src={playerSrc(origin.origin!, e)} title={`${provider}: ${title}`} sandbox={sandboxFor(e)}
@@ -121,6 +123,7 @@
 <style>
   .build-video { display: flex; flex-direction: column; gap: 6px; max-width: 640px; }
   .build-video.enlarged { max-width: none; }
+  .build-video.fill { max-width: none; }
   .screen { position: relative; aspect-ratio: 16 / 9; border-radius: var(--radius-md); overflow: hidden; background: var(--bg-3); }
   .screen img, .screen iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; object-fit: cover; }
   .ph { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--text-3); }
