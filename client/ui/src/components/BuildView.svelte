@@ -10,7 +10,7 @@
   let { title, gameName, guessed = false, authorName, savedAt, updatedAt, notes, screenshots, link, archived, quickDrop = false, onImage, video, actions }: {
     title: string
     gameName: string | null
-    /** The game was guessed from the link's title. */
+    /** The game was picked automatically from the link's title (shown "auto picked"). */
     guessed?: boolean
     authorName: string
     /** When it was saved and last updated, as shown ("2h ago"). */
@@ -40,7 +40,7 @@
 <article class="build-view" class:archived>
   <header>
     <div class="heading">
-      <span class="caption">{caption}{#if gameName && guessed}<span class="guessed"> · guessed</span>{/if}</span>
+      <span class="caption">{caption}{#if gameName && guessed}<span class="auto-picked">{' · auto picked'}</span>{/if}</span>
       <h1>{title}</h1>
       <span class="meta">{meta}</span>
       {#if archived || quickDrop}
@@ -81,7 +81,6 @@
   header { display: flex; align-items: flex-start; gap: 12px; }
   .heading { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
   .caption { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--text-3); overflow-wrap: anywhere; }
-  .guessed { text-transform: none; letter-spacing: 0; font-weight: 400; font-style: italic; }
   h1 { margin: 0; font-size: 22px; font-weight: 700; color: var(--text); overflow-wrap: anywhere; }
   .meta { font-size: 13px; color: var(--text-3); overflow-wrap: anywhere; }
   .badges { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }

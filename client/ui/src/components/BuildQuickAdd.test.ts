@@ -162,7 +162,7 @@ describe('BuildQuickAdd', () => {
     app.state = applyEvent(app.state, { t: 'MessageCreated', d: { message: guessed, nonce: null } }, Date.now())
     await flush()
     expect(document.querySelector('.quick-add .saved .caption')?.textContent).toContain('The First Descendant')
-    expect(document.querySelector('.quick-add .saved .guessed')?.textContent).toContain('guessed')
+    expect(document.querySelector('.quick-add .saved .auto-picked')?.textContent).toBe(' · auto picked')
     document.querySelector<HTMLButtonElement>('.quick-add .saved .clear-game')!.click()
     await flush()
     expect(calls('update_build')[0][1]).toEqual({

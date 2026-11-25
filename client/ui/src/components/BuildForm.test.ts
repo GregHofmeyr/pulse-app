@@ -204,9 +204,9 @@ describe('BuildForm', () => {
     type Body = { game_id: string | null; game?: unknown; mark_sorted: boolean }
     const body = () => (calls('update_build')[0][1] as { body: Body }).body
     await form({ build: guessed })
-    // the guess shows in the box, marked as guessed, with Keep
+    // the automatic pick shows in the box, marked as auto picked, with Keep
     expect(q<HTMLInputElement>('input[aria-label="Game"]').value).toBe('The First Descendant')
-    expect(q('.guess').textContent).toContain('guessed')
+    expect(q('.guess .hint').textContent).toBe('Game auto picked from the link')
     expect(q('.guess button.keep')).not.toBeNull()
     // still a quick drop with only a guess: Mark as sorted is offered
     expect(document.querySelector('.build-form input[name=sorted]')).not.toBeNull()

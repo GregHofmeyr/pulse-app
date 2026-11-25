@@ -1,7 +1,7 @@
 <script lang="ts">
   // Quick add (#618, spec §4.3): paste a link or an image, or type a title, and press Enter. It saves at once as a quick
   // drop; the build last saved shows under the field, its title filling in when the link's page is fetched and a
-  // guessed game marked "guessed" with a × that clears it. "Add details" opens the full form with what's here instead.
+  // automatically picked game marked "auto picked" with a × that clears it. "Add details" opens the full form with what's here instead.
   import { onMount, tick } from 'svelte'
   import Icon from './Icon.svelte'
   import { buildGameName, buildShots } from '../lib/builds'
@@ -181,7 +181,7 @@
     {:else if saved?.build}
       <p class="saved">
         {#if game}
-          <span class="caption">{game}{#if saved.build.game_guessed}<span class="guessed"> · guessed</span>
+          <span class="caption">{game}{#if saved.build.game_guessed}<span class="auto-picked">{' · auto picked'}</span>
             <button type="button" class="clear-game" aria-label="Not {game}: clear the game" data-tip="Not this game" disabled={clearing} onclick={() => void clearGame()}><Icon name="x" size={11} /></button>{/if}</span>
         {/if}
         <span class="title">{saved.build.title}</span>
@@ -202,7 +202,6 @@
   .status:empty { margin-top: -6px; }
   .saved { margin: 0; display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 13px; color: var(--text-2); }
   .saved .caption { display: inline-flex; align-items: center; gap: 2px; font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--text-3); }
-  .saved .guessed { text-transform: none; letter-spacing: 0; font-weight: 400; font-style: italic; }
   .clear-game { display: inline-flex; padding: 2px; border: 0; border-radius: var(--radius-xs); background: transparent; color: var(--text-3); cursor: pointer; }
   .clear-game:hover { background: var(--bg-3); color: var(--text); }
   .saved .title { font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }

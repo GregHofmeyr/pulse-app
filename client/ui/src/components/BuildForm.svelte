@@ -38,8 +38,8 @@
   const start = untrack(() => prefill)
   const b = editing?.build ?? null
   let title = $state(b?.title ?? start?.title ?? '')
-  // A guessed game (from the link's title) shows in the box, marked as guessed, until the person keeps it, picks
-  // another or clears it; saved untouched, it's sent as "unchanged" and stays a guess (and a quick drop stays one).
+  // A game picked automatically (from the link's title) shows in the box, marked "auto picked", until the person keeps
+  // it, picks another or clears it; saved untouched, it's sent as "unchanged" and stays a guess (and a quick drop stays one).
   let game = $state<string | null>(b?.game_id ?? null)
   let guessed = $state(!!b?.game_guessed && !!b?.game_id)
   let link = $state(b?.link?.url ?? start?.link ?? '')
@@ -211,7 +211,7 @@
       <span class="label">Game</span>
       <GamePicker {serverId} value={game} onChange={(id) => { game = id; guessed = false }} addLabel={(n) => `+ Use '${n}' as a new game`} />
       {#if guessed}
-        <p class="guess"><span class="hint">Game guessed from the link</span>
+        <p class="guess"><span class="hint">Game auto picked from the link</span>
           <button type="button" class="btn btn-quiet keep" onclick={() => (guessed = false)}>Keep</button></p>
       {/if}
     </div>
