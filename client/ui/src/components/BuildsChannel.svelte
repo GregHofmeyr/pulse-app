@@ -5,12 +5,19 @@
   import { tick, untrack } from 'svelte'
   import BuildCard from './BuildCard.svelte'
   import BuildForm from './BuildForm.svelte'
+  import BuildMenu from './BuildMenu.svelte'
+  import BuildsSelectBar from './BuildsSelectBar.svelte'
+  import DeleteBuildsDialog from './DeleteBuildsDialog.svelte'
   import BuildPage from './BuildPage.svelte'
   import BuildQuickAdd from './BuildQuickAdd.svelte'
   import BuildRow from './BuildRow.svelte'
   import BuildsHeader from './BuildsHeader.svelte'
   import BuildsPanel from './BuildsPanel.svelte'
   import { buildFacetsOf, buildFeedFailed, dropBuildFeed, buildFeedKey, buildFilter, loadBuildPage, openBuildFeed, setBuildFacets, type BuildFeed, type BuildFilter } from '../lib/builds'
+  import { BULK_ACTIONS, batchChunks, bulkPlan, bulkSummary, rangeSelected, toggleSelected, type BulkAction, type BuildMenuItem, type SelectBarAction } from '../lib/buildSelect'
+  import { buildRights, isArchived } from '../lib/builds'
+  import { menuPoint } from '../lib/participantMenu'
+  import type { BuildsBatchResult } from '../lib/protocol/BuildsBatchResult'
   import { classifyPaste, type BuildPaste, type QuickPrefill } from '../lib/buildPaste'
   import { panelOpen, setPanelOpen, setView, viewOf, type BuildView } from '../lib/buildPrefs'
   import { nameOfIn } from '../lib/selectors'
@@ -290,6 +297,93 @@
     form = p
   }
 
+  // --- right-click menu and multi-select (#617) ---
+  let menu = $state<{ message: Message; x: number; y: number; opener: HTMLElement } | null>(null)
+  function openMenu(m: Message, e: MouseEvent | KeyboardEvent, opener: HTMLElement) {
+    menu = { message: m, ...menuPoint(e, opener), opener }
+  }
+  /** The build the full form edits (Edit in its menu). */
+  let editing = $state<Message | null>(null)
+  /** Delete…, asked first: the builds it deletes, how many of the selection it skips, and how. */
+  let asking = $state<{ count: number; skipped: number; go: () => Promise<void> } | null>(null)
+  const report = (what: string) => (e: unknown) => { ui.notice = `Couldn't ${what}: ${errorText(e)}` }
+  function pickMenu(it: BuildMenuItem, m: Message) {
+    if (it === 'open') return openPage(m)
+    if (it === 'edit') return void (editing = m)
+    if (it === 'select') return startSelecting(m)
+    if (it === 'archive' || it === 'restore') return void api.setBuildArchived(m.id, it === 'archive').catch(report(`${it} that build`))
+    asking = { count: 1, skipped: 0, go: () => api.deleteBuild(m.id) }
+  }
+
+  let selecting = $state(false)
+  /** Selected build ids, in the order picked; only those still shown count. */
+  let picked = $state<string[]>([])
+  /** Where a Shift+click's range starts: the build last clicked. */
+  let anchor: string | null = null
+  const selected = $derived(items.filter((m) => picked.includes(m.id)))
+  function startSelecting(m: Message) {
+    selecting = true
+    picked = [m.id]
+    anchor = m.id
+  }
+  function stopSelecting() {
+    selecting = false
+    picked = []
+    anchor = null
+  }
+  function select(m: Message, shift: boolean) {
+    if (!selecting) return startSelecting(m)
+    picked = shift ? rangeSelected(picked, items.map((x) => x.id), anchor, m.id) : toggleSelected(picked, m.id)
+    anchor = m.id
+  }
+  // another filter, or the build page: selecting ends
+  $effect(() => {
+    void key
+    if (openNow) return untrack(stopSelecting)
+    return () => untrack(stopSelecting)
+  })
+  function browseKey(e: KeyboardEvent) {
+    if (e.key !== 'Escape' || !selecting || e.defaultPrevented || menu || asking) return
+    e.preventDefault()
+    stopSelecting()
+  }
+
+  // The bar's actions. Mixed rights: an action applies to the selected builds you may change and skips the rest, saying
+  // how many (the bar says "N not yours" beforehand); it's disabled when it applies to none you may change.
+  const RUN: Record<BulkAction['key'], (ids: string[]) => Promise<BuildsBatchResult>> = {
+    archive: (ids) => api.archiveManyBuilds(channelId, ids, true),
+    restore: (ids) => api.archiveManyBuilds(channelId, ids, false),
+    delete: (ids) => api.deleteManyBuilds(channelId, ids),
+  }
+  const ICON: Record<BulkAction['key'], SelectBarAction['icon']> = { archive: 'inbox', restore: 'inbox', delete: 'trash' }
+  let busy = $state(false)
+  async function runBulk(a: BulkAction, ids: string[], skipped: number) {
+    let done = 0
+    for (const chunk of batchChunks(ids)) {
+      const r = await RUN[a.key](chunk)
+      done += r.done
+      skipped += r.skipped
+    }
+    ui.notice = bulkSummary(a.done, done, skipped)
+    stopSelecting()
+  }
+  function bulk(a: BulkAction) {
+    const { ids, skipped } = bulkPlan(app.state, serverId, selected, a)
+    if (!ids.length) return
+    if (a.confirm) {
+      asking = { count: ids.length, skipped, go: () => runBulk(a, ids, skipped) }
+      return
+    }
+    busy = true
+    runBulk(a, ids, skipped).catch(report(`${a.label.toLowerCase()} them`)).finally(() => (busy = false))
+  }
+  const barActions = $derived<SelectBarAction[]>(
+    BULK_ACTIONS.filter((a) => a.key !== 'restore' || selected.some(isArchived))
+      .filter((a) => a.key !== 'archive' || !selected.length || selected.some((m) => !isArchived(m)))
+      .map((a) => ({ key: a.key, label: a.label, icon: ICON[a.key], danger: a.confirm, disabled: bulkPlan(app.state, serverId, selected, a).ids.length === 0, run: () => bulk(a) })),
+  )
+  const notYours = $derived(selected.filter((m) => { const r = buildRights(app.state, serverId, m); return !r.archive && !r.delete }).length)
+
   const empty = $derived(!!feed?.start && items.length === 0)
   const filtered = $derived(!!filter.game || !!filter.q)
 </script>
@@ -299,8 +393,13 @@
     <BuildPage message={openNow} {serverId} onBack={() => void closePage()} />
   {:else}
     <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div class="browse" tabindex="-1" onpaste={browsePaste}>
-      <BuildsHeader {title} {count} {q} onQ={(v) => (q = v)} {view} onView={pickView} {panel} onPanel={togglePanel} onAdd={() => openQuick()} />
+    <div class="browse" tabindex="-1" onpaste={browsePaste} onkeydown={browseKey}>
+      <div class="head">
+        <BuildsHeader {title} {count} {q} onQ={(v) => (q = v)} {view} onView={pickView} {panel} onPanel={togglePanel} onAdd={() => openQuick()} />
+        {#if selecting}
+          <BuildsSelectBar count={selected.length} {notYours} actions={barActions} {busy} onClear={() => { picked = []; anchor = null }} onCancel={stopSelecting} />
+        {/if}
+      </div>
       {#if quick}
         <BuildQuickAdd bind:this={quickAdd} {channelId} {serverId} initial={quick.initial} onDetails={details} onClose={() => (quick = null)} />
       {/if}
@@ -312,11 +411,11 @@
             <p class="empty">{filtered ? 'No builds match.' : 'No builds yet. Save your first with + Add build: a title, a link, a screenshot or a few notes is enough.'}</p>
           {:else if view === 'gallery'}
             <div class="grid">
-              {#each items as m (m.id)}<BuildCard message={m} {serverId} {nameOf} onOpen={openPage} />{/each}
+              {#each items as m (m.id)}<BuildCard message={m} {serverId} {nameOf} onOpen={openPage} {selecting} selected={picked.includes(m.id)} onSelect={select} onMenu={openMenu} />{/each}
             </div>
           {:else}
             <div class="rows">
-              {#each items as m (m.id)}<BuildRow message={m} {serverId} {nameOf} onOpen={openPage} />{/each}
+              {#each items as m (m.id)}<BuildRow message={m} {serverId} {nameOf} onOpen={openPage} {selecting} selected={picked.includes(m.id)} onSelect={select} onMenu={openMenu} />{/each}
             </div>
           {/if}
           <div class="sentinel" bind:this={sentinel}></div>
@@ -335,11 +434,22 @@
 {#if form}
   <BuildForm {channelId} {serverId} prefill={form} onClose={() => (form = null)} />
 {/if}
+{#if editing}
+  <BuildForm {channelId} {serverId} build={editing} onClose={() => (editing = null)} />
+{/if}
+{#each menu ? [menu] : [] as mm (mm)}
+  <BuildMenu message={mm.message} {serverId} x={mm.x} y={mm.y} opener={mm.opener} onPick={pickMenu} onClose={() => (menu = null)} />
+{/each}
+{#if asking}
+  <DeleteBuildsDialog count={asking.count} skipped={asking.skipped} onConfirm={asking.go} onClose={() => (asking = null)} />
+{/if}
 
 <style>
   .chan { flex: 1; display: flex; flex-direction: column; min-height: 0; position: relative; }
   /* focusable (-1) so a click on its blank space puts the focus here, where a paste is heard */
   .browse { flex: 1; display: flex; flex-direction: column; min-height: 0; outline: none; }
+  /* the selection bar lies over the header, in its box */
+  .head { position: relative; flex-shrink: 0; }
   .body { flex: 1; display: flex; min-height: 0; }
   .feed { flex: 1; min-width: 0; overflow-y: auto; display: flex; flex-direction: column; }
   .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 14px; padding: 16px 18px 8px; align-items: start; }

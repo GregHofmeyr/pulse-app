@@ -4,18 +4,27 @@
   // is greyed.
   import BuildPeek from './BuildPeek.svelte'
   import BuildThumb from './BuildThumb.svelte'
+  import Icon from './Icon.svelte'
+  import { isMenuKey } from '../lib/participantMenu'
   import { peekHover } from '../lib/hoverIntent'
   import { buildGameName, commentCount, isArchived, isQuickDrop } from '../lib/builds'
   import { relativeTime } from '../lib/conversations'
   import { app, clock } from '../lib/store.svelte'
   import type { Message } from '../lib/protocol/Message'
 
-  let { message, serverId, nameOf, onOpen }: {
+  let { message, serverId, nameOf, onOpen, selecting = false, selected = false, onSelect, onMenu }: {
     message: Message
     serverId: string
     nameOf: (userId: string | null) => string
     /** Opens the build (its page); without it the card is only shown. */
     onOpen?: (m: Message) => void
+    /** Multi-select is on (#617): a click toggles it instead of opening it, and it shows its check state. */
+    selecting?: boolean
+    selected?: boolean
+    /** A click while selecting, or a Shift+click any time (`shift`); without it there's no selecting. */
+    onSelect?: (m: Message, shift: boolean) => void
+    /** Its right-click menu: a right-click, or the menu key / Shift+F10 on it. */
+    onMenu?: (m: Message, e: MouseEvent | KeyboardEvent, opener: HTMLElement) => void
   } = $props()
 
   const b = $derived(message.build!)
@@ -39,7 +48,14 @@
     byKey = false
   }
   function keys(e: KeyboardEvent) {
-    if (e.key !== ' ') return
+    if (onMenu && opener && isMenuKey(e)) {
+      e.preventDefault()
+      hover.stop()
+      peeking = false
+      return onMenu(message, e, opener)
+    }
+    // selecting, Space ticks it (a checkbox's key), never peeks
+    if (e.key !== ' ' || selecting) return
     e.preventDefault()
     if (e.repeat) return
     hover.stop()
@@ -48,17 +64,38 @@
     peeking = true
   }
   /** A button presses on Space's keyup: the peek took Space instead. */
-  const keyUp = (e: KeyboardEvent) => { if (e.key === ' ') e.preventDefault() }
+  const keyUp = (e: KeyboardEvent) => { if (e.key === ' ' && !selecting) e.preventDefault() }
+  // selecting: no peek
+  $effect(() => {
+    if (!selecting) return
+    hover.stop()
+    peeking = false
+  })
+  const enter = () => { if (!selecting) hover.enter() }
+  function click(e: MouseEvent) {
+    if (onSelect && (selecting || e.shiftKey)) return onSelect(message, e.shiftKey)
+    onOpen?.(message)
+  }
+  /** A Shift+click selects builds, not the page's text. */
+  const down = (e: MouseEvent) => { if (e.shiftKey && onSelect) e.preventDefault() }
+  function menu(e: MouseEvent) {
+    if (!onMenu || !opener) return
+    e.preventDefault()
+    hover.stop()
+    peeking = false
+    onMenu(message, e, opener)
+  }
   const meta = $derived([nameOf(message.author_id), relativeTime(message.created_at, Date.parse(clock.nowIso)), commentCount(message)].filter(Boolean).join(' · '))
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-<article bind:this={el} class="build-card" class:archived={isArchived(message)} data-build-id={message.id} onmouseenter={hover.enter} onmouseleave={hover.leave}>
-  <svelte:element this={onOpen ? 'button' : 'div'} type={onOpen ? 'button' : undefined} class="open" role={onOpen ? undefined : 'presentation'}
-    bind:this={opener} aria-expanded={onOpen ? peeking : undefined} aria-controls={onOpen && peeking ? peekId : undefined}
-    onclick={onOpen ? () => onOpen(message) : undefined} onkeydown={keys} onkeyup={keyUp}>
+<article bind:this={el} class="build-card" class:archived={isArchived(message)} class:selected={selecting && selected} data-build-id={message.id} onmouseenter={enter} onmouseleave={hover.leave} oncontextmenu={menu}>
+  <svelte:element this={onOpen ? 'button' : 'div'} type={onOpen ? 'button' : undefined} class="open" role={!onOpen ? 'presentation' : selecting ? 'checkbox' : undefined}
+    bind:this={opener} aria-checked={onOpen && selecting ? selected : undefined} aria-expanded={onOpen && !selecting ? peeking : undefined}
+    aria-controls={onOpen && peeking && !selecting ? peekId : undefined} onclick={onOpen ? click : undefined} onmousedown={down} onkeydown={keys} onkeyup={keyUp}>
     <div class="media">
       <BuildThumb {message} dim={isArchived(message)} />
+      {#if selecting}<span class="check" class:on={selected} aria-hidden="true">{#if selected}<Icon name="check" size={12} />{/if}</span>{/if}
       {#if b.link}<span class="tag video"><span aria-hidden="true">▶</span> video</span>{/if}
       <span class="badges">
         {#if isQuickDrop(message)}<span class="badge">QUICK DROP</span>{/if}
@@ -80,6 +117,8 @@
 <style>
   .build-card { min-width: 0; border-radius: var(--radius-lg); background: var(--bg-2); border: 1px solid var(--bg-3); overflow: hidden; content-visibility: auto; contain-intrinsic-size: auto 280px; transition: border-color var(--dur) var(--ease); }
   .build-card:hover { border-color: var(--bg-4); }
+  /* selected: the border's colour and a ring outside it (no size change) */
+  .build-card.selected { border-color: var(--focus-ring); box-shadow: 0 0 0 1px var(--focus-ring); }
   .open { display: flex; flex-direction: column; width: 100%; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; }
   button.open { cursor: pointer; }
   .media { position: relative; aspect-ratio: 16 / 9; }
@@ -93,4 +132,7 @@
   .title { font-size: 15px; font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .notes { font-size: 13px; color: var(--text-2); line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; white-space: pre-line; }
   .meta { margin-top: 4px; font-size: 12px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  /* the check state while selecting: over the picture's corner, so nothing moves */
+  .check { position: absolute; right: 8px; top: 8px; width: 20px; height: 20px; box-sizing: border-box; display: grid; place-items: center; border-radius: var(--radius-xs); border: 2px solid var(--text-2); background: var(--scrim-strong); color: var(--on-accent); pointer-events: none; }
+  .check.on { border-color: var(--focus-ring); background: var(--accent); }
 </style>

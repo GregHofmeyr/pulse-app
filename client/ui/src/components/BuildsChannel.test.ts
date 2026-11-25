@@ -15,7 +15,7 @@ vi.stubGlobal('matchMedia', fakeMatchMedia(false).matchMedia)
 import BuildsChannel from './BuildsChannel.svelte'
 import { app } from '../lib/store.svelte'
 import { buildFeedKey } from '../lib/builds'
-import { applyReady, emptyState } from '../lib/state'
+import { applyEvent, applyReady, emptyState } from '../lib/state'
 import { testMe, testReady } from '../lib/testReady'
 import { windowFocus } from '../lib/windowFocus.svelte'
 
@@ -56,8 +56,10 @@ beforeEach(() => {
   invoke.mockImplementation(async (cmd: string, args?: unknown) => {
     if (cmd === 'list_builds') return answer(args as Record<string, unknown>)
     if (cmd === 'build_facets') return { total: 0, games: [] }
+    if (cmd === 'list_replies') return []
     return undefined
   })
+  Element.prototype.scrollTo = () => {}
   app.state = applyReady(emptyState(), ready())
 })
 afterEach(() => {
@@ -255,5 +257,273 @@ describe('BuildsChannel: accessibility', () => {
     const src = (p: string) => readFileSync(resolve(__dirname, p), 'utf8')
     for (const f of ['BuildCard.svelte', 'BuildRow.svelte']) expect(src(f)).not.toMatch(/\.archived[^{]*\{[^}]*opacity/)
     expect(src('BuildThumb.svelte')).toMatch(/\.thumb\.dim \{[^}]*opacity/)
+  })
+})
+
+describe('BuildsChannel: right-click menu', () => {
+  const mine = (n: string, b: Partial<Build> = {}) => build(n, b, { author_id: 'U1' })
+  const card = (n: string) => document.querySelector<HTMLElement>(`.build-card[data-build-id="${n}"]`)!
+  const opener = (n: string) => card(n).querySelector<HTMLElement>('.open')!
+  const rightClick = (el: HTMLElement) => {
+    el.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 20, clientY: 20 }))
+    flushSync()
+  }
+  const items = () => [...document.querySelectorAll<HTMLElement>('.build-menu [role=menuitem]')].map((b) => b.textContent?.trim())
+  const item = (l: string) => [...document.querySelectorAll<HTMLElement>('.build-menu [role=menuitem]')].find((b) => b.textContent?.trim().startsWith(l))!
+
+  it('offers Edit, Archive and Delete only where buildRights allows', async () => {
+    pages = [[mine('M002'), build('M001')]]
+    await show()
+    rightClick(card('M002'))
+    expect(items()).toEqual(['Open', 'Edit', 'Archive', 'Delete…', 'Select'])
+    rightClick(card('M001'))
+    expect(items()).toEqual(['Open', 'Select'])
+  })
+
+  it("the server's owner gets Archive and Delete on anyone's, but not Edit", async () => {
+    app.state = applyReady(emptyState(), { ...ready(), servers: [{ id: 'S1', name: 'Main', icon_hash: null, owner_id: 'U1' } as never] })
+    pages = [[build('M001')]]
+    await show()
+    rightClick(card('M001'))
+    expect(items()).toEqual(['Open', 'Archive', 'Delete…', 'Select'])
+  })
+
+  it('opens from the keyboard (the menu key or Shift+F10) with the focus on its first item', async () => {
+    pages = [[mine('M002')]]
+    await show()
+    opener('M002').focus()
+    opener('M002').dispatchEvent(new KeyboardEvent('keydown', { key: 'F10', shiftKey: true, bubbles: true, cancelable: true }))
+    flushSync()
+    await settle()
+    expect(items()[0]).toBe('Open')
+    expect(document.activeElement?.textContent?.trim()).toBe('Open')
+    item('Open').click()
+    flushSync()
+    expect(document.querySelector('.build-menu')).toBeNull()
+  })
+
+  it('the menu key opens it too, in the list as well', async () => {
+    pages = [[mine('M002')]]
+    await show()
+    ;[...document.querySelectorAll<HTMLButtonElement>('[role=radiogroup][aria-label="View"] [role=radio]')].find((b) => b.textContent === 'List')!.click()
+    flushSync()
+    const row = document.querySelector<HTMLElement>('.build-row .open')!
+    row.dispatchEvent(new KeyboardEvent('keydown', { key: 'ContextMenu', bubbles: true, cancelable: true }))
+    flushSync()
+    expect(items()).toEqual(['Open', 'Edit', 'Archive', 'Delete…', 'Select'])
+  })
+
+  it('Open opens the build page; Archive archives it', async () => {
+    pages = [[mine('M002')]]
+    await show()
+    rightClick(card('M002'))
+    item('Archive').click()
+    flushSync()
+    expect(calls('set_build_archived')[0][1]).toEqual({ messageId: 'M002', archived: true })
+    rightClick(card('M002'))
+    item('Open').click()
+    flushSync()
+    expect(document.querySelector('[data-build-id="M002"].build-card')).toBeNull()
+  })
+
+  it('Delete asks first, then deletes', async () => {
+    pages = [[mine('M002')]]
+    await show()
+    rightClick(card('M002'))
+    item('Delete').click()
+    flushSync()
+    const dialog = document.querySelector<HTMLElement>('[role=dialog]')!
+    expect(dialog.textContent).toContain('Delete this build?')
+    expect(calls('delete_build')).toHaveLength(0)
+    ;[...dialog.querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent?.trim() === 'Cancel')!.click()
+    flushSync()
+    expect(document.querySelector('[role=dialog]')).toBeNull()
+    rightClick(card('M002'))
+    item('Delete').click()
+    flushSync()
+    ;[...document.querySelectorAll<HTMLButtonElement>('[role=dialog] button')].find((b) => b.textContent?.trim() === 'Delete')!.click()
+    await settle()
+    expect(calls('delete_build')[0][1]).toEqual({ messageId: 'M002' })
+    expect(calls('delete_many_builds')).toHaveLength(0)
+  })
+})
+
+describe('BuildsChannel: multi-select', () => {
+  const mine = (n: string, b: Partial<Build> = {}) => build(n, b, { author_id: 'U1' })
+  const card = (n: string) => document.querySelector<HTMLElement>(`[data-build-id="${n}"]`)!
+  const opener = (n: string) => card(n).querySelector<HTMLElement>('.open')!
+  const click = (n: string, shiftKey = false) => {
+    opener(n).dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, shiftKey }))
+    flushSync()
+  }
+  const checked = () => [...document.querySelectorAll<HTMLElement>('[data-build-id] .open[role=checkbox]')].filter((e) => e.getAttribute('aria-checked') === 'true').map((e) => e.closest<HTMLElement>('[data-build-id]')!.dataset.buildId)
+  const bar = () => document.querySelector<HTMLElement>('[role=toolbar][aria-label="Selected builds"]')
+  const barButton = (l: string) => [...(bar()?.querySelectorAll<HTMLButtonElement>('button') ?? [])].find((b) => (b.getAttribute('aria-label') ?? b.textContent?.trim()) === l)
+  const status = () => document.querySelector('[data-testid="builds-selection-status"]')?.textContent?.trim()
+  const four = () => [mine('M004'), mine('M003'), build('M002'), mine('M001')]
+
+  it('Shift+click starts selecting with that build; the bar says how many', async () => {
+    pages = [four()]
+    await show()
+    expect(bar()).toBeNull()
+    click('M003', true)
+    expect(bar()).not.toBeNull()
+    expect(checked()).toEqual(['M003'])
+    expect(status()).toBe('1 selected')
+    // every build shows its check state, as a checkbox
+    expect(document.querySelectorAll('[data-build-id] .open[role=checkbox]')).toHaveLength(4)
+    expect(opener('M004').getAttribute('aria-checked')).toBe('false')
+    // the build page didn't open
+    expect(document.querySelectorAll('.build-card')).toHaveLength(4)
+  })
+
+  it('"Select" in the menu starts it too', async () => {
+    pages = [four()]
+    await show()
+    card('M002').dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 5, clientY: 5 }))
+    flushSync()
+    ;[...document.querySelectorAll<HTMLElement>('.build-menu [role=menuitem]')].find((b) => b.textContent?.trim() === 'Select')!.click()
+    flushSync()
+    expect(checked()).toEqual(['M002'])
+  })
+
+  it('a click toggles, Shift+click adds a range, in both views', async () => {
+    pages = [four()]
+    await show()
+    click('M003', true)
+    click('M001', true)
+    expect(checked()).toEqual(['M003', 'M002', 'M001'])
+    click('M004')
+    expect(checked()).toEqual(['M004', 'M003', 'M002', 'M001'])
+    click('M004')
+    expect(checked()).toEqual(['M003', 'M002', 'M001'])
+    expect(status()).toBe('3 selected')
+    // the list keeps it
+    ;[...document.querySelectorAll<HTMLButtonElement>('[role=radiogroup][aria-label="View"] [role=radio]')].find((b) => b.textContent === 'List')!.click()
+    flushSync()
+    expect(document.querySelectorAll('.build-row .open[role=checkbox][aria-checked=true]')).toHaveLength(3)
+  })
+
+  it('Escape or Cancel leaves it', async () => {
+    pages = [four()]
+    await show()
+    click('M004', true)
+    opener('M004').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+    flushSync()
+    expect(bar()).toBeNull()
+    expect(document.querySelector('[data-build-id] .open[role=checkbox]')).toBeNull()
+    click('M004', true)
+    barButton('Cancel')!.click()
+    flushSync()
+    expect(bar()).toBeNull()
+    // a plain click opens again
+    click('M004')
+    expect(document.querySelector('.build-card')).toBeNull()
+  })
+
+  it('Clear empties the selection but keeps selecting', async () => {
+    pages = [four()]
+    await show()
+    click('M004', true)
+    click('M003')
+    barButton('Clear')!.click()
+    flushSync()
+    expect(checked()).toEqual([])
+    expect(status()).toBe('0 selected')
+    expect(bar()).not.toBeNull()
+  })
+
+  it('Archive sends the builds you may change in one batch and says how many were skipped', async () => {
+    pages = [four()]
+    invoke.mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd === 'list_builds') return answer(args as Record<string, unknown>)
+      if (cmd === 'build_facets') return { total: 0, games: [] }
+      if (cmd === 'archive_many_builds') return { done: 2, skipped: 0 }
+      return undefined
+    })
+    await show()
+    click('M003', true)
+    click('M001', true)
+    // sam's M002 isn't yours: the bar says so before you act
+    expect(bar()!.textContent).toContain('1 not yours')
+    barButton('Archive')!.click()
+    await settle()
+    expect(calls('archive_many_builds')).toEqual([['archive_many_builds', { channelId: 'B1', body: { message_ids: ['M003', 'M001'], archived: true } }]])
+    const { ui } = await import('../lib/store.svelte')
+    expect(ui.notice).toBe("Archived 2 builds. 1 skipped: they aren't yours to change.")
+    expect(bar()).toBeNull()
+  })
+
+  it('Restore shows only with an archived build selected, and restores', async () => {
+    pages = [[mine('M002', { archived_at: '2026-10-05T00:00:00.000Z', archived_by: 'U1' }), mine('M001')]]
+    invoke.mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd === 'list_builds') return answer(args as Record<string, unknown>)
+      if (cmd === 'archive_many_builds') return { done: 1, skipped: 0 }
+      return cmd === 'build_facets' ? { total: 0, games: [] } : undefined
+    })
+    await show()
+    click('M001', true)
+    expect(barButton('Restore')).toBeUndefined()
+    expect(barButton('Archive')).toBeDefined()
+    click('M002')
+    barButton('Restore')!.click()
+    await settle()
+    expect(calls('archive_many_builds')[0][1]).toEqual({ channelId: 'B1', body: { message_ids: ['M002'], archived: false } })
+  })
+
+  it('Delete asks with the count first, then deletes in one batch', async () => {
+    pages = [four()]
+    invoke.mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd === 'list_builds') return answer(args as Record<string, unknown>)
+      if (cmd === 'delete_many_builds') return { done: 2, skipped: 1 }
+      return cmd === 'build_facets' ? { total: 0, games: [] } : undefined
+    })
+    await show()
+    click('M004', true)
+    click('M003')
+    barButton('Delete')!.click()
+    flushSync()
+    const dialog = document.querySelector<HTMLElement>('[role=dialog]')!
+    expect(dialog.textContent).toContain('Delete 2 builds?')
+    expect(calls('delete_many_builds')).toHaveLength(0)
+    ;[...dialog.querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent?.trim() === 'Delete 2 builds')!.click()
+    await settle()
+    expect(calls('delete_many_builds')[0][1]).toEqual({ channelId: 'B1', body: { message_ids: ['M004', 'M003'] } })
+    const { ui } = await import('../lib/store.svelte')
+    // the server skipped one (gone meanwhile): said too
+    expect(ui.notice).toBe("Deleted 2 builds. 1 skipped: they aren't yours to change.")
+  })
+
+  it('an action none of the selection allows is disabled', async () => {
+    pages = [four()]
+    await show()
+    click('M002', true)
+    expect(barButton('Archive')!.disabled).toBe(true)
+    expect(barButton('Delete')!.disabled).toBe(true)
+  })
+
+  it('the events keep the view and the count current', async () => {
+    pages = [four()]
+    await show()
+    click('M004', true)
+    click('M003')
+    app.state = applyEvent(app.state, { t: 'BuildsArchived', d: { channel_id: 'B1', message_ids: ['M004'], archived_at: '2026-10-06T00:00:00.000Z', archived_by: 'U1' } }, Date.now())
+    flushSync()
+    expect(card('M004')).toBeNull()
+    expect(status()).toBe('1 selected')
+    app.state = applyEvent(app.state, { t: 'MessageDeleted', d: { channel_id: 'B1', message_id: 'M003', author_id: 'U1', mentions: [], thread_root_id: null } }, Date.now())
+    flushSync()
+    expect(status()).toBe('0 selected')
+  })
+
+  it('the bar sits over the header (no jump), uses colour tokens only and announces the count', () => {
+    const src = (p: string) => readFileSync(resolve(__dirname, p), 'utf8')
+    const bar = src('BuildsSelectBar.svelte')
+    expect(bar).toMatch(/\.select-bar \{[^}]*position: absolute;[^}]*inset: 0/)
+    expect(bar).toMatch(/role="status"/)
+    for (const f of ['BuildsSelectBar.svelte', 'BuildCard.svelte', 'BuildRow.svelte', 'BuildMenu.svelte']) {
+      const style = src(f).split('<style>')[1] ?? ''
+      expect(style).not.toMatch(/#[0-9a-fA-F]{3,8}\b|rgba?\(/)
+    }
   })
 })
