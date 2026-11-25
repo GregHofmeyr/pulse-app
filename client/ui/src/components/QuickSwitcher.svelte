@@ -4,9 +4,12 @@
   // and lib/quickActions.ts; the shell opens it (Ctrl+K, `/` outside a text field, or the global keybind from anywhere
   // on the desktop, #319) and does the going. Messages (#320) are the one slow section (lib/quickMessages.ts): searched
   // once typing pauses, listed under the instant ones: where you are first, then everywhere else you can read (#331).
+  // Builds (#619) are another slow section, first under the instant ones; `builds:` lists only them (lib/quickBuilds.ts),
+  // and Space on a build picked with the arrows peeks at it (BuildPeek, at the switcher's foot).
   import { onDestroy, tick } from 'svelte'
   import Icon, { type IconName } from './Icon.svelte'
   import Avatar from './Avatar.svelte'
+  import BuildPeek from './BuildPeek.svelte'
   import GroupIcon from './GroupIcon.svelte'
   import { modal } from '../lib/actions'
   import { app } from '../lib/store.svelte'
@@ -18,9 +21,12 @@
   import { hitShown } from '../lib/mentionStyles'
   import { channelLabel, displayName } from '../lib/selectors'
   import { conversationName } from '../lib/conversations'
+  import { buildGameName } from '../lib/builds'
+  import { BUILDS_SHOWN, buildsQuery, parseBuildsQuery, sortBuildHits } from '../lib/quickBuilds'
+  import type { Message } from '../lib/protocol/Message'
   import type { SearchHit } from '../lib/protocol/SearchHit'
 
-  let { context, recents, here, messages = null, everywhere = null, onGo, onClose }: {
+  let { context, recents, here, messages = null, everywhere = null, builds = null, onGo, onClose }: {
     /** What the quick actions can see and do, read when the list builds (so Mute turns to Unmute). */
     context: () => ActionContext
     /** Recently visited place keys, newest first. */
@@ -33,6 +39,9 @@
     /** Message search everywhere else you can read (#331), or null: listed after `messages` as "Messages everywhere",
      *  each hit saying where it is. `search` already leaves out `messages`' scope. */
     everywhere?: { search: (query: string) => Promise<SearchHit[]>; open: (hit: SearchHit) => void } | null
+    /** Build search across your servers (#619), or null: `search` asks the search route (text, a game's key), `open`
+     *  shows a build's page. */
+    builds?: { search: (q: string, game: string | null) => Promise<Message[]>; open: (m: Message) => void } | null
     /** Go to `place`; `join` also joins a voice channel (its row's Join). */
     onGo: (place: Place, join: boolean) => void
     onClose: () => void
@@ -58,21 +67,49 @@
   const searcherAll = messageSearcher({ search: (q) => (everywhere ? everywhere.search(q) : Promise.resolve([])), onChange: (r) => (foundAll = r) })
   $effect(() => searcherAll.set(everywhere ? messageQuery(raw) : null))
   onDestroy(() => searcherAll.dispose())
+  // ---- builds (#619): the same debounce, the query as one key (its text and game) ----
+  let foundBuilds = $state.raw<MessageResults<Message>>(NO_MESSAGES)
+  const buildSearcher = messageSearcher<Message>({
+    search: (key) => {
+      const { q, game } = JSON.parse(key) as { q: string; game: string | null }
+      return builds ? builds.search(q, game).then(sortBuildHits) : Promise.resolve([])
+    },
+    onChange: (r) => (foundBuilds = r),
+    limit: BUILDS_SHOWN,
+  })
+  const games = $derived(Object.values(app.state.games).flat())
+  $effect(() => {
+    const q = builds ? buildsQuery(parseBuildsQuery(raw, games)) : null
+    buildSearcher.set(q ? JSON.stringify(q) : null)
+  })
+  onDestroy(() => buildSearcher.dispose())
+  const buildRows = $derived<ResultSection[]>(
+    foundBuilds.status === 'done' && foundBuilds.hits.length
+      ? [{ id: 'builds', label: 'Builds', rows: foundBuilds.hits.map((m) => ({ type: 'build' as const, message: m, archived: !!m.build?.archived_at })) }]
+      : [],
+  )
+  // the messages wait for the builds above them, so those never push them down under the pointer
+  const buildsSettled = $derived(foundBuilds.status !== 'loading')
+
   const hereSettled = $derived(!messages || found.status === 'done' || found.status === 'error')
   const everywhereHits = $derived.by(() => {
     if (!everywhere || foundAll.status !== 'done' || !hereSettled) return []
     const shown = new Set(found.hits.map((h) => h.message.id))
     return foundAll.hits.filter((h) => !shown.has(h.message.id))
   })
-  const messageRows = $derived<ResultSection[]>([
+  const messageRows = $derived<ResultSection[]>(!buildsSettled ? [] : [
     ...(messages && found.status === 'done' && found.hits.length ? [{ id: 'messages', label: messages.label, rows: found.hits.map((hit) => ({ type: 'message' as const, hit, everywhere: false })) }] : []),
     ...(everywhereHits.length ? [{ id: 'messages-everywhere', label: 'Messages everywhere', rows: everywhereHits.map((hit) => ({ type: 'message' as const, hit, everywhere: true })) }] : []),
   ])
   // shown under the instant results while messages are on their way (or failed), in the room their section will take
   // (everywhere's answer held for the first section counts as on its way: the first is then still loading)
-  const messageNote = $derived(found.status === 'loading' || foundAll.status === 'loading' ? 'Searching messages…' : found.status === 'error' || foundAll.status === 'error' ? "Couldn't search messages" : '')
+  const messageNote = $derived(
+    found.status === 'loading' || foundAll.status === 'loading' ? 'Searching messages…'
+      : foundBuilds.status === 'loading' ? 'Searching builds…'
+        : found.status === 'error' || foundAll.status === 'error' ? "Couldn't search messages"
+          : foundBuilds.status === 'error' ? "Couldn't search builds" : '')
 
-  const sections = $derived([...instant, ...messageRows])
+  const sections = $derived([...instant, ...buildRows, ...messageRows])
   // one list for the keys: each section's rows follow on from the one before
   const flat = $derived(sections.flatMap((s) => s.rows))
   const starts = $derived(sections.reduce<number[]>((acc, _s, i) => [...acc, i === 0 ? 0 : acc[i - 1] + sections[i - 1].rows.length], []))
@@ -80,10 +117,22 @@
   const optId = (i: number) => `qs-opt-${i}`
   const count = $derived(flat.length === 0 ? (typed && !messageNote ? 'No results' : '') : `${flat.length} result${flat.length === 1 ? '' : 's'}`)
 
-  // a new query starts at the top
+  // a new query starts at the top, typed (a space is then a character, not a peek)
   $effect(() => {
     void raw
     active = 0
+    navigated = false
+  })
+  // ---- the peek (#619): Space on a build picked with the arrows; moving on closes it ----
+  let navigated = $state(false)
+  let peekId = $state<string | null>(null)
+  const peeked = $derived.by(() => {
+    const r = flat[active]
+    return peekId && r?.type === 'build' && r.message.id === peekId ? r.message : null
+  })
+  $effect(() => {
+    void active
+    peekId = null
   })
   $effect(() => {
     if (active >= flat.length) active = Math.max(0, flat.length - 1)
@@ -92,6 +141,7 @@
   async function move(by: number) {
     const n = flat.length
     if (!n) return
+    navigated = true
     active = (active + by + n) % n
     await tick()
     document.getElementById(optId(active))?.scrollIntoView?.({ block: 'nearest' })
@@ -104,11 +154,13 @@
     const go = onGo
     const c = ctx
     const open = row.type === 'message' && row.everywhere ? everywhere?.open : messages?.open
+    const openBuild = builds?.open
     onClose()
     // after the switcher has gone and handed the focus back: what opens next (Settings, a channel) takes it from there
     await tick()
     if (row.type === 'place') go(row.place, join && row.place.kind === 'voice')
     else if (row.type === 'message') open?.(row.hit)
+    else if (row.type === 'build') openBuild?.(row.message)
     else row.action.run(c)
   }
 
@@ -121,13 +173,29 @@
     } else if (e.key === 'Enter' && !e.isComposing) {
       e.preventDefault()
       void choose(active, e.shiftKey)
+    } else if (e.key === ' ' && navigated && flat[active]?.type === 'build') {
+      e.preventDefault()
+      const r = flat[active]
+      peekId = peekId ? null : r.type === 'build' ? r.message.id : null
+    } else if (e.key === 'Escape' && peekId) {
+      // the peek closes, not the switcher (the dialog's Escape skips a handled one)
+      e.preventDefault()
+      peekId = null
     }
   }
+  /** The peek's Open: the switcher closes first, as for Enter. */
+  async function openPeeked(m: Message) {
+    const openBuild = builds?.open
+    onClose()
+    await tick()
+    openBuild?.(m)
+  }
+  const serverOf = (m: Message) => app.state.channels[m.channel_id]?.server_id ?? ''
 
   const KIND_ICON: Partial<Record<Place['kind'], IconName>> = { text: 'hash', voice: 'speaker', quotes: 'quote', clips: 'film' }
   const otherIn = (id: string) => (app.state.dmMembers[id] ?? []).find((u) => u !== app.state.me?.id) ?? null
   const anyVoice = $derived(flat.some((r) => r.type === 'place' && r.place.kind === 'voice'))
-  const rowKey = (r: Row) => (r.type === 'place' ? r.place.key : r.type === 'message' ? `m:${r.hit.message.id}` : r.action.id)
+  const rowKey = (r: Row) => (r.type === 'place' ? r.place.key : r.type === 'message' ? `m:${r.hit.message.id}` : r.type === 'build' ? `b:${r.message.id}` : r.action.id)
   /** The name a hit's author goes by where it was said: that server's nickname (the first section's server; an
    *  everywhere hit's own), else their name. */
   function author(h: SearchHit, everywhere = false): string {
@@ -142,6 +210,11 @@
   function contextOf(r: Row): string | null {
     if (r.type === 'place') return r.place.context
     if (r.type === 'action') return r.action.context ?? null
+    // a build: its game and server
+    if (r.type === 'build') {
+      const sid = serverOf(r.message)
+      return [buildGameName(app.state, sid, r.message), app.state.servers.find((x) => x.id === sid)?.name].filter(Boolean).join(' · ') || null
+    }
     const who = author(r.hit, r.everywhere)
     const ch = app.state.channels[r.hit.message.channel_id]
     if (!ch) return who
@@ -160,6 +233,8 @@
     <span class="lead">{#if r.hit.message.author_id}<Avatar id={r.hit.message.author_id} name={authorOf(r)} size={20} />{:else}<Icon name="hash" size={18} />{/if}</span>
   {:else if r.type === 'action'}
     <span class="lead"><Icon name={r.action.icon} size={18} /></span>
+  {:else if r.type === 'build'}
+    <span class="lead"><Icon name="hammer" size={18} /></span>
   {:else if r.place.kind === 'server'}
     <span class="lead chip" style:background={avatarColor(r.place.id)} aria-hidden="true">{initial(r.place.name)}</span>
   {:else if r.place.kind === 'dm'}
@@ -183,7 +258,7 @@
       <input bind:this={input} bind:value={raw} class="field" type="text" role="combobox" autofocus autocomplete="off" spellcheck="false"
         aria-label="Jump to" aria-autocomplete="list" aria-expanded={flat.length > 0} aria-controls="qs-list"
         aria-activedescendant={flat.length ? optId(active) : undefined}
-        placeholder="Jump to a server, channel or person, or > for actions" onkeydown={keys} />
+        placeholder="Jump to a server, channel or person, > for actions, builds: for builds" onkeydown={keys} />
     </div>
     <div class="results" id="qs-list" role="listbox" aria-label="Results" hidden={flat.length === 0 && !messageNote}>
       {#each sections as sec, si (sec.id)}
@@ -201,6 +276,9 @@
                 {@const whole = hitShown(app.state, r.hit)}
                 {@const line = lineWithHit(whole.text, whole.highlights)}
                 <span class="name">{#each segments(line.text, line.highlights) as seg, k (k)}{#if seg.hit}<mark>{seg.text}</mark>{:else}{seg.text}{/if}{/each}</span>
+              {:else if r.type === 'build'}
+                <span class="name" class:archived={r.archived}>{r.message.build?.title}</span>
+                {#if r.archived}<span class="badge">ARCHIVED</span>{/if}
               {:else}
                 <span class="name">{r.type === 'place' ? r.place.name : r.action.label}</span>
               {/if}
@@ -222,6 +300,9 @@
       {/each}
       {#if messageNote}<p class="note" aria-hidden="true">{messageNote}</p>{/if}
     </div>
+    {#if peeked}
+      <BuildPeek message={peeked} serverId={serverOf(peeked)} docked closeOnEscape={false} onClose={() => (peekId = null)} onOpen={(m) => void openPeeked(m)} />
+    {/if}
     {#if flat.length === 0 && !messageNote}
       <p class="empty">{typed ? `Nothing matches “${raw.trim()}”` : 'Type to jump anywhere. Start with > for actions.'}</p>
     {/if}
@@ -255,6 +336,8 @@
   .row.hi .join { visibility: visible; }
   /* as tall as a row, so the hits take its place without a jump */
   .note { margin: 0; min-height: 40px; padding: 0 10px; display: flex; align-items: center; color: var(--text-3); font-size: 13px; }
+  .name.archived { color: var(--text-3); }
+  .badge { flex-shrink: 0; padding: 1px 6px; border-radius: var(--radius-xs); border: 1px solid var(--bg-4); color: var(--text-2); font-size: 10px; font-weight: 700; letter-spacing: .04em; }
   mark { background: var(--accent-soft); color: var(--text); border-radius: 3px; }
   .empty { margin: 0; padding: 14px 18px 16px; border-top: 1px solid var(--line-menu); color: var(--text-3); font-size: 13px; }
 </style>

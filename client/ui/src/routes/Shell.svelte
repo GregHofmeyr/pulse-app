@@ -85,6 +85,8 @@
   import QuickSwitcher from '../components/QuickSwitcher.svelte'
   import PinnedBuild from '../components/PinnedBuild.svelte'
   import { pinnedBuild } from '../lib/pinnedBuild.svelte'
+  import { openMessage } from '../lib/openMessage'
+  import type { Message } from '../lib/protocol/Message'
   import { globalSwitch, SAME_PRESS_MS, loadRecents, pushRecent, saveRecents, switcherKey, type Place } from '../lib/quickSwitch'
   import type { ActionContext } from '../lib/quickActions'
   import { memberServers } from '../lib/reactions'
@@ -733,6 +735,11 @@
       open: openHit,
     }
   })
+  /** Its Builds section (#619): builds across your servers; one opens on its page, in its channel. */
+  const quickBuilds = {
+    search: (q: string, game: string | null) => api.searchBuilds(q, game ?? undefined),
+    open: (m: Message) => void openMessage(m),
+  }
   /** Its "Messages everywhere" section (#331): every server you're in, your DMs, groups and notes, less `quickScope`. */
   const quickEverywhere = $derived.by(() => {
     const args = { serverId: quickScope?.serverId ?? null, channelId: quickScope?.channelId ?? null, everywhere: true }
@@ -957,7 +964,7 @@
 {#if stream.clash}<StreamClashDialog clash={stream.clash} />{/if}
 {#if qotyStart}<QotyStart serverId={qotyStart} onClose={() => (qotyStart = null)} />{/if}
 {#if reportOpen}<ReportBug onClose={() => (reportOpen = false)} />{/if}
-{#if switcherOpen}<QuickSwitcher context={quickContext} {recents} {here} messages={quickMessages} everywhere={quickEverywhere} onGo={switcherGo} onClose={() => (switcherOpen = false)} />{/if}
+{#if switcherOpen}<QuickSwitcher context={quickContext} {recents} {here} messages={quickMessages} everywhere={quickEverywhere} builds={quickBuilds} onGo={switcherGo} onClose={() => (switcherOpen = false)} />{/if}
 {#if notesOpen}<PatchNotes notes={patchNotes} previous={previousPatchNotes} onClose={() => (notesOpen = false)} />{/if}
 <!-- Profiles: the quick card (one at a time), and the full profile's place (Task 12 renders it here) -->
 <ProfileCardPopover />

@@ -2,7 +2,7 @@
 // every key; this one waits until typing pauses, asks the existing search route, and shows at most a few hits under
 // them. A newer query drops an older one's answer, so a slow reply can never land on the wrong text.
 import { hasSearchableWords } from './searchQuery'
-import { parseQuery } from './quickSwitch'
+import { isBuildsOnly, parseQuery } from './quickSwitch'
 import type { SearchHit } from './protocol/SearchHit'
 
 /** How long typing has to pause before messages are searched. */
@@ -10,29 +10,31 @@ export const MESSAGE_DELAY_MS = 200
 /** At most this many message hits are listed. */
 export const MESSAGES_SHOWN = 8
 
-/** What to search messages for, or null: not after `>` (actions), not for a single character, and not for text with
- *  no letters or digits (the index holds words: the route can only refuse it). */
+/** What to search messages for, or null: not after `>` (actions) or `builds:` (#619), not for a single character, and
+ *  not for text with no letters or digits (the index holds words: the route can only refuse it). */
 export function messageQuery(raw: string): string | null {
+  if (isBuildsOnly(raw)) return null
   const q = parseQuery(raw)
   if (q.actions || q.text.length < 2 || !hasSearchableWords(q.text)) return null
   return q.text
 }
 
-export interface MessageResults {
+export interface MessageResults<T = SearchHit> {
   /** `idle`: nothing asked (or no longer); `loading`: waiting for the pause or the answer. */
   status: 'idle' | 'loading' | 'done' | 'error'
   /** What `hits` (or the wait) are for. */
   query: string
-  hits: SearchHit[]
+  hits: T[]
 }
 
-export const NO_MESSAGES: MessageResults = { status: 'idle', query: '', hits: [] }
+export const NO_MESSAGES: MessageResults<never> = { status: 'idle', query: '', hits: [] }
 
 /** Debounced, cancellable message search. `set` with each new query (null: none); `onChange` hears every state.
- *  Only the newest query's answer is ever reported; `dispose` drops whatever is pending. */
-export function messageSearcher(o: {
-  search: (query: string) => Promise<SearchHit[]>
-  onChange: (r: MessageResults) => void
+ *  Only the newest query's answer is ever reported; `dispose` drops whatever is pending. The Builds section (#619)
+ *  uses it too, with builds for hits. */
+export function messageSearcher<T = SearchHit>(o: {
+  search: (query: string) => Promise<T[]>
+  onChange: (r: MessageResults<T>) => void
   delay?: number
   limit?: number
 }) {

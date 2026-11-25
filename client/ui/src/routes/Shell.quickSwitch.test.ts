@@ -162,3 +162,33 @@ describe('the quick switcher in the shell', () => {
     })
   })
 })
+
+// #619: a build found from Ctrl+K opens its page in its channel
+describe('builds from the switcher (#619)', () => {
+  it('builds: searches builds, and Enter opens the build page', async () => {
+    const { ui } = await import('../lib/store.svelte')
+    app.state = applyReady(emptyState(), testReady([
+      { id: 'T1', server_id: 'S1', kind: 'text', name: 'general', position: 0 },
+      { id: 'B1', server_id: 'S1', kind: 'builds', name: 'raven-builds', position: 1 },
+    ]))
+    const found = {
+      id: 'M001', channel_id: 'B1', author_id: 'U2', kind: 'normal', content: '', reply_to_id: null, created_at: '2026-10-01T10:00:00.000Z', edited_at: null,
+      deleted: false, mentions: [], reactions: [], thread_root_id: null, quote: null, qoty_card: null, embeds: [], clip: null,
+      build: { title: 'Raven bunny', title_auto: false, game_id: null, game_guessed: false, link: null, notes: null, quick_drop: false, updated_at: null, archived_at: null, archived_by: null, reply_count: 0, last_reply_id: null, replies_seen: null },
+    }
+    invoke.mockImplementation(async (cmd: string) => (cmd === 'search_builds' ? [found] : cmd === 'list_messages' || cmd === 'list_builds' ? [] : undefined))
+    keydown(document.body, 'k', { ctrlKey: true })
+    type('builds: raven')
+    await new Promise((r) => setTimeout(r, 260))
+    flushSync()
+    expect(invoke).toHaveBeenCalledWith('search_builds', { q: 'raven', game: null })
+    keydown(field(), 'Enter')
+    await settle()
+    flushSync()
+    expect(switcher()).toBeNull()
+    // its channel shows, and asks for the build to open its page
+    expect(document.querySelector('[data-testid="builds-channel"]')).not.toBeNull()
+    expect(invoke).toHaveBeenCalledWith('get_build', { messageId: 'M001' })
+    expect(ui.openBuild).toBeNull()
+  })
+})

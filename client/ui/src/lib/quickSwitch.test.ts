@@ -211,7 +211,7 @@ describe('buildResults', () => {
     { id: 'join:v9', label: 'Join Gaming', name: 'Gaming', icon: 'speaker', run },
     { id: 'settings', label: 'Open Settings', icon: 'gear', run },
   ]
-  const ids = (r: ReturnType<typeof buildResults>) => r.map((sec) => [sec.id, sec.rows.map((x) => (x.type === 'place' ? x.place.key : x.type === 'action' ? x.action.id : x.hit.message.id))])
+  const ids = (r: ReturnType<typeof buildResults>) => r.map((sec) => [sec.id, sec.rows.map((x) => (x.type === 'place' ? x.place.key : x.type === 'action' ? x.action.id : x.type === 'message' ? x.hit.message.id : x.message.id))])
   it('nothing typed: the recents (without where you are)', () => {
     expect(ids(buildResults({ places, actions, raw: '', recents: ['c:c1', 'c:c2'], here: 'c:c1' }))).toEqual([['recent', ['c:c2']]])
     expect(buildResults({ places, actions, raw: '  ', recents: [], here: null })).toEqual([])

@@ -5,6 +5,7 @@ import type { AppState } from './state'
 import { conversationName } from './conversations'
 import { displayName, namesOf } from './selectors'
 import { matchActions, type QuickAction } from './quickActions'
+import type { Message } from './protocol/Message'
 import type { SearchHit } from './protocol/SearchHit'
 import type { ChannelKind } from './protocol/ChannelKind'
 
@@ -202,6 +203,10 @@ export function recentPlaces(places: readonly Place[], recents: readonly string[
   return recents.filter((k) => k !== here).flatMap((k) => byKey.get(k) ?? []).slice(0, RECENTS_SHOWN)
 }
 
+/** Whether `raw` asks for builds only (#619: `builds:` first, any case; lib/quickBuilds.ts reads the rest). Places,
+ *  actions and messages are then left out. */
+export const isBuildsOnly = (raw: string): boolean => raw.trimStart().toLowerCase().startsWith('builds:')
+
 /** What's typed, split: `>` first means actions only. */
 export function parseQuery(raw: string): { actions: boolean; text: string } {
   const t = raw.trimStart()
@@ -211,8 +216,13 @@ export function parseQuery(raw: string): { actions: boolean; text: string } {
 // ---- results ----
 
 /** A message hit comes only from the slower Messages sections (lib/quickMessages.ts, #320): `everywhere` for one in
- *  "Messages everywhere" (#331), which says where it is and opens with that section's opener. */
-export type Row = { type: 'place'; place: Place } | { type: 'action'; action: QuickAction } | { type: 'message'; hit: SearchHit; everywhere?: boolean }
+ *  "Messages everywhere" (#331), which says where it is and opens with that section's opener. A build comes from the
+ *  slow Builds section (lib/quickBuilds.ts, #619); `archived` ones are listed last, marked. */
+export type Row =
+  | { type: 'place'; place: Place }
+  | { type: 'action'; action: QuickAction }
+  | { type: 'message'; hit: SearchHit; everywhere?: boolean }
+  | { type: 'build'; message: Message; archived: boolean }
 /** A titled run of results. The switcher draws whatever sections it's given, in order, as one list: the instant ones
  *  come from here, and a slower source (message search, lib/quickMessages.ts) appends its own section once it
  *  answers, so typing never waits on it. */
@@ -226,8 +236,10 @@ export interface ResultSection {
 export const ACTIONS_UNDER_PLACES = 5
 
 /** What the switcher lists for `raw`: nothing typed, the recents (minus where you are, `here`); `>…`, the actions
- *  only; anything else, the matching places then the matching actions. Empty sections are left out. */
+ *  only; `builds:…`, nothing instant (builds are a slow section); anything else, the matching places then the matching
+ *  actions. Empty sections are left out. */
 export function buildResults(o: { places: readonly Place[]; actions: readonly QuickAction[]; raw: string; recents: readonly string[]; here: string | null }): ResultSection[] {
+  if (isBuildsOnly(o.raw)) return []
   const q = parseQuery(o.raw)
   const place = (p: Place): Row => ({ type: 'place', place: p })
   const action = (a: QuickAction): Row => ({ type: 'action', action: a })

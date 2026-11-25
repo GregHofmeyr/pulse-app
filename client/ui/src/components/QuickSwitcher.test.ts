@@ -12,6 +12,7 @@ import { emptyState } from '../lib/state'
 import type { ActionContext } from '../lib/quickActions'
 import { MESSAGE_DELAY_MS } from '../lib/quickMessages'
 import type { SearchHit } from '../lib/protocol/SearchHit'
+import type { Message } from '../lib/protocol/Message'
 
 type Messages = { label: string; serverId: string | null; search: (q: string) => Promise<SearchHit[]>; open: (hit: SearchHit) => void }
 const hit = (id: string, text: string, author = 'U2', channel = 'c1') =>
@@ -393,6 +394,113 @@ describe('QuickSwitcher', () => {
       expect(document.querySelector('.empty')!.textContent).toContain('Nothing matches')
     })
   })
+  describe('Builds (#619)', () => {
+    type Builds = { search: (q: string, game: string | null) => Promise<Message[]>; open: (m: Message) => void }
+    const wait = (ms: number) => new Promise((r) => setTimeout(r, ms))
+    const heads = () => [...document.querySelectorAll('.head')].map((h) => h.textContent)
+    const build = (id: string, title: string, archived = false): Message => ({
+      id, channel_id: 'b1', author_id: 'U2', kind: 'normal', content: '', reply_to_id: null, created_at: '2026-10-01T10:00:00.000Z', edited_at: null,
+      deleted: false, mentions: [], reactions: [], thread_root_id: null, quote: null, qoty_card: null, embeds: [], clip: null,
+      build: { title, title_auto: false, game_id: 'g1', game_guessed: false, link: null, notes: 'Max crit\nbunny spam', quick_drop: false, updated_at: null,
+        archived_at: archived ? '2026-10-05T00:00:00Z' : null, archived_by: archived ? 'U2' : null, reply_count: 0, last_reply_id: null, replies_seen: null },
+    })
+    let builds: Builds
+    const openWith = (b: Builds) => {
+      builds = b
+      document.body.innerHTML = '<button id="before">before</button>'
+      cmp = mount(QuickSwitcher, { target: document.body, props: { context: () => ctx, recents: [], here: null, builds: b, onGo, onClose } })
+      flushSync()
+    }
+    const answer = async () => {
+      await wait(MESSAGE_DELAY_MS + 30)
+      flushSync()
+    }
+    beforeEach(() => {
+      app.state = {
+        ...app.state,
+        channels: { ...app.state.channels, b1: ch('b1', 'builds', 'raven-builds', 's1') } as never,
+        games: { s1: [{ id: 'g1', server_id: 's1', name: 'The First Descendant', created_by: null, created_at: '2026-10-01T00:00:00Z' }] },
+      }
+    })
+
+    it('"raven" lists matching builds', async () => {
+      openWith({ search: vi.fn(async () => [build('m1', 'Raven bunny')]), open: vi.fn() })
+      type('raven')
+      await answer()
+      expect(builds.search).toHaveBeenCalledWith('raven', null)
+      expect(heads()).toContain('Builds')
+      const row = options().find((o) => o.querySelector('.name')!.textContent === 'Raven bunny')!
+      expect(row.querySelector('.ctx')!.textContent).toBe('The First Descendant · Game Night')
+    })
+
+    it('"builds:" hides places and actions', async () => {
+      openWith({ search: vi.fn(async () => [build('m1', 'Setup build')]), open: vi.fn() })
+      type('builds: set')
+      expect(names()).toEqual([]) // no "setup" channel, no "Open Settings"
+      await answer()
+      expect(heads()).toEqual(['Builds'])
+      expect(names()).toEqual(['Setup build'])
+    })
+
+    it('"builds: tfd" filters by The First Descendant', async () => {
+      openWith({ search: vi.fn(async () => [build('m1', 'Raven bunny')]), open: vi.fn() })
+      type('builds: tfd')
+      await answer()
+      expect(builds.search).toHaveBeenCalledWith('', 'the first descendant')
+      expect(names()).toEqual(['Raven bunny'])
+    })
+
+    it('an ambiguous prefix is searched as text', async () => {
+      app.state = { ...app.state, games: { s1: [...app.state.games.s1, { id: 'g2', server_id: 's1', name: 'The Division', created_by: null, created_at: '2026-10-01T00:00:00Z' }] } }
+      openWith({ search: vi.fn(async () => []), open: vi.fn() })
+      type('builds: the raven')
+      await answer()
+      expect(builds.search).toHaveBeenCalledWith('the raven', null)
+    })
+
+    it('archived builds come last, marked', async () => {
+      openWith({ search: vi.fn(async () => [build('m1', 'Old raven', true), build('m2', 'New raven')]), open: vi.fn() })
+      type('builds: raven')
+      await answer()
+      expect(names()).toEqual(['New raven', 'Old raven'])
+      expect(options()[0].querySelector('.badge')).toBeNull()
+      expect(options()[1].querySelector('.badge')!.textContent).toBe('ARCHIVED')
+    })
+
+    it('Enter opens the build page', async () => {
+      openWith({ search: vi.fn(async () => [build('m1', 'Raven bunny')]), open: vi.fn() })
+      type('builds: raven')
+      await answer()
+      press('Enter')
+      await settle()
+      expect(onClose).toHaveBeenCalled()
+      expect(builds.open).toHaveBeenCalledWith(expect.objectContaining({ id: 'm1' }))
+    })
+
+    it('Space opens a peek on a build picked with the arrows; typing a space never does', async () => {
+      openWith({ search: vi.fn(async () => [build('m1', 'Raven bunny'), build('m2', 'Raven tank')]), open: vi.fn() })
+      type('builds: raven')
+      await answer()
+      expect(press(' ').defaultPrevented, 'a space typed in the field').toBe(false)
+      expect(document.querySelector('.build-peek')).toBeNull()
+      press('ArrowDown')
+      expect(press(' ').defaultPrevented).toBe(true)
+      const peek = document.querySelector<HTMLElement>('.build-peek')!
+      expect(peek.querySelector('.title')!.textContent).toBe('Raven tank')
+      expect(peek.querySelector('.notes')!.textContent).toBe('Max crit\nbunny spam')
+      // Escape closes the peek, not the switcher
+      press('Escape')
+      expect(document.querySelector('.build-peek')).toBeNull()
+      expect(onClose).not.toHaveBeenCalled()
+      // its Open opens the page
+      press(' ')
+      ;[...document.querySelectorAll<HTMLButtonElement>('.build-peek button')].find((b) => b.textContent?.trim() === 'Open')!.click()
+      await settle()
+      expect(onClose).toHaveBeenCalled()
+      expect(builds.open).toHaveBeenCalledWith(expect.objectContaining({ id: 'm2' }))
+    })
+  })
+
   it('Escape closes, and the focus goes back where it was', () => {
     open()
     press('Escape')
