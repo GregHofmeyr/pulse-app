@@ -21,7 +21,7 @@
 <article class="build-row" class:archived={isArchived(message)} data-build-id={message.id}>
   <svelte:element this={onOpen ? 'button' : 'div'} type={onOpen ? 'button' : undefined} class="open" role={onOpen ? undefined : 'presentation'}
     onclick={onOpen ? () => onOpen(message) : undefined}>
-    <div class="media"><BuildThumb {message} />{#if b.link}<span class="tag">▶</span>{/if}</div>
+    <div class="media"><BuildThumb {message} dim={isArchived(message)} />{#if b.link}<span class="tag" aria-hidden="true">▶</span><span class="sr-only">video</span>{/if}</div>
     <div class="info">
       {#if game}<span class="caption">{game}{#if b.game_guessed}<span class="guessed"> · guessed</span>{/if}</span>{/if}
       <span class="line">
@@ -37,7 +37,6 @@
 
 <style>
   .build-row { border-bottom: 1px solid var(--bg-3); }
-  .build-row.archived { opacity: .55; }
   .open { display: grid; grid-template-columns: 96px minmax(0, 1fr) minmax(0, 1.2fr); align-items: center; gap: 14px; width: 100%; padding: 10px 18px; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; }
   button.open { cursor: pointer; }
   button.open:hover { background: var(--bg-2); }

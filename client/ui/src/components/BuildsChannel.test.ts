@@ -1,4 +1,6 @@
 // @vitest-environment jsdom
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { flushSync, mount, unmount } from 'svelte'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Message } from '../lib/protocol/Message'
@@ -200,5 +202,35 @@ describe('BuildsChannel: gallery and list', () => {
     await show()
     expect(document.querySelector('.empty')?.textContent).toContain('No builds yet')
     expect(document.querySelector('.empty')?.textContent).toContain('+ Add build')
+  })
+})
+
+describe('BuildsChannel: accessibility', () => {
+  const radio = (l: string) => [...document.querySelectorAll<HTMLButtonElement>('[role=radiogroup][aria-label="View"] [role=radio]')].find((b) => b.textContent === l)!
+  const link = { url: 'https://youtu.be/x', provider: 'youtube', thumb: null } as never
+
+  it("a row's video tag reads as \"video\", not as the ▶ glyph", async () => {
+    pages = [[build('M002', { link })]]
+    await show()
+    radio('List').click()
+    flushSync()
+    const tag = document.querySelector<HTMLElement>('.build-row .tag')!
+    expect(tag.getAttribute('aria-hidden')).toBe('true')
+    expect(tag.textContent).toBe('▶')
+    expect(tag.parentElement!.querySelector('.sr-only')?.textContent).toBe('video')
+  })
+
+  it('an archived build dims only its picture, never its text', async () => {
+    pages = [[build('M002', { archived_at: '2026-10-05T00:00:00.000Z', archived_by: 'U2' }), build('M001')]]
+    await show()
+    for (const v of ['Gallery', 'List']) {
+      radio(v).click()
+      flushSync()
+      expect(document.querySelector('[data-build-id="M002"] .thumb')?.classList.contains('dim')).toBe(true)
+      expect(document.querySelector('[data-build-id="M001"] .thumb')?.classList.contains('dim')).toBe(false)
+    }
+    const src = (p: string) => readFileSync(resolve(__dirname, p), 'utf8')
+    for (const f of ['BuildCard.svelte', 'BuildRow.svelte']) expect(src(f)).not.toMatch(/\.archived[^{]*\{[^}]*opacity/)
+    expect(src('BuildThumb.svelte')).toMatch(/\.thumb\.dim \{[^}]*opacity/)
   })
 })
