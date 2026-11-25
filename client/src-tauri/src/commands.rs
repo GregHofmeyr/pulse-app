@@ -699,6 +699,8 @@ impl Core {
         }
         // Signed out: nothing from this session may keep running or be sent under the next account.
         self.outbox.clear();
+        // the build pop-out (#620) shows nothing of a signed-out account
+        crate::build_window::close(app);
         app.state::<VoiceManager>().forget_tokens();
         app.state::<crate::voice::mictest::MicTest>().stop();
         let app = app.clone();

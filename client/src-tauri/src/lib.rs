@@ -3,6 +3,7 @@ pub mod api;
 pub mod attachments;
 pub mod backoff;
 pub mod bindmatch;
+pub mod build_window;
 pub mod builds;
 pub mod clips;
 pub mod commands;
@@ -424,6 +425,12 @@ macro_rules! app_commands {
             builds::create_build,
             builds::update_build,
             builds::cancel_build_save,
+            build_window::open_build_window,
+            build_window::update_build_window,
+            build_window::close_build_window,
+            build_window::build_window_snapshot,
+            build_window::build_window_image_urls,
+            build_window::set_build_window_on_top,
             commands::set_clip_view,
             commands::clip_storage,
             commands::clip_support,
@@ -578,6 +585,7 @@ pub fn run() {
             app.manage(window_bg::Dir(dir.clone()));
             app.manage(embed_window::WebviewData(webview_data));
             app.manage(embed_window::WindowOwner::default());
+            app.manage(build_window::BuildWindow::default());
             startup::mark("window_built");
             let emitter = app.handle().clone();
             let outbox = outbox::Outbox::new(std::sync::Arc::new(

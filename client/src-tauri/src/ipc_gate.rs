@@ -114,10 +114,9 @@ mod tests {
             .filter(|c| allowed(BUILD_LABEL, c))
             .collect();
         passed.sort();
-        assert!(
-            passed.iter().all(|c| BUILD_COMMANDS.contains(c)),
-            "{passed:?}"
-        );
+        let mut want = BUILD_COMMANDS.to_vec();
+        want.sort();
+        assert_eq!(passed, want);
         for c in &all {
             assert!(allowed(MAIN_LABEL, c), "{c}");
             assert!(!allowed("embed", c), "{c}");

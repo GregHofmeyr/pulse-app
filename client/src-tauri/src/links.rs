@@ -42,6 +42,31 @@ pub fn main_navigation(u: &url::Url) -> bool {
     false
 }
 
+/// Whether the build pop-out (#620) may go to `u`: the app's own page only (`tauri://localhost`,
+/// `http(s)://tauri.localhost`), and in a dev build (`dev`) the dev server (`http://localhost:1420`). Stricter than
+/// [`main_may_navigate`]: no `about:` pages (the pop-out frames nothing), no other localhost port.
+pub fn build_may_navigate(u: &url::Url, dev: bool) -> bool {
+    if !u.username().is_empty() || u.password().is_some() {
+        return false;
+    }
+    match (u.scheme(), u.host_str(), u.port()) {
+        ("tauri", Some("localhost"), None) => true,
+        ("http" | "https", Some("tauri.localhost"), None) => true,
+        ("http", Some("localhost"), Some(1420)) => dev,
+        _ => false,
+    }
+}
+
+/// The build pop-out's `on_navigation`: the app's own page loads, a website opens in the browser, anything else
+/// goes nowhere.
+pub fn build_navigation(u: &url::Url) -> bool {
+    if build_may_navigate(u, cfg!(debug_assertions)) {
+        return true;
+    }
+    open(u);
+    false
+}
+
 /// A window's `on_new_window`: no new Pulse window ever; a web link opens in the browser.
 pub fn new_window<R: tauri::Runtime>(u: url::Url) -> NewWindowResponse<R> {
     open(&u);
@@ -242,6 +267,43 @@ mod tests {
             "https://tauri.localhost.evil.example/",
         ] {
             assert!(!main_may_navigate(&u(site)), "{site}");
+        }
+    }
+
+    #[test]
+    fn the_build_pop_out_loads_the_app_page_only() {
+        for own in [
+            "tauri://localhost/index.html?window=build",
+            "http://tauri.localhost/index.html?window=build",
+            "https://tauri.localhost/",
+        ] {
+            assert!(build_may_navigate(&u(own), false), "{own}");
+            assert!(build_may_navigate(&u(own), true), "{own}");
+        }
+        let dev = "http://localhost:1420/index.html?window=build";
+        assert!(build_may_navigate(&u(dev), true));
+        assert!(
+            !build_may_navigate(&u(dev), false),
+            "no dev server in a release build"
+        );
+        for elsewhere in [
+            "http://localhost:8080/",
+            "http://127.0.0.1:1420/",
+            "http://localhost/",
+            "about:blank",
+            "about:srcdoc",
+            "file:///C:/Windows/System32/calc.exe",
+            "javascript:alert(1)",
+            "data:text/html,hi",
+            "blob:https://tauri.localhost/0b0b",
+            "tauri://evil.example/",
+            "asset://localhost/C:/x.html",
+            "pulse-media://localhost/x",
+            "https://pulsechat.co.za/",
+            "https://tauri.localhost.evil.example/",
+            "https://user@tauri.localhost/",
+        ] {
+            assert!(!build_may_navigate(&u(elsewhere), true), "{elsewhere}");
         }
     }
 }
