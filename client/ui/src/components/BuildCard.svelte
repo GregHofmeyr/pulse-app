@@ -2,7 +2,9 @@
   // One build in the gallery (#617): its picture, a "▶ video" tag when it has a link, the game as a caption, the title,
   // two lines of notes and "who · when · N comments". Quick drops and archived builds say so; an archived one's picture
   // is greyed.
+  import BuildPeek from './BuildPeek.svelte'
   import BuildThumb from './BuildThumb.svelte'
+  import { peekHover } from '../lib/hoverIntent'
   import { buildGameName, commentCount, isArchived, isQuickDrop } from '../lib/builds'
   import { relativeTime } from '../lib/conversations'
   import { app, clock } from '../lib/store.svelte'
@@ -18,12 +20,30 @@
 
   const b = $derived(message.build!)
   const game = $derived(buildGameName(app.state, serverId, message))
+  // quick peek (#619): resting on it ~600 ms, or Space while it has the focus
+  let el: HTMLElement | undefined = $state()
+  let peeking = $state(false)
+  const hover = peekHover((v) => (peeking = v))
+  $effect(() => () => hover.stop())
+  function closePeek() {
+    hover.stop()
+    peeking = false
+  }
+  function keys(e: KeyboardEvent) {
+    if (e.key !== ' ') return
+    e.preventDefault()
+    hover.stop()
+    peeking = !peeking
+  }
+  /** A button presses on Space's keyup: the peek took Space instead. */
+  const keyUp = (e: KeyboardEvent) => { if (e.key === ' ') e.preventDefault() }
   const meta = $derived([nameOf(message.author_id), relativeTime(message.created_at, Date.parse(clock.nowIso)), commentCount(message)].filter(Boolean).join(' · '))
 </script>
 
-<article class="build-card" class:archived={isArchived(message)} data-build-id={message.id}>
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<article bind:this={el} class="build-card" class:archived={isArchived(message)} data-build-id={message.id} onmouseenter={hover.enter} onmouseleave={hover.leave}>
   <svelte:element this={onOpen ? 'button' : 'div'} type={onOpen ? 'button' : undefined} class="open" role={onOpen ? undefined : 'presentation'}
-    onclick={onOpen ? () => onOpen(message) : undefined}>
+    onclick={onOpen ? () => onOpen(message) : undefined} onkeydown={keys} onkeyup={keyUp}>
     <div class="media">
       <BuildThumb {message} dim={isArchived(message)} />
       {#if b.link}<span class="tag video"><span aria-hidden="true">▶</span> video</span>{/if}
@@ -39,6 +59,9 @@
       <span class="meta">{meta}</span>
     </div>
   </svelte:element>
+  {#if peeking && el}
+    <BuildPeek {message} {serverId} anchor={el} onClose={closePeek} {onOpen} onEnter={hover.stay} onLeave={hover.leave} />
+  {/if}
 </article>
 
 <style>
