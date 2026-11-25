@@ -39,8 +39,8 @@
     </div>
   </section>
   <label class="check">
-    <input type="checkbox" checked={archived} onchange={(e) => onArchived(e.currentTarget.checked)} />
-    Show archived
+    <input type="checkbox" role="switch" class="switch" checked={archived} onchange={(e) => onArchived(e.currentTarget.checked)} />
+    <span>Show archived</span>
   </label>
   <BulkArchive {channelId} {games} selected={game} />
 </aside>
@@ -55,6 +55,6 @@
   .games button[aria-pressed='true'] { background: var(--bg-4); color: var(--text); font-weight: 600; }
   .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .n { color: var(--text-3); font-size: 12px; font-variant-numeric: tabular-nums; }
-  .check { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--text-2); cursor: pointer; }
-  .check input { width: 16px; height: 16px; margin: 0; accent-color: var(--accent); }
+  /* the app-wide on/off switch (app.css .switch), laid out like Inbox filters' "Only unread" */
+  .check { display: flex; align-items: center; gap: 10px; font-size: 14px; color: var(--text-2); cursor: pointer; }
 </style>

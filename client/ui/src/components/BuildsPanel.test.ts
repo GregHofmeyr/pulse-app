@@ -1,4 +1,6 @@
 // @vitest-environment jsdom
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { flushSync, mount, unmount } from 'svelte'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Message } from '../lib/protocol/Message'
@@ -114,6 +116,18 @@ describe('BuildsPanel', () => {
     await settle()
     flushSync()
     expect(order()).toEqual(['M003', 'M002', 'M001'])
+  })
+
+  it('Show archived is the shared on/off switch, not a custom tick box', async () => {
+    await show()
+    const box = showArchived()
+    // the app-wide switch from app.css, the same markup as Inbox filters' "Only unread"
+    expect(box.matches('input[type="checkbox"][role="switch"].switch')).toBe(true)
+    expect(box.closest('label')?.textContent?.trim()).toBe('Show archived')
+    // no local sizing or accent left to fight the shared rule
+    const src = readFileSync(resolve(__dirname, 'BuildsPanel.svelte'), 'utf8')
+    expect(src).not.toMatch(/accent-color/)
+    expect(src).not.toMatch(/\.check input/)
   })
 
   it('counts follow Show archived', async () => {
