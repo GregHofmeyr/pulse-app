@@ -86,9 +86,9 @@ describe('BuildsChannel: gallery and list', () => {
     expect(card.querySelector('.chip, .pill')).toBeNull()
     // no game: no caption
     expect(document.querySelector('[data-build-id="M002"] .caption')).toBeNull()
-    // the header: All games, the count, and no "+ Add build" yet (nothing inert ships)
+    // the header: All games, the count, and "+ Add build" (#618)
     expect(document.querySelector('.builds-head h2')?.textContent).toBe('All games')
-    expect(document.body.textContent).not.toContain('+ Add build')
+    expect([...document.querySelectorAll('.builds-head button')].some((b) => b.textContent?.trim() === '+ Add build')).toBe(true)
   })
 
   it('the List toggle switches to rows and is remembered per channel', async () => {

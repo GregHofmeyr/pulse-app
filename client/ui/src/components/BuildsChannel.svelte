@@ -5,10 +5,12 @@
   import { tick, untrack } from 'svelte'
   import BuildCard from './BuildCard.svelte'
   import BuildPage from './BuildPage.svelte'
+  import BuildQuickAdd from './BuildQuickAdd.svelte'
   import BuildRow from './BuildRow.svelte'
   import BuildsHeader from './BuildsHeader.svelte'
   import BuildsPanel from './BuildsPanel.svelte'
   import { buildFacetsOf, buildFeedFailed, buildFeedKey, buildFilter, loadBuildPage, openBuildFeed, setBuildFacets, type BuildFeed, type BuildFilter } from '../lib/builds'
+  import { classifyPaste, type BuildPaste, type QuickPrefill } from '../lib/buildPaste'
   import { panelOpen, setPanelOpen, setView, viewOf, type BuildView } from '../lib/buildPrefs'
   import { nameOfIn } from '../lib/selectors'
   import { tracksUnread } from '../lib/state'
@@ -213,6 +215,32 @@
     })
   })
 
+  // --- adding (#618): "+ Add build", or a paste anywhere in the browse view that isn't into a field, opens quick add ---
+  let quick = $state<{ initial: BuildPaste | null } | null>(null)
+  let quickAdd: BuildQuickAdd | undefined = $state()
+  /** What the full form opens with (Add details). */
+  let form = $state<QuickPrefill | null>(null)
+  function openQuick(p: BuildPaste | null = null) {
+    if (quick && quickAdd) {
+      if (p) void quickAdd.take(p)
+      else quickAdd.focus()
+      return
+    }
+    quick = { initial: p }
+  }
+  const FIELD = 'input, textarea, select, [contenteditable="true"], [contenteditable="plaintext-only"]'
+  function browsePaste(e: ClipboardEvent) {
+    if (e.defaultPrevented || (e.target instanceof Element && e.target.closest(FIELD))) return
+    const p = e.clipboardData ? classifyPaste(e.clipboardData) : null
+    if (!p) return
+    e.preventDefault()
+    openQuick(p)
+  }
+  function details(p: QuickPrefill) {
+    quick = null
+    form = p
+  }
+
   const empty = $derived(!!feed?.start && items.length === 0)
   const filtered = $derived(!!filter.game || !!filter.q)
 </script>
@@ -221,35 +249,42 @@
   {#if openNow}
     <BuildPage message={openNow} {serverId} onBack={() => void closePage()} />
   {:else}
-    <BuildsHeader {title} {count} {q} onQ={(v) => (q = v)} {view} onView={pickView} {panel} onPanel={togglePanel} />
-    <div class="body">
-      <div class="feed" class:list={view === 'list'} bind:this={scroller}>
-        {#if view === 'gallery'}
-          <div class="grid">
-            {#each items as m (m.id)}<BuildCard message={m} {serverId} {nameOf} onOpen={openPage} />{/each}
-          </div>
-        {:else}
-          <div class="rows">
-            {#each items as m (m.id)}<BuildRow message={m} {serverId} {nameOf} onOpen={openPage} />{/each}
-          </div>
-        {/if}
-        <div class="sentinel" bind:this={sentinel}></div>
-        {#if empty}
-          <p class="empty">{filtered ? 'No builds match.' : 'No builds yet. Save your first with + Add build: a title, a link, a screenshot or a few notes is enough.'}</p>
-        {/if}
-        {#if failedKey === key}
-          <p class="error" role="alert">{error} <button type="button" class="link-btn" onclick={() => (failedKey = null)}>Try again</button></p>
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div class="browse" onpaste={browsePaste}>
+      <BuildsHeader {title} {count} {q} onQ={(v) => (q = v)} {view} onView={pickView} {panel} onPanel={togglePanel} onAdd={() => openQuick()} />
+      {#if quick}
+        <BuildQuickAdd bind:this={quickAdd} {channelId} {serverId} initial={quick.initial} onDetails={details} onClose={() => (quick = null)} />
+      {/if}
+      <div class="body">
+        <div class="feed" class:list={view === 'list'} bind:this={scroller}>
+          {#if view === 'gallery'}
+            <div class="grid">
+              {#each items as m (m.id)}<BuildCard message={m} {serverId} {nameOf} onOpen={openPage} />{/each}
+            </div>
+          {:else}
+            <div class="rows">
+              {#each items as m (m.id)}<BuildRow message={m} {serverId} {nameOf} onOpen={openPage} />{/each}
+            </div>
+          {/if}
+          <div class="sentinel" bind:this={sentinel}></div>
+          {#if empty}
+            <p class="empty">{filtered ? 'No builds match.' : 'No builds yet. Save your first with + Add build: a title, a link, a screenshot or a few notes is enough.'}</p>
+          {/if}
+          {#if failedKey === key}
+            <p class="error" role="alert">{error} <button type="button" class="link-btn" onclick={() => (failedKey = null)}>Try again</button></p>
+          {/if}
+        </div>
+        {#if panel}
+          <BuildsPanel {channelId} {serverId} {facets} {game} onGame={(g) => (game = g)} {archived} onArchived={(on) => (archived = on)} />
         {/if}
       </div>
-      {#if panel}
-        <BuildsPanel {channelId} {serverId} {facets} {game} onGame={(g) => (game = g)} {archived} onArchived={(on) => (archived = on)} />
-      {/if}
     </div>
   {/if}
 </div>
 
 <style>
   .chan { flex: 1; display: flex; flex-direction: column; min-height: 0; position: relative; }
+  .browse { flex: 1; display: flex; flex-direction: column; min-height: 0; }
   .body { flex: 1; display: flex; min-height: 0; }
   .feed { flex: 1; min-width: 0; overflow-y: auto; display: flex; flex-direction: column; }
   .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 14px; padding: 16px 18px 8px; align-items: start; }

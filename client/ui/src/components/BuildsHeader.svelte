@@ -1,12 +1,12 @@
 <script lang="ts">
   // A builds channel's header (#617): the selected game's name (or "All games"), the count, a search box, the Gallery /
-  // List switch and, rightmost, the panel toggle.
+  // List switch, "+ Add build" and, rightmost, the panel toggle.
   import { untrack } from 'svelte'
   import Icon from './Icon.svelte'
   import Segmented from './Segmented.svelte'
   import type { BuildView } from '../lib/buildPrefs'
 
-  let { title, count, q, onQ, view, onView, panel, onPanel }: {
+  let { title, count, q, onQ, view, onView, panel, onPanel, onAdd }: {
     title: string
     /** Builds in view (null until counted). */
     count: number | null
@@ -17,6 +17,8 @@
     onView: (v: BuildView) => void
     panel?: boolean
     onPanel?: () => void
+    /** "+ Add build" (#618): opens quick add. */
+    onAdd?: () => void
   } = $props()
 
   const SEARCH_DEBOUNCE_MS = 250
@@ -38,6 +40,7 @@
     <Icon name="search" size={14} />
     <input class="input input-sm" type="search" placeholder="Search builds" aria-label="Search builds" maxlength="200" bind:value={typed} oninput={input} />
   </label>
+  {#if onAdd}<button type="button" class="btn btn-primary add" onclick={onAdd}>+ Add build</button>{/if}
   <Segmented label="View" size="sm" options={[{ value: 'gallery', label: 'Gallery' }, { value: 'list', label: 'List' }]} value={view} onchange={onView} />
   {#if onPanel}
     <button type="button" class="icon-btn hbtn" class:on={panel} aria-label={panel ? 'Hide games panel' : 'Show games panel'} data-tip={panel ? 'Hide panel' : 'Show panel'}
