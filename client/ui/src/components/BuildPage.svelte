@@ -2,6 +2,7 @@
   // One build's page (#618, spec §4.1): Back, the build (BuildView, with its Actions menu), and its Comments (a
   // ThreadChat, the author's tagged "author"). It replaces the channel's browse view; Back returns to it.
   import BuildActions from './BuildActions.svelte'
+  import BuildVideo from './BuildVideo.svelte'
   import BuildView from './BuildView.svelte'
   import Icon from './Icon.svelte'
   import ImageViewer from './ImageViewer.svelte'
@@ -38,6 +39,7 @@
   })
   const screenshots = $derived<BuildScreenshot[]>(shots.map((a) => ({ id: a.id, url: urls[a.id] ?? null, w: a.width, h: a.height })))
   let viewing = $state<number | null>(null)
+  let error = $state('')
 </script>
 
 <div class="build-page" data-testid="build-page">
@@ -52,10 +54,14 @@
         <BuildView title={b.title} gameName={buildGameName(app.state, serverId, message)} guessed={b.game_guessed} authorName={nameOf(message.author_id)}
           savedAt={relativeTime(message.created_at, now)} updatedAt={b.updated_at ? relativeTime(b.updated_at, now) : null} notes={b.notes}
           {screenshots} link={b.link} archived={isArchived(message)} quickDrop={isQuickDrop(message)} onImage={(i) => (viewing = i)}>
+          {#snippet video()}
+            <BuildVideo link={b.link!} messageId={message.id} onError={(t) => (error = t)} />
+          {/snippet}
           {#snippet actions()}
             <BuildActions {message} canEdit={rights.edit} canArchive={rights.archive} canDelete={rights.delete} items={[]} onDeleted={onBack} />
           {/snippet}
         </BuildView>
+        {#if error}<p class="error" role="alert">{error}</p>{/if}
       </div>
       <section class="comments" aria-label="Comments">
         <h2>Comments</h2>
@@ -75,6 +81,7 @@
   .build-page { flex: 1; display: flex; flex-direction: column; min-height: 0; }
   .bar { flex-shrink: 0; display: flex; align-items: center; min-height: 52px; padding: 8px 18px; box-sizing: border-box; border-bottom: 1px solid var(--bg-3); }
   .back { padding-left: 8px; }
+  .error { margin: 8px 0 0; color: var(--danger-text); font-size: 13px; }
   .gone { margin: 0; padding: 24px 18px; color: var(--text-3); font-size: 13px; }
   .body { flex: 1; display: flex; min-height: 0; }
   .main { flex: 1; min-width: 0; overflow-y: auto; padding: 18px 22px 24px; }

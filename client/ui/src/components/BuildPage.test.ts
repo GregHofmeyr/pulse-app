@@ -172,6 +172,14 @@ describe('BuildPage', () => {
     expect(row('nice one').querySelector('.author-tag')).toBeNull()
   })
 
+  it("the build's video sits in the media area; a build without a link has none", async () => {
+    await page(build('M001', { link: { url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ', title: 'Raven', thumb: null, provider: 'youtube', provider_id: 'dQw4w9WgXcQ' } }))
+    expect(document.querySelector('.build-view .media .build-video')).not.toBeNull()
+    unmount(cmp!)
+    await page(build('M001'))
+    expect(document.querySelector('.build-video, .link-card')).toBeNull()
+  })
+
   it('no comments yet says so', async () => {
     await page(build('M001'))
     expect(document.querySelector('.comments .empty')?.textContent).toBe('No comments yet.')

@@ -2,6 +2,7 @@
 // `LinkEmbed`; player URLs only ever point at our own embed page (`<origin>/embed/<provider>/<id>`),
 // which picks the provider's official player from a validated id.
 import type { EmbedProvider } from './protocol/EmbedProvider'
+import type { BuildLink } from './protocol/BuildLink'
 import type { LinkEmbed } from './protocol/LinkEmbed'
 
 type PlayerProvider = Exclude<EmbedProvider, 'generic' | 'unknown'>
@@ -119,3 +120,13 @@ export const SANDBOX: Record<PlayerProvider, string> = {
 }
 
 export const sandboxFor = (e: LinkEmbed): string => (isPlayerProvider(e.provider) ? SANDBOX[e.provider] : PLAYER_SANDBOX)
+
+/** A build's link as a preview card's embed (#618), for the same player path: a YouTube video (its id fetched) is a
+ *  player; anything else a plain card. */
+export function linkAsEmbed(link: BuildLink): LinkEmbed {
+  const video = link.provider === 'youtube' && !!link.provider_id
+  return {
+    url: link.url, provider: link.provider, kind: video ? 'player' : 'card', provider_id: video ? link.provider_id : null,
+    title: link.title, description: null, site_name: null, author: null, thumb: link.thumb, start: null, vertical: false,
+  }
+}
