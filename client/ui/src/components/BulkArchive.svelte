@@ -1,10 +1,14 @@
 <script lang="ts">
-  // "Archive old builds" (#617): a game (or All games) and a "saved before" (a day up to today, 30 days ago or 90 days
-  // ago), then "Archive matching builds…" asks the server which builds that is (a dry run, covering only builds you may
-  // archive), shows them, and archives them once you confirm. Archiving never deletes; each can be restored.
+  // "Archive old builds" (#617): a game (or All games) and a "saved before" (30 days ago, 90 days ago, or a day up to
+  // today from the calendar chip's picker), then "Archive matching builds…" asks the server which builds that is (a dry
+  // run, covering only builds you may archive), shows them, and
+  // archives them once you confirm. Archiving never deletes; each can be restored.
   import { untrack } from 'svelte'
+  import DatePicker from './DatePicker.svelte'
+  import Icon from './Icon.svelte'
   import Select from './Select.svelte'
   import { modal } from '../lib/actions'
+  import { dayStartIso, shortDay } from '../lib/calendar'
   import { clock, ui } from '../lib/store.svelte'
   import { api, errorText } from '../lib/tauri'
   import type { BuildBrief } from '../lib/protocol/BuildBrief'
@@ -26,14 +30,17 @@
     game = selected ?? null
   })
   let before = $state<Before>({ days: 30 })
-  let day = $state('')
+  /** The calendar chip's picker is open. */
+  let picking = $state(false)
+  let calBtn: HTMLButtonElement | undefined = $state()
+  const picked = $derived('day' in before ? `Before ${shortDay(before.day)}` : null)
   /** The time `before` stands for (the start of a picked day, in your time zone; never later than now). */
   function beforeIso(b: Before): string | null {
     if ('days' in b) return new Date(Date.now() - b.days * DAY_MS).toISOString()
-    const [y, m, d] = b.day.split('-').map(Number)
-    return y && m && d ? new Date(Math.min(new Date(y, m - 1, d).getTime(), Date.now())).toISOString() : null
+    const t = Date.parse(dayStartIso(b.day))
+    return Number.isNaN(t) ? null : new Date(Math.min(t, Date.now())).toISOString()
   }
-  /** Today in your time zone, as the date input writes a day: the latest it offers. */
+  /** Today in your time zone, as a picker day: the latest it offers. */
   const today = $derived.by(() => {
     const t = new Date(clock.nowIso)
     return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`
@@ -55,11 +62,6 @@
 
   function pickDays(days: 30 | 90) {
     before = { days }
-    day = ''
-  }
-  /** A picked day; clearing it goes back to the default, 30 days ago. */
-  function pickDay() {
-    before = day ? { day } : { days: 30 }
   }
 
   async function ask() {
@@ -115,9 +117,15 @@
     <div class="when" role="group" aria-label="Saved before">
       <button type="button" class="toggle-chip" aria-pressed={'days' in before && before.days === 30} onclick={() => pickDays(30)}>30 days ago</button>
       <button type="button" class="toggle-chip" aria-pressed={'days' in before && before.days === 90} onclick={() => pickDays(90)}>90 days ago</button>
+      <button bind:this={calBtn} type="button" class="toggle-chip cal" data-menu-toggle aria-haspopup="dialog" aria-expanded={picking}
+        aria-pressed={'day' in before} aria-label={picked ? `Pick a day: ${picked}` : 'Pick a day'} data-tip={picked ?? undefined}
+        onclick={() => (picking = !picking)}><Icon name="calendar" size={14} /></button>
     </div>
-    <input class="input input-sm" type="date" aria-label="Saved before this day" max={today} bind:value={day} oninput={pickDay} />
   </div>
+  {#if picking && calBtn}
+    <DatePicker anchor={calBtn} label="Saved before" align="end" max={today} {today} value={'day' in before ? before.day : null}
+      onPick={(d) => (before = { day: d })} onClose={() => (picking = false)} />
+  {/if}
   <button type="button" class="btn btn-secondary go" disabled={busy || none} onclick={ask}>{none ? 'No builds match' : 'Archive matching builds…'}</button>
   <p class="sr-only" role="status">{none ? 'No builds match. Try another game or an earlier day.' : ''}</p>
   {#if error && !preview}<p class="err" role="alert">{error}</p>{/if}
@@ -148,9 +156,10 @@
   h3 { margin: 0; padding: 0 var(--inset); }
   .field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
   .field-label { padding-inline: var(--inset); font-size: 12px; font-weight: 600; color: var(--text-3); }
-  .when { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  /* 30 days, 90 days and the calendar chip in one row; the picked day shows in the calendar's tooltip and name */
+  .when { display: grid; grid-template-columns: 1fr 1fr auto; gap: 6px; }
   .when .toggle-chip { justify-content: center; min-width: 0; padding: 0 8px; overflow: hidden; text-overflow: ellipsis; }
-  .input { width: 100%; min-width: 0; box-sizing: border-box; }
+  .when .cal { width: 36px; padding: 0; }
   .go { width: 100%; min-width: 0; }
   .err { margin: 0; padding-inline: var(--inset); font-size: 12px; color: var(--danger-text); overflow-wrap: anywhere; }
   .overlay { position: fixed; inset: 0; z-index: 30; }

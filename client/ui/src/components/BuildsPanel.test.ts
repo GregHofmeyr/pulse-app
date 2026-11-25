@@ -64,6 +64,22 @@ const order = () => [...document.querySelectorAll<HTMLElement>('[data-build-id]'
 const panel = () => document.querySelector<HTMLElement>('.builds-panel')
 const gameRow = (name: string) => [...panel()!.querySelectorAll<HTMLButtonElement>('.games button')].find((b) => b.querySelector('.name')?.textContent === name)!
 const button = (text: string) => [...document.querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent?.trim() === text)
+const calendar = () => panel()!.querySelector<HTMLButtonElement>('.when .cal')!
+/** A day in last month (always in the past), as the picker writes it. */
+const prevMonthDay = (d: number) => {
+  const t = new Date()
+  const m = new Date(t.getFullYear(), t.getMonth() - 1, d)
+  return `${m.getFullYear()}-${String(m.getMonth() + 1).padStart(2, '0')}-${String(m.getDate()).padStart(2, '0')}`
+}
+/** Opens the calendar, goes back a month and clicks `day`. */
+function pickDay(day: string) {
+  calendar().click()
+  flushSync()
+  document.querySelector<HTMLButtonElement>('.date-picker [aria-label="Previous month"]')!.click()
+  flushSync()
+  document.querySelector<HTMLButtonElement>(`.date-picker [data-day="${day}"]`)!.click()
+  flushSync()
+}
 const showArchived = () => panel()!.querySelector<HTMLInputElement>('input[type=checkbox]')!
 
 beforeEach(() => {
@@ -220,20 +236,18 @@ describe('BuildsPanel', () => {
     expect(ui.notice).toBe('Archived 1 build')
   })
 
-  it('a date picked archives builds saved before that day', async () => {
+  it('a date picked archives builds saved before the start of that local day', async () => {
     bulk = () => ({ builds: [], archived: 0 })
     await show()
     chooseOption(selectTrigger('Game to archive')!, 'G2')
-    const day = panel()!.querySelector<HTMLInputElement>('input[type=date]')!
-    day.value = '2026-09-01'
-    day.dispatchEvent(new Event('input', { bubbles: true }))
-    flushSync()
+    pickDay(prevMonthDay(1))
     button('Archive matching builds…')!.click()
     await settle()
     flushSync()
     const body = (calls('bulk_archive_builds')[0][1] as { body: { game_id: string | null; before: string } }).body
     expect(body.game_id).toBe('G2')
-    expect(body.before).toBe(new Date(2026, 8, 1).toISOString())
+    const d = new Date()
+    expect(body.before).toBe(new Date(d.getFullYear(), d.getMonth() - 1, 1).toISOString())
   })
 
   it("a non-owner's preview counts only their own builds (renders what the server returns)", async () => {
@@ -251,40 +265,54 @@ describe('BuildsPanel', () => {
     expect(button('Archive matching builds…')).toBeDefined()
   })
 
-  it('clearing the picked day goes back to 30 days ago', async () => {
+  it('chips: the calendar is pressed once a day is picked and shows it; 30 or 90 days un-presses it', async () => {
     await show()
-    const day = panel()!.querySelector<HTMLInputElement>('input[type=date]')!
-    day.value = '2026-09-01'
-    day.dispatchEvent(new Event('input', { bubbles: true }))
-    flushSync()
-    expect(button('30 days ago')!.getAttribute('aria-pressed')).toBe('false')
-    day.value = ''
-    day.dispatchEvent(new Event('input', { bubbles: true }))
-    flushSync()
+    const cal = calendar()
+    // a calendar chip in the same row as the day chips, styled as one
+    expect(cal.closest('.when')).toBe(button('30 days ago')!.closest('.when'))
+    expect(cal.classList.contains('toggle-chip')).toBe(true)
+    expect(document.querySelector('.bulk input[type=date]')).toBeNull()
+    expect(cal.getAttribute('aria-pressed')).toBe('false')
     expect(button('30 days ago')!.getAttribute('aria-pressed')).toBe('true')
+    const day = prevMonthDay(1)
+    pickDay(day)
+    expect(cal.getAttribute('aria-pressed')).toBe('true')
+    expect(button('30 days ago')!.getAttribute('aria-pressed')).toBe('false')
+    expect(button('90 days ago')!.getAttribute('aria-pressed')).toBe('false')
+    const [y, m] = day.split('-').map(Number)
+    const label = `Before 1 ${new Date(y, m - 1, 1).toLocaleString('en-GB', { month: 'short' })}`
+    expect(cal.getAttribute('data-tip')).toBe(label)
+    expect(cal.getAttribute('aria-label')).toBe(`Pick a day: ${label}`)
+    // the picker closed and the focus came back to the chip
+    expect(document.querySelector('.date-picker')).toBeNull()
+    expect(document.activeElement).toBe(cal)
+    button('90 days ago')!.click()
+    flushSync()
+    expect(cal.getAttribute('aria-pressed')).toBe('false')
+    expect(cal.getAttribute('aria-label')).toBe('Pick a day')
     button('Archive matching builds…')!.click()
     await settle()
     flushSync()
     const body = (calls('bulk_archive_builds')[0][1] as { body: { before: string } }).body
-    expect(Math.abs(Date.parse(body.before) - (Date.now() - 30 * DAY))).toBeLessThan(60_000)
+    expect(Math.abs(Date.parse(body.before) - (Date.now() - 90 * DAY))).toBeLessThan(60_000)
   })
 
-  it('the day picker stops at today, and a later day counts as now', async () => {
+  it('the calendar opens on a click, marks today, disables later days, and Escape closes it back to the chip', async () => {
     await show()
-    const day = panel()!.querySelector<HTMLInputElement>('input[type=date]')!
+    calendar().click()
+    flushSync()
+    const picker = document.querySelector<HTMLElement>('.date-picker')!
+    expect(picker).not.toBeNull()
+    expect(calendar().getAttribute('aria-expanded')).toBe('true')
+    const fmt = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
     const now = new Date()
-    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
-    expect(day.max).toBe(today)
-    // typed past the picker's limit
-    day.value = '2999-01-01'
-    day.dispatchEvent(new Event('input', { bubbles: true }))
+    expect(picker.querySelector(`[data-day="${fmt(now)}"]`)!.getAttribute('aria-current')).toBe('date')
+    const future = picker.querySelector<HTMLButtonElement>(`[data-day="${fmt(new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1))}"]`)
+    if (future) expect(future.disabled).toBe(true) // absent only when today ends the grid's last week
+    ;(document.activeElement as HTMLElement).dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
     flushSync()
-    button('Archive matching builds…')!.click()
-    await settle()
-    flushSync()
-    const body = (calls('bulk_archive_builds')[0][1] as { body: { before: string } }).body
-    expect(Date.parse(body.before)).toBeLessThanOrEqual(Date.now())
-    expect(Date.now() - Date.parse(body.before)).toBeLessThan(60_000)
+    expect(document.querySelector('.date-picker')).toBeNull()
+    expect(document.activeElement).toBe(calendar())
   })
 
   it('no matches is announced', async () => {
