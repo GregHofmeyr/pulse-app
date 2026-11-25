@@ -15,7 +15,7 @@
   import { app } from '../lib/store.svelte'
   import { avatarColor, initial } from '../lib/avatar'
   import { allActions, type ActionContext } from '../lib/quickActions'
-  import { buildResults, placesFrom, type Place, type ResultSection, type Row } from '../lib/quickSwitch'
+  import { buildResults, isBuildsOnly, placesFrom, type Place, type ResultSection, type Row } from '../lib/quickSwitch'
   import { messageQuery, messageSearcher, NO_MESSAGES, type MessageResults } from '../lib/quickMessages'
   import { lineWithHit, segments } from '../lib/highlight'
   import { hitShown } from '../lib/mentionStyles'
@@ -78,10 +78,10 @@
     limit: BUILDS_SHOWN,
   })
   const games = $derived(Object.values(app.state.games).flat())
-  $effect(() => {
-    const q = builds ? buildsQuery(parseBuildsQuery(raw, games)) : null
-    buildSearcher.set(q ? JSON.stringify(q) : null)
-  })
+  const buildsAsk = $derived(builds ? buildsQuery(parseBuildsQuery(raw, games)) : null)
+  $effect(() => buildSearcher.set(buildsAsk ? JSON.stringify(buildsAsk) : null))
+  /** `builds:` with nothing to search yet: a hint, not "Nothing matches". */
+  const bareBuilds = $derived(isBuildsOnly(raw) && !buildsAsk)
   onDestroy(() => buildSearcher.dispose())
   const buildRows = $derived<ResultSection[]>(
     foundBuilds.status === 'done' && foundBuilds.hits.length
@@ -304,7 +304,7 @@
       <BuildPeek message={peeked} serverId={serverOf(peeked)} docked closeOnEscape={false} onClose={() => (peekId = null)} onOpen={(m) => void openPeeked(m)} />
     {/if}
     {#if flat.length === 0 && !messageNote}
-      <p class="empty">{typed ? `Nothing matches “${raw.trim()}”` : 'Type to jump anywhere. Start with > for actions.'}</p>
+      <p class="empty">{bareBuilds ? 'Type a game or words to find builds' : typed ? `Nothing matches “${raw.trim()}”` : 'Type to jump anywhere. Start with > for actions.'}</p>
     {/if}
     <p class="sr-only" role="status" aria-live="polite">{count}</p>
   </div>

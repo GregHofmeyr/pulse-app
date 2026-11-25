@@ -433,6 +433,20 @@ describe('QuickSwitcher', () => {
       expect(row.querySelector('.ctx')!.textContent).toBe('The First Descendant · Game Night')
     })
 
+    it('a bare "builds:" says what to type', () => {
+      openWith({ search: vi.fn(async () => []), open: vi.fn() })
+      type('builds:')
+      expect(document.querySelector('.empty')!.textContent).toBe('Type a game or words to find builds')
+      expect(builds.search).not.toHaveBeenCalled()
+    })
+
+    it('a plain query of two characters never searches builds', async () => {
+      openWith({ search: vi.fn(async () => []), open: vi.fn() })
+      type('ra')
+      await answer()
+      expect(builds.search).not.toHaveBeenCalled()
+    })
+
     it('"builds:" hides places and actions', async () => {
       openWith({ search: vi.fn(async () => [build('m1', 'Setup build')]), open: vi.fn() })
       type('builds: set')

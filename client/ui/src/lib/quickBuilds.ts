@@ -14,10 +14,11 @@ export type BuildsQuery = { only: boolean; gameKey: string | null; text: string 
 /** A game name's initials ("The First Descendant" → "tfd"). */
 const initials = (key: string): string => key.split(' ').map((w) => w[0] ?? '').join('')
 
-/** The one game key `words` names (by the start of its name, or of its initials when one word), or null: none, or
- *  more than one (ambiguous). */
+/** The one game key `words` names, or null: none, or more than one (ambiguous). A full name wins outright (so
+ *  "destiny" picks Destiny beside Destiny 2); else the start of a name, or (one word) a game's whole initials. */
 function gameFor(words: string, keys: string[]): string | 'many' | null {
-  const hits = keys.filter((k) => k.startsWith(words) || (!words.includes(' ') && initials(k).startsWith(words)))
+  if (keys.includes(words)) return words
+  const hits = keys.filter((k) => k.startsWith(words) || (!words.includes(' ') && initials(k) === words))
   return hits.length === 0 ? null : hits.length === 1 ? hits[0] : 'many'
 }
 
@@ -40,11 +41,12 @@ export function parseBuildsQuery(raw: string, games: Game[]): BuildsQuery | null
   return { only: true, gameKey: null, text: words.join(' ') }
 }
 
-/** What to ask the search route (`q`, `game` key), or null: a game alone is enough; text needs two characters and a
- *  letter or digit (the index holds words), as messages do. */
+/** What to ask the search route (`q`, `game` key), or null: a game alone is enough; text needs a letter or digit (the
+ *  index holds words) and two characters after `builds:`, three in a plain query (builds share the server's search
+ *  rate limit with message search, so a plain query asks only once it's more than a couple of letters). */
 export function buildsQuery(p: BuildsQuery | null): { q: string; game: string | null } | null {
   if (!p) return null
-  const textOk = p.text.length >= 2 && hasSearchableWords(p.text)
+  const textOk = p.text.length >= (p.only ? 2 : 3) && hasSearchableWords(p.text)
   if (p.gameKey) return { q: textOk ? p.text : '', game: p.gameKey }
   return textOk ? { q: p.text, game: null } : null
 }
