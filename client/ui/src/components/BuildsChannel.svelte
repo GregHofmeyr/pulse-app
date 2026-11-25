@@ -4,6 +4,7 @@
   // place of all that (#618); Back brings the browse view back as it was, filter and scroll.
   import { tick, untrack } from 'svelte'
   import BuildCard from './BuildCard.svelte'
+  import BuildForm from './BuildForm.svelte'
   import BuildPage from './BuildPage.svelte'
   import BuildQuickAdd from './BuildQuickAdd.svelte'
   import BuildRow from './BuildRow.svelte'
@@ -281,6 +282,10 @@
     </div>
   {/if}
 </div>
+
+{#if form}
+  <BuildForm {channelId} {serverId} prefill={form} onClose={() => (form = null)} />
+{/if}
 
 <style>
   .chan { flex: 1; display: flex; flex-direction: column; min-height: 0; position: relative; }

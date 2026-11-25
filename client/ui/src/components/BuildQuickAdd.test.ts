@@ -202,6 +202,17 @@ describe('BuildQuickAdd', () => {
     await flush()
     expect(onDetails).toHaveBeenCalledWith({ title: '', link: LINK, files: [] })
     expect(calls('create_build')).toHaveLength(0)
+    unmount(cmp!)
+    // in the channel: the full form, prefilled, in place of the quick field
+    await channel()
+    addButton().click()
+    await flush()
+    type(LINK)
+    document.querySelector<HTMLButtonElement>('.quick-add .details')!.click()
+    await flush()
+    expect(document.querySelector('.quick-add')).toBeNull()
+    expect(document.querySelector<HTMLInputElement>('.build-form input[aria-label="Build link"]')?.value).toBe(LINK)
+    expect(calls('create_build')).toHaveLength(0)
   })
 
   it('a paste in the search box stays in the search box', async () => {

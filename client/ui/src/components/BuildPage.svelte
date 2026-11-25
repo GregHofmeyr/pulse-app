@@ -2,6 +2,7 @@
   // One build's page (#618, spec §4.1): Back, the build (BuildView, with its Actions menu), and its Comments (a
   // ThreadChat, the author's tagged "author"). It replaces the channel's browse view; Back returns to it.
   import BuildActions from './BuildActions.svelte'
+  import BuildForm from './BuildForm.svelte'
   import BuildVideo from './BuildVideo.svelte'
   import BuildView from './BuildView.svelte'
   import Icon from './Icon.svelte'
@@ -40,6 +41,7 @@
   const screenshots = $derived<BuildScreenshot[]>(shots.map((a) => ({ id: a.id, url: urls[a.id] ?? null, w: a.width, h: a.height })))
   let viewing = $state<number | null>(null)
   let error = $state('')
+  let editing = $state(false)
 </script>
 
 <div class="build-page" data-testid="build-page">
@@ -58,7 +60,7 @@
             <BuildVideo link={b.link!} messageId={message.id} onError={(t) => (error = t)} />
           {/snippet}
           {#snippet actions()}
-            <BuildActions {message} canEdit={rights.edit} canArchive={rights.archive} canDelete={rights.delete} items={[]} onDeleted={onBack} />
+            <BuildActions {message} canEdit={rights.edit} canArchive={rights.archive} canDelete={rights.delete} items={[]} onEdit={() => (editing = true)} onDeleted={onBack} />
           {/snippet}
         </BuildView>
         {#if error}<p class="error" role="alert">{error}</p>{/if}
@@ -72,6 +74,10 @@
     </div>
   {/if}
 </div>
+
+{#if editing && !message.deleted}
+  <BuildForm channelId={message.channel_id} {serverId} build={message} onClose={() => (editing = false)} />
+{/if}
 
 {#if viewing !== null}
   <ImageViewer images={shots} messageId={message.id} start={viewing} onClose={() => (viewing = null)} />

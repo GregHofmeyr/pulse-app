@@ -8,7 +8,14 @@
   import { app } from '../lib/store.svelte'
   import { api, errorText } from '../lib/tauri'
 
-  let { serverId, value, guess = null, onChange }: { serverId: string; value: string | null; guess?: string | null; onChange: (gameId: string | null) => void } = $props()
+  let { serverId, value, guess = null, onChange, addLabel = (n: string) => `Add '${n}'` }: {
+    serverId: string
+    value: string | null
+    guess?: string | null
+    onChange: (gameId: string | null) => void
+    /** The row that adds a new name to the registry (a build's form: "+ Use 'X' as a new game", #618). */
+    addLabel?: (name: string) => string
+  } = $props()
 
   const MAX_NAME = 40
 
@@ -141,7 +148,7 @@
         <!-- svelte-ignore a11y_click_events_have_key_events -->
         <!-- mousedown keeps the input focused so the click lands before blur closes the list -->
         <li role="option" class="menu-item" aria-selected={i === hi} class:hi={i === hi} class:add={'add' in r} onmousedown={(e) => e.preventDefault()} onclick={() => choose(r)}>
-          {'game' in r ? r.game.name : `Add '${r.add}'`}
+          {'game' in r ? r.game.name : addLabel(r.add)}
         </li>
       {/each}
     </ul>
