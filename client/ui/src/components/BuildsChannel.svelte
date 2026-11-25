@@ -6,7 +6,7 @@
   import BuildRow from './BuildRow.svelte'
   import BuildsHeader from './BuildsHeader.svelte'
   import BuildsPanel from './BuildsPanel.svelte'
-  import { buildFacetsOf, buildFeedFailed, buildFeedKey, buildFilter, loadBuildPage, openBuildFeed, setBuildFacets, type BuildFeed, type BuildFilter } from '../lib/builds'
+  import { buildFacetsOf, buildFeedFailed, dropBuildFeed, buildFeedKey, buildFilter, loadBuildPage, openBuildFeed, setBuildFacets, type BuildFeed, type BuildFilter } from '../lib/builds'
   import { panelOpen, setPanelOpen, setView, viewOf, type BuildView } from '../lib/buildPrefs'
   import { nameOfIn } from '../lib/selectors'
   import { tracksUnread } from '../lib/state'
@@ -147,9 +147,20 @@
     const k = key
     if (!(k in app.state.buildFeeds)) return
     epochs.set(k, (epochs.get(k) ?? 0) + 1)
-    const { [k]: _gone, ...rest } = app.state.buildFeeds
-    app.state = { ...app.state, buildFeeds: rest }
+    app.state = dropBuildFeed(app.state, k)
   }
+
+  // A search's feed is thrown away once its words change or the channel closes: one per query would pile up, and
+  // events never keep it current (coming back to the same words fetches them again).
+  $effect(() => {
+    const k = key
+    if (!filter.q) return
+    return () =>
+      untrack(() => {
+        epochs.set(k, (epochs.get(k) ?? 0) + 1)
+        app.state = dropBuildFeed(app.state, k)
+      })
+  })
 
   $effect(() => {
     if (!unfetched(feed) || failedKey === key) return

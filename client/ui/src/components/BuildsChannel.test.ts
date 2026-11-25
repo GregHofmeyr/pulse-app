@@ -12,6 +12,7 @@ vi.stubGlobal('matchMedia', fakeMatchMedia(false).matchMedia)
 
 import BuildsChannel from './BuildsChannel.svelte'
 import { app } from '../lib/store.svelte'
+import { buildFeedKey } from '../lib/builds'
 import { applyReady, emptyState } from '../lib/state'
 import { testMe, testReady } from '../lib/testReady'
 import { windowFocus } from '../lib/windowFocus.svelte'
@@ -136,6 +137,32 @@ describe('BuildsChannel: gallery and list', () => {
     flushSync()
     expect(calls('list_builds').at(-1)![1]).toMatchObject({ q: 'raven' })
     expect(order()).toEqual(['M002'])
+  })
+
+  it('a search feed is thrown away when the words change or the channel closes', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    answer = (a) => (a.q ? [build('M002', { title: 'Raven' })] : [build('M002', { title: 'Raven' }), build('M001')])
+    cmp = mount(BuildsChannel, { target: document.body, props: { channelId: 'B1', serverId: 'S1' } })
+    flushSync()
+    await vi.advanceTimersByTimeAsync(0)
+    const box = document.querySelector<HTMLInputElement>('input[type=search]')!
+    const search = async (q: string) => {
+      box.value = q
+      box.dispatchEvent(new Event('input', { bubbles: true }))
+      await vi.advanceTimersByTimeAsync(300)
+      flushSync()
+    }
+    await search('raven')
+    expect(Object.keys(app.state.buildFeeds)).toContain(buildFeedKey('B1', { q: 'raven' }))
+    await search('bunny')
+    expect(Object.keys(app.state.buildFeeds).sort()).toEqual([buildFeedKey('B1', {}), buildFeedKey('B1', { q: 'bunny' })].sort())
+    // back to the same words: fetched again, not the copy cached before
+    await search('raven')
+    expect(calls('list_builds').filter((c) => (c[1] as { q: string | null }).q === 'raven')).toHaveLength(2)
+    unmount(cmp!)
+    cmp = undefined
+    // the whole channel's feed stays (it follows events); the search's goes
+    expect(Object.keys(app.state.buildFeeds)).toEqual([buildFeedKey('B1', {})])
   })
 
   it('scrolling to the end loads older builds', async () => {
