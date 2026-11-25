@@ -150,4 +150,52 @@ describe('BuildPeek', () => {
     flushSync()
     expect(peek()).toBeNull()
   })
+
+  // #636 review: the keyboard way in and out
+  it('Space moves the focus into the peek, Escape brings it back to the card; the card says it is expanded', () => {
+    card()
+    const open = document.querySelector<HTMLButtonElement>('.build-card button.open')!
+    expect(open.getAttribute('aria-expanded')).toBe('false')
+    open.focus()
+    open.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true, cancelable: true }))
+    flushSync()
+    expect(peek()!.contains(document.activeElement)).toBe(true)
+    expect(open.getAttribute('aria-expanded')).toBe('true')
+    expect(open.getAttribute('aria-controls')).toBe(peek()!.id)
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+    flushSync()
+    expect(peek()).toBeNull()
+    expect(document.activeElement).toBe(open)
+    expect(open.getAttribute('aria-expanded')).toBe('false')
+  })
+
+  it('a held Space (repeats) never toggles it', () => {
+    card()
+    const open = document.querySelector<HTMLButtonElement>('.build-card button.open')!
+    open.focus()
+    open.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true, cancelable: true }))
+    flushSync()
+    const again = new KeyboardEvent('keydown', { key: ' ', repeat: true, bubbles: true, cancelable: true })
+    open.dispatchEvent(again)
+    flushSync()
+    expect(peek()).not.toBeNull()
+    expect(again.defaultPrevented, 'still not a button press').toBe(true)
+  })
+
+  it('a scroll or a resize closes it; a scroll inside it does not', () => {
+    card()
+    hover('.build-card', 'mouseenter')
+    wait(PEEK_OPEN_DELAY)
+    peek()!.dispatchEvent(new Event('scroll'))
+    flushSync()
+    expect(peek()).not.toBeNull()
+    document.dispatchEvent(new Event('scroll'))
+    flushSync()
+    expect(peek()).toBeNull()
+    hover('.build-card', 'mouseenter')
+    wait(PEEK_OPEN_DELAY)
+    window.dispatchEvent(new Event('resize'))
+    flushSync()
+    expect(peek()).toBeNull()
+  })
 })

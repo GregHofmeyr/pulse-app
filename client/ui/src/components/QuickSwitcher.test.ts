@@ -501,6 +501,12 @@ describe('QuickSwitcher', () => {
       expect(press(' ').defaultPrevented).toBe(true)
       const peek = document.querySelector<HTMLElement>('.build-peek')!
       expect(peek.querySelector('.title')!.textContent).toBe('Raven tank')
+      // the field drives it (#636 review), and keeps the focus
+      expect(field().getAttribute('aria-controls')!.split(' ')).toContain(peek.id)
+      expect(document.activeElement).toBe(field())
+      // a held Space doesn't flicker it
+      expect(press(' ', { repeat: true }).defaultPrevented).toBe(true)
+      expect(document.querySelector('.build-peek')).not.toBeNull()
       expect(peek.querySelector('.notes')!.textContent).toBe('Max crit\nbunny spam')
       // Escape closes the peek, not the switcher
       press('Escape')

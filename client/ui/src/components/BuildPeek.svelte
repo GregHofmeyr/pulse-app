@@ -13,12 +13,14 @@
   import { app } from '../lib/store.svelte'
   import type { Message } from '../lib/protocol/Message'
 
-  let { message, serverId, anchor, docked = false, onClose, onOpen, onEnter = () => {}, onLeave = () => {}, closeOnEscape = true, id }: {
+  let { message, serverId, anchor, docked = false, focus = false, onClose, onOpen, onEnter = () => {}, onLeave = () => {}, closeOnEscape = true, id }: {
     message: Message
     serverId: string
     /** What it hangs off (the card, the row); not needed docked. */
     anchor?: HTMLElement
     docked?: boolean
+    /** Opened from the keyboard: the focus moves in (the caller puts it back when it closes). */
+    focus?: boolean
     onClose: () => void
     /** Open: the caller's page opener; without it the build opens where it lives (its channel's page). */
     onOpen?: (m: Message) => void
@@ -46,6 +48,24 @@
     if (!el || docked || !anchor) return
     const p = placePopover(anchor.getBoundingClientRect(), { width: el.offsetWidth || 280, height: el.offsetHeight || 160 }, undefined, 'start', 6)
     place = `left:${p.left}px;${p.below ? `top:${p.top}px` : `bottom:${p.bottom}px`};max-height:${p.maxHeight}px`
+  })
+  onMount(() => {
+    if (focus) el?.querySelector<HTMLElement>('button')?.focus()
+  })
+  // Placed once: a scroll (not its own) or a resize moves what it hangs off, so it closes instead of floating astray.
+  $effect(() => {
+    if (docked) return
+    const scrolled = (e: Event) => {
+      if (el && e.target instanceof Node && el.contains(e.target)) return
+      onClose()
+    }
+    const resized = () => onClose()
+    document.addEventListener('scroll', scrolled, true)
+    window.addEventListener('resize', resized)
+    return () => {
+      document.removeEventListener('scroll', scrolled, true)
+      window.removeEventListener('resize', resized)
+    }
   })
 
   // the message and handlers are held first: closing may take this peek's props away

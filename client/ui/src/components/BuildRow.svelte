@@ -19,18 +19,30 @@
   const game = $derived(buildGameName(app.state, serverId, message))
   // quick peek (#619): resting on it ~600 ms, or Space while it has the focus
   let el: HTMLElement | undefined = $state()
+  let opener: HTMLElement | undefined = $state()
   let peeking = $state(false)
-  const hover = peekHover((v) => (peeking = v))
+  /** Opened with Space: the focus went into the peek, and comes back here when it closes. */
+  let byKey = $state(false)
+  const peekId = $derived(`build-peek-${message.id}`)
+  const hover = peekHover((v) => {
+    peeking = v
+    if (!v) byKey = false
+  })
   $effect(() => () => hover.stop())
   function closePeek() {
     hover.stop()
     peeking = false
+    if (byKey) opener?.focus()
+    byKey = false
   }
   function keys(e: KeyboardEvent) {
     if (e.key !== ' ') return
     e.preventDefault()
+    if (e.repeat) return
     hover.stop()
-    peeking = !peeking
+    if (peeking) return closePeek()
+    byKey = true
+    peeking = true
   }
   /** A button presses on Space's keyup: the peek took Space instead. */
   const keyUp = (e: KeyboardEvent) => { if (e.key === ' ') e.preventDefault() }
@@ -40,6 +52,7 @@
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <article bind:this={el} class="build-row" class:archived={isArchived(message)} data-build-id={message.id} onmouseenter={hover.enter} onmouseleave={hover.leave}>
   <svelte:element this={onOpen ? 'button' : 'div'} type={onOpen ? 'button' : undefined} class="open" role={onOpen ? undefined : 'presentation'}
+    bind:this={opener} aria-expanded={onOpen ? peeking : undefined} aria-controls={onOpen && peeking ? peekId : undefined}
     onclick={onOpen ? () => onOpen(message) : undefined} onkeydown={keys} onkeyup={keyUp}>
     <div class="media"><BuildThumb {message} dim={isArchived(message)} />{#if b.link}<span class="tag" aria-hidden="true">▶</span><span class="sr-only">video</span>{/if}</div>
     <div class="info">
@@ -54,7 +67,7 @@
     {#if b.notes}<span class="notes">{b.notes}</span>{/if}
   </svelte:element>
   {#if peeking && el}
-    <BuildPeek {message} {serverId} anchor={el} onClose={closePeek} {onOpen} onEnter={hover.stay} onLeave={hover.leave} />
+    <BuildPeek {message} {serverId} anchor={el} id={peekId} focus={byKey} onClose={closePeek} {onOpen} onEnter={hover.stay} onLeave={hover.leave} />
   {/if}
 </article>
 

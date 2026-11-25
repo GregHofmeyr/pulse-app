@@ -175,6 +175,7 @@
       void choose(active, e.shiftKey)
     } else if (e.key === ' ' && navigated && flat[active]?.type === 'build') {
       e.preventDefault()
+      if (e.repeat) return
       const r = flat[active]
       peekId = peekId ? null : r.type === 'build' ? r.message.id : null
     } else if (e.key === 'Escape' && peekId) {
@@ -256,7 +257,7 @@
       <Icon name="search" size={18} />
       <!-- svelte-ignore a11y_autofocus -->
       <input bind:this={input} bind:value={raw} class="field" type="text" role="combobox" autofocus autocomplete="off" spellcheck="false"
-        aria-label="Jump to" aria-autocomplete="list" aria-expanded={flat.length > 0} aria-controls="qs-list"
+        aria-label="Jump to" aria-autocomplete="list" aria-expanded={flat.length > 0} aria-controls={peeked ? 'qs-list qs-peek' : 'qs-list'}
         aria-activedescendant={flat.length ? optId(active) : undefined}
         placeholder="Jump to a server, channel or person, > for actions, builds: for builds" onkeydown={keys} />
     </div>
@@ -301,7 +302,7 @@
       {#if messageNote}<p class="note" aria-hidden="true">{messageNote}</p>{/if}
     </div>
     {#if peeked}
-      <BuildPeek message={peeked} serverId={serverOf(peeked)} docked closeOnEscape={false} onClose={() => (peekId = null)} onOpen={(m) => void openPeeked(m)} />
+      <BuildPeek message={peeked} serverId={serverOf(peeked)} id="qs-peek" docked closeOnEscape={false} onClose={() => (peekId = null)} onOpen={(m) => void openPeeked(m)} />
     {/if}
     {#if flat.length === 0 && !messageNote}
       <p class="empty">{bareBuilds ? 'Type a game or words to find builds' : typed ? `Nothing matches “${raw.trim()}”` : 'Type to jump anywhere. Start with > for actions.'}</p>
