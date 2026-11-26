@@ -33,7 +33,8 @@ describe('mixer state', () => {
   it('an unknown notch is ignored', () => {
     setNotch('calls', 'nope', 10)
     setNotch('calls', '__proto__', 10)
-    expect(stored()).toEqual(defaultMixer())
+    expect(JSON.parse(JSON.stringify(mixer))).toEqual(defaultMixer())
+    expect(localStorage.getItem(MIXER_KEY)).toBeNull() // nothing changed, nothing saved
   })
 
   it('Calls changes go to the core; the soundboard and join sounds notches and other sections do not', async () => {
