@@ -3,10 +3,11 @@
   // with previous/next month, today marked and days outside min..max disabled. Hung off its button with
   // `placePopover` (kept inside the window, scrolling past `maxHeight`) and moved out to the page (`portal`).
   // Keys (the ARIA date-grid pattern): arrows move a day or a week, Page Up/Down a month, Home/End the week's
-  // ends, Enter or Space picks; Escape closes and puts the focus back on the button; a press outside closes.
+  // ends, Enter or Space picks; Escape closes and puts the focus back on the button; a press outside closes. A press in
+  // it counts as inside whatever holds its button (`ownedBy`), so a form it's opened from stays open.
   import { flushSync, onMount, untrack } from 'svelte'
   import Icon from './Icon.svelte'
-  import { clickOutside, portal } from '../lib/actions'
+  import { clickOutside, ownedBy, portal } from '../lib/actions'
   import { addDays, addMonths, clampDay, monthGrid, parseDay, toDay } from '../lib/calendar'
   import { placePopover } from '../lib/menuPlace'
 
@@ -119,7 +120,7 @@
 
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 <div bind:this={el} class="date-picker menu-surface pop-in" role="dialog" aria-label={label} tabindex="-1" style={place}
-  use:portal use:clickOutside={(e) => close(e instanceof KeyboardEvent)} onkeydown={key}>
+  use:portal use:ownedBy={anchor} use:clickOutside={(e) => close(e instanceof KeyboardEvent)} onkeydown={key}>
   <div class="head">
     <button type="button" class="icon-btn icon-btn-sm nav" aria-label="Previous month" disabled={prevOff} onclick={() => month(-1)}><Icon name="chevronLeft" size={16} /></button>
     <span class="month" id="{uid}-month" aria-live="polite">{monthName}</span>

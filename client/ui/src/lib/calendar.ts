@@ -50,3 +50,8 @@ export function clampDay(day: string, min: string | null, max: string | null): s
 export function shortDay(day: string): string {
   return new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short' }).format(parseDay(day)!)
 }
+
+/** "1 Nov 2026": a day field's button (DateField). */
+export function mediumDay(day: string): string {
+  return new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }).format(parseDay(day)!)
+}
