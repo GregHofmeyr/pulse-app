@@ -275,12 +275,14 @@ async fn hello_then_ready_contains_my_servers_and_dms() {
     assert!(ready_c.dm_members.is_empty());
 }
 
+/// An outdated client too (#634): the session is checked first, so an app whose session is gone reaches its login
+/// screen, not an update screen whose manifest request would be refused with the same dead session.
 #[tokio::test]
 async fn bad_token_closed_4001() {
     let app = spawn().await;
     let mut ws = connect(&app).await;
     ws.send(Ws::text(
-        r#"{"op":"Hello","d":{"token":"garbage","client_version":3}}"#,
+        r#"{"op":"Hello","d":{"token":"garbage","client_version":4}}"#,
     ))
     .await
     .unwrap();
@@ -513,6 +515,35 @@ async fn outdated_client_is_told_to_update() {
         };
         assert_eq!(code, 4005, "{d}");
     }
+}
+
+/// Protocol 4 (0.2.19 and before) can't read builds channels: it's told to update to 0.2.20 (#634), and protocol 5 is
+/// let in.
+#[tokio::test]
+async fn a_version_4_hello_is_told_to_update() {
+    let app = spawn().await;
+    let (_, token) = register(&app, "alex").await;
+    let mut ws = tokio_tungstenite::connect_async(app.ws_url("/gateway"))
+        .await
+        .unwrap()
+        .0;
+    let frame = json!({ "op": "Hello", "d": { "token": token, "client_version": 4 } }).to_string();
+    ws.send(Ws::text(frame)).await.unwrap();
+    let code = loop {
+        match tokio::time::timeout(Duration::from_secs(3), ws.next())
+            .await
+            .unwrap()
+        {
+            Some(Ok(Ws::Close(Some(f)))) => break u16::from(f.code),
+            Some(Ok(Ws::Text(t))) => panic!("a version-4 client was answered: {t}"),
+            Some(Ok(_)) => continue,
+            other => panic!("expected a close frame, got {other:?}"),
+        }
+    };
+    assert_eq!(code, 4005);
+    assert_eq!(pulse_server::gateway::socket::MIN_CLIENT_VERSION, 5);
+    // the current protocol still gets its Ready
+    let (_ws, _ready) = hello(&app, &token).await;
 }
 
 /// Ready loads every server's channels and members, and every conversation's members, in a

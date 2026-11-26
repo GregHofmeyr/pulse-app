@@ -334,6 +334,7 @@ async fn favourite_many_stars_the_channels_builds_up_to_100() {
 
 /// A version-4 client hears nothing of a star, its own included (#616).
 #[tokio::test]
+#[ignore = "protocol 4 is refused at the gateway since #634; goes with builds::compat in a later PR"]
 async fn a_version_4_client_never_hears_a_star() {
     let w = world().await;
     let text = general(&w.app, &w.alex.1, w.server).await;

@@ -755,6 +755,7 @@ async fn builds_of_another_channel_are_skipped() {
 
 /// A version-4 client hears nothing of a batch (#616): neither its `BuildsArchived` nor its `MessageDeleted`s.
 #[tokio::test]
+#[ignore = "protocol 4 is refused at the gateway since #634; goes with builds::compat in a later PR"]
 async fn a_version_4_client_hears_nothing_of_a_batch() {
     let w = world().await;
     let text = general(&w.app, &w.alex.1, w.server).await;

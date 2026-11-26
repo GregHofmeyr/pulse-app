@@ -79,14 +79,15 @@ async fn send(socket: &mut WebSocket, frame: &ServerFrame) -> bool {
     )
 }
 
-/// Oldest client protocol this server accepts.
-pub const MIN_CLIENT_VERSION: u32 = 3;
+/// Oldest client protocol this server accepts: 5, the first with builds channels (0.2.20, #634). An older client is
+/// closed with 4005 and its forced update screen installs the published update (`/updates/latest.json`).
+pub const MIN_CLIENT_VERSION: u32 = 5;
 
 enum Auth {
     /// The user, their session's token hash, and the protocol version the client speaks.
     Ok(UserId, String, u32),
     Denied,
-    /// The client is older than [`MIN_CLIENT_VERSION`].
+    /// The client is older than [`MIN_CLIENT_VERSION`] (and signed in: see [`authenticate`]).
     Outdated,
     Internal,
 }
@@ -106,10 +107,11 @@ async fn authenticate(socket: &mut WebSocket, s: &AppState) -> Auth {
     else {
         return Auth::Denied;
     };
-    if client_version < MIN_CLIENT_VERSION {
-        return Auth::Outdated;
-    }
+    // The session before the version: an outdated app whose session is gone gets 4001 and its login screen. Told to
+    // update first, its update screen would ask for the manifest with that dead session, get 401, take it as "nothing
+    // to install" and wait there for good. Signed in again, it reconnects, gets 4005 and can fetch the update.
     match session::authenticate(&s.db, &token).await {
+        Ok(Some(_)) if client_version < MIN_CLIENT_VERSION => Auth::Outdated,
         Ok(Some(user)) => Auth::Ok(user, session::hash_token(&token), client_version),
         Ok(None) => Auth::Denied,
         // Don't tell the client to re-auth (and wipe its keychain) because our DB hiccuped.
@@ -370,6 +372,7 @@ async fn run(
         }
         Auth::Denied => return close(socket, CLOSE_UNAUTHORIZED, "unauthorized").await,
         Auth::Outdated => {
+            s.limits.gateway_ip.refund(&ip_key); // signed in: as good as a connect
             return close(socket, CLOSE_UPDATE_REQUIRED, "update required").await;
         }
         Auth::Internal => {
@@ -429,7 +432,8 @@ async fn run(
         }
     };
     if !crate::builds::compat::speaks_builds(client_version) {
-        // a client from before builds channels can't read one (#616)
+        // a client from before builds channels can't read one (#616). Unreachable since MIN_CLIENT_VERSION is 5
+        // (#634); kept as belt-and-braces until a later PR lifts the protocol-4 code (see `builds::compat`).
         crate::builds::compat::strip_ready(&mut ready);
     }
     if !send(&mut socket, &ServerFrame::Ready(ready)).await {

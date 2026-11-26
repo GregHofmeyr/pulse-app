@@ -403,6 +403,8 @@ async fn forward(
     }
     // A forward names the kind of chat its original was in, and a client from before builds channels (#616) can't read
     // that kind: nothing from a builds channel is forwarded until every client can.
+    // Protocol 4 is refused at the gateway since #634; this stays as belt-and-braces and can go in a later PR (#631)
+    // once no protocol-4 client is left.
     if src_ch.kind == ChannelKind::Builds {
         return Err(AppError::BadRequest(
             "builds and their comments can't be forwarded yet".into(),

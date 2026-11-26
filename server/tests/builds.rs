@@ -422,6 +422,7 @@ fn channels_get(
 }
 
 #[tokio::test]
+#[ignore = "protocol 4 is refused at the gateway since #634; goes with builds::compat in a later PR"]
 async fn a_version_4_ready_leaves_builds_channels_out() {
     let app = spawn().await;
     let (_, alex) = register(&app, "alex").await;
@@ -449,6 +450,7 @@ async fn a_version_4_ready_leaves_builds_channels_out() {
 }
 
 #[tokio::test]
+#[ignore = "protocol 4 is refused at the gateway since #634; goes with builds::compat in a later PR"]
 async fn a_version_4_client_hears_nothing_of_a_builds_channel() {
     let app = spawn().await;
     let (_, alex) = register(&app, "alex").await;
@@ -483,6 +485,7 @@ async fn a_version_4_client_hears_nothing_of_a_builds_channel() {
 }
 
 #[tokio::test]
+#[ignore = "protocol 4 is refused at the gateway since #634; goes with builds::compat in a later PR"]
 async fn a_version_4_join_leaves_builds_channels_out() {
     let app = spawn().await;
     let (_, alex) = register(&app, "alex").await;
@@ -1016,6 +1019,7 @@ async fn a_retried_create_gets_the_same_build() {
 
 /// A version-4 client hears nothing of a build, nor its comments' channel (#616).
 #[tokio::test]
+#[ignore = "protocol 4 is refused at the gateway since #634; goes with builds::compat in a later PR"]
 async fn a_version_4_client_hears_no_build() {
     let w = world().await;
     let text = general(&w.app, &w.alex.1, w.server).await;
@@ -1745,6 +1749,7 @@ fn names(e: &Event, id: pulse_protocol::ids::ChannelId) -> bool {
 }
 
 #[tokio::test]
+#[ignore = "protocol 4 is refused at the gateway since #634; goes with builds::compat in a later PR"]
 async fn a_version_4_client_gets_none_of_its_own_events_about_builds() {
     let w = world().await;
     let text = general(&w.app, &w.alex.1, w.server).await;

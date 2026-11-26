@@ -481,6 +481,7 @@ async fn people_and_their_profiles_reach_only_who_shares_something() {
 /// A 0.2.15 client (protocol 3) skips `ServerJoined`, so the server it joins would stay empty until it reconnected
 /// (#80): instead it's closed with 4007 as it joins, and the Ready it reconnects to has the server whole.
 #[tokio::test]
+#[ignore = "protocol 3 is refused at the gateway since #634; goes with SERVER_JOINED_SINCE in a later PR"]
 async fn an_older_client_that_joins_is_reconnected_into_a_ready_with_the_server() {
     let w = world().await;
     let (mut old, ready) = hello_as(&w.app, &w.jo.1, 3).await;

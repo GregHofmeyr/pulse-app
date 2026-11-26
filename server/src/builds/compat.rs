@@ -11,6 +11,11 @@
 //!
 //! Left as they are, since nothing in them breaks an older client: a server layout's placements (a channel it doesn't
 //! hold is skipped) and the inbox's unread count (it may count a comment it won't list).
+//!
+//! Since #634 the gateway refuses protocol 4 ([`crate::gateway::socket::MIN_CLIENT_VERSION`] 5, closed with 4005), so
+//! the gateway half of this no longer meets a client that needs it; the REST half still answers requests without the
+//! header. All of it is kept for now as belt-and-braces, and can come out in a later PR (with the forwarding block in
+//! `forwards::forward`, #631) once no protocol-4 client is left.
 
 use std::collections::HashSet;
 

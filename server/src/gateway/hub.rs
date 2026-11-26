@@ -41,7 +41,8 @@ pub const CLOSE_TOO_MANY_CONNECTIONS: u16 = 4006;
 /// Close code for a client that should connect again for a fresh Ready: a version-3 client that just joined a server
 /// (#80), whose `ServerJoined` it would skip. Older clients reconnect on any code they don't know.
 pub const CLOSE_RESYNC: u16 = 4007;
-/// The first protocol version that reads `ServerJoined` (#80, [`pulse_protocol::PROTOCOL_VERSION`] 4).
+/// The first protocol version that reads `ServerJoined` (#80, [`pulse_protocol::PROTOCOL_VERSION`] 4). Below the
+/// gateway's minimum since #634 (5); kept with `builds::compat` until a later PR lifts the old-protocol code.
 const SERVER_JOINED_SINCE: u32 = 4;
 
 pub type ConnId = u64;
