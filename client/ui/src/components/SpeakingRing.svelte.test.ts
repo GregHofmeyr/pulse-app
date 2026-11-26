@@ -19,6 +19,7 @@ vi.mock('../lib/ringLevels.svelte', async (orig) => {
 })
 
 import SpeakingRing from './SpeakingRing.svelte'
+import { apply } from '../lib/ringLevels.svelte'
 import { motion } from '../lib/animate.svelte'
 import { ringPrefs } from '../lib/speakingRing.svelte'
 import { app } from '../lib/store.svelte'
@@ -168,6 +169,34 @@ describe('SpeakingRing (#651)', () => {
       flushSync()
       vi.advanceTimersByTime(400)
       expect(box.style.getPropertyValue('--lvl')).toBe('.4')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('a_loud_dots_ring_that_goes_off_and_on_gets_its_speed_again', () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(0)
+      withUser(person('dots'))
+      const box = render({ speaking: true })
+      const rate = vi.fn()
+      box.getAnimations = () => [{ updatePlaybackRate: rate } as unknown as Animation]
+      apply({ U1: 0.9 })
+      vi.setSystemTime(300)
+      apply({ U1: 0.9 })
+      expect(rate).toHaveBeenCalledTimes(1)
+      props.speaking = false
+      flushSync()
+      props.speaking = true
+      flushSync()
+      vi.setSystemTime(400)
+      apply({ U1: 0.9 })
+      vi.setSystemTime(700)
+      apply({ U1: 0.9 })
+      expect(rate).toHaveBeenCalledTimes(2)
+      expect(rate).toHaveBeenLastCalledWith(1.5)
+      apply({})
     } finally {
       vi.useRealTimers()
     }

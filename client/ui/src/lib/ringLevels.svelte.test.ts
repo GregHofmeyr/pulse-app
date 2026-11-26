@@ -18,7 +18,8 @@ vi.mock('@tauri-apps/api/event', () => ({
   },
 }))
 
-import { apply, nextBucket, register, setWatching, type Bucket } from './ringLevels.svelte'
+import { apply, nextBucket, register, resetSpeed, setWatching, type Bucket } from './ringLevels.svelte'
+import { clearRings, lightRing } from './soundRings.svelte'
 import { startVoiceListening, voice } from './voice.svelte'
 
 const watchCalls = () => h.invokes.filter(([c]) => c === 'watch_voice_rings').map(([, a]) => a)
@@ -152,6 +153,27 @@ describe('applying levels (#651 §5.4)', () => {
     expect(sound.style.getPropertyValue('--lvl')).toBe('')
   })
 
+  it('a_soundboard_lit_ring_eases_back_to_the_fallback_not_to_zero', () => {
+    vi.useFakeTimers()
+    try {
+      const a = el()
+      const b = el()
+      reg('U1', a)
+      reg('U2', b)
+      lightRing('U2', 5000) // U2's sound keeps playing after they stop talking
+      apply({ U1: 0.5, U2: 0.6 })
+      apply({ U1: 0.5 })
+      expect(b.style.getPropertyValue('--lvl')).toBe('')
+      apply({ U2: 0.7 })
+      apply({})
+      expect(b.style.getPropertyValue('--lvl')).toBe('')
+      expect(a.style.getPropertyValue('--lvl')).toBe('0')
+    } finally {
+      clearRings()
+      vi.useRealTimers()
+    }
+  })
+
   // Phase 2 review: someone who drops out of a frame eases down (the scale transition does it), never snaps
   it('a_speaker_missing_from_the_next_frame_eases_to_zero', () => {
     const a = el()
@@ -188,12 +210,64 @@ describe('applying levels (#651 §5.4)', () => {
     expect(b.rate).toBe(1)
   })
 
+  it('a_restarted_ring_gets_its_speed_set_again', () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(0)
+      const d = el('dots')
+      d.dataset.ring = 'on'
+      const rate = vi.fn()
+      d.getAnimations = () => [{ updatePlaybackRate: rate } as unknown as Animation]
+      reg('U1', d)
+      apply({ U1: 0.9 })
+      vi.setSystemTime(300)
+      apply({ U1: 0.9 })
+      expect(rate).toHaveBeenCalledTimes(1)
+      // the ring went off: its CSS animations restart at 1x next time, so the bucket must too
+      resetSpeed(d)
+      vi.setSystemTime(400)
+      apply({ U1: 0.9 })
+      vi.setSystemTime(700)
+      apply({ U1: 0.9 })
+      expect(rate).toHaveBeenCalledTimes(2)
+      expect(rate).toHaveBeenLastCalledWith(1.5)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('a_still_ring_keeps_no_speed_so_it_starts_right_when_it_moves', () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(0)
+      const d = el('dots')
+      d.dataset.ring = 'still'
+      const rate = vi.fn()
+      d.getAnimations = () => [{ updatePlaybackRate: rate } as unknown as Animation]
+      reg('U1', d)
+      apply({ U1: 0.9 })
+      vi.setSystemTime(300)
+      apply({ U1: 0.9 })
+      expect(rate).not.toHaveBeenCalled()
+      d.dataset.ring = 'on'
+      vi.setSystemTime(400)
+      apply({ U1: 0.9 })
+      vi.setSystemTime(700)
+      apply({ U1: 0.9 })
+      expect(rate).toHaveBeenCalledWith(1.5)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('a_dots_ring_changes_speed_without_a_jump', () => {
     vi.useFakeTimers()
     try {
       vi.setSystemTime(0)
       const d = el('dots')
+      d.dataset.ring = 'on'
       const bars = el('bars')
+      bars.dataset.ring = 'on'
       const rate = vi.fn()
       const barRate = vi.fn()
       d.getAnimations = () => [{ updatePlaybackRate: rate } as unknown as Animation]
