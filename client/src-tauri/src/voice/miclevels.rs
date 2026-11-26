@@ -76,6 +76,9 @@ pub struct MicLevels {
     channels: AtomicU32,
     in_peak: [Peak; 2],
     in_clipped: AtomicU64,
+    /// Every clipped input sample since the start, never reset: the "input too hot" hint (#591) reads it without
+    /// disturbing the 5 s window above.
+    clipped_total: AtomicU64,
     in_ll: AtomicI64,
     in_rr: AtomicI64,
     in_lr: AtomicI64,
@@ -101,12 +104,18 @@ impl MicLevels {
         self.in_peak[1].record(s.peak[1]);
         if s.clipped > 0 {
             self.in_clipped.fetch_add(s.clipped, Relaxed);
+            self.clipped_total.fetch_add(s.clipped, Relaxed);
         }
         if channels >= 2 {
             self.in_ll.fetch_add((s.ll * SCALE) as i64, Relaxed);
             self.in_rr.fetch_add((s.rr * SCALE) as i64, Relaxed);
             self.in_lr.fetch_add((s.lr * SCALE) as i64, Relaxed);
         }
+    }
+
+    /// Clipped input samples since the start (it only grows; see [`ClipHint`]).
+    pub fn clipped_total(&self) -> u64 {
+        self.clipped_total.load(Relaxed)
     }
 
     /// Processor half: one mic-open 10 ms block's figures from the chain (see `processor::BlockOut`).
@@ -200,6 +209,55 @@ pub fn dbfs(v: f32) -> f64 {
     }
 }
 
+/// Clipped samples in one 100 ms tick that count as that tick clipping: a lone full-scale sample can be a legitimate
+/// peak, a few in a row are the converter running out of headroom.
+const HOT_SAMPLES: u64 = 3;
+/// Ticks looked back over for the hint to come on (3 s at 100 ms; the history is a bitmask, so at most 64).
+const HOT_WINDOW: u32 = 30;
+/// Clipping ticks within [`HOT_WINDOW`] that turn the hint on: the clipping persists (a cough or a desk knock is one
+/// or two ticks and never shows it).
+const HOT_ON: u32 = 3;
+/// Clip-free ticks in a row that turn it off again (5 s): a voice that clips on every loud word doesn't make the hint
+/// flicker between words.
+const HOT_OFF: u32 = 50;
+
+/// "Your mic is clipping" (#591): debounced from the raw input's clipped-sample count, one [`Self::update`] per
+/// 100 ms meter tick. On once clipping persists ([`HOT_ON`] clipping ticks within [`HOT_WINDOW`]), off once it has
+/// stopped for [`HOT_OFF`] ticks. Plain arithmetic; lives with the meter loop, not on the audio path.
+#[derive(Debug, Default)]
+pub struct ClipHint {
+    /// [`MicLevels::clipped_total`] at the last tick (`None` before the first: what came before isn't this run's).
+    last: Option<u64>,
+    /// One bit per recent tick, newest in bit 0: whether it clipped.
+    history: u64,
+    /// Clip-free ticks in a row.
+    calm: u32,
+    on: bool,
+}
+
+impl ClipHint {
+    /// One tick with the clipped total now; `Some(on)` when the hint changes.
+    pub fn update(&mut self, total: u64) -> Option<bool> {
+        let clipped = total.saturating_sub(self.last.unwrap_or(total));
+        self.last = Some(total);
+        let hot = clipped >= HOT_SAMPLES;
+        self.history = (self.history << 1 | hot as u64) & ((1u64 << HOT_WINDOW) - 1);
+        self.calm = if hot { 0 } else { self.calm.saturating_add(1) };
+        let was = self.on;
+        if !self.on && self.history.count_ones() >= HOT_ON {
+            self.on = true;
+        } else if self.on && self.calm >= HOT_OFF {
+            self.on = false;
+            self.history = 0;
+        }
+        (self.on != was).then_some(self.on)
+    }
+
+    pub fn on(&self) -> bool {
+        self.on
+    }
+}
+
 impl fmt::Display for MicSummary {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let db = |v: f32| format!("{:.1}", dbfs(v));
@@ -289,6 +347,77 @@ mod tests {
         );
         let next = m.take();
         assert_eq!(next.to_string(), "in - clip 0 ns - limit - out -");
+    }
+
+    const NONE: Vec<bool> = Vec::new();
+
+    /// Feeds `ticks` ticks, `per_tick` clipped samples each; the changes seen.
+    fn feed(h: &mut ClipHint, total: &mut u64, per_tick: u64, ticks: u32) -> Vec<bool> {
+        (0..ticks)
+            .filter_map(|_| {
+                *total += per_tick;
+                h.update(*total)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_clip_total_survives_the_5s_window() {
+        let m = MicLevels::default();
+        m.record_input(&[1.0, 1.0, 0.1], 1);
+        m.take();
+        m.record_input(&[-1.0], 1);
+        assert_eq!(m.clipped_total(), 3);
+        assert_eq!(m.take().in_clipped, 1, "the window still starts over");
+    }
+
+    /// #591: persistent clipping shows the hint; it goes once the clipping has stopped for a while.
+    #[test]
+    fn the_hint_appears_when_clipping_persists_and_clears_when_it_stops() {
+        let mut h = ClipHint::default();
+        assert_eq!(
+            h.update(500),
+            None,
+            "clipping from before this run doesn't count"
+        );
+        let mut total = 500;
+        assert_eq!(feed(&mut h, &mut total, 0, 10), NONE);
+        assert_eq!(feed(&mut h, &mut total, 40, 2), NONE);
+        assert_eq!(
+            feed(&mut h, &mut total, 40, 1),
+            vec![true],
+            "the third clipping tick"
+        );
+        assert!(h.on());
+        assert_eq!(feed(&mut h, &mut total, 0, HOT_OFF - 1), NONE);
+        assert_eq!(feed(&mut h, &mut total, 0, 1), vec![false], "5 s clean");
+        assert!(!h.on());
+    }
+
+    /// The debounce: one-off clips never show it, a sprinkle of single full-scale samples doesn't either, and a voice
+    /// clipping on every few words keeps it up rather than flickering between words.
+    #[test]
+    fn the_hint_is_debounced() {
+        let (mut h, mut total) = (ClipHint::default(), 0);
+        h.update(0);
+        // a desk knock every 4 s: 2 clipping ticks, never 3 within 3 s
+        for _ in 0..10 {
+            assert_eq!(feed(&mut h, &mut total, 100, 2), NONE);
+            assert_eq!(feed(&mut h, &mut total, 0, 38), NONE);
+        }
+        // single samples at full scale, every tick: legitimate peaks
+        assert_eq!(feed(&mut h, &mut total, 1, 100), NONE);
+        // clipping on loud words: a clipping tick every second for a minute; on once, never off in between
+        let mut changes = Vec::new();
+        for _ in 0..60 {
+            changes.extend(feed(&mut h, &mut total, 20, 1));
+            changes.extend(feed(&mut h, &mut total, 0, 9));
+        }
+        assert_eq!(changes, vec![true], "on once, no flicker");
+        // after it clears, it takes persistent clipping again to come back
+        assert_eq!(feed(&mut h, &mut total, 0, HOT_OFF), vec![false]);
+        assert_eq!(feed(&mut h, &mut total, 20, 2), NONE);
+        assert_eq!(feed(&mut h, &mut total, 20, 1), vec![true]);
     }
 
     #[test]

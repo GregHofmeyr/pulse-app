@@ -292,6 +292,18 @@ describe('VoiceStatus panel behaviour', () => {
     expect(document.querySelector('.vc-mic')).toBeNull()
   })
 
+  it('mic_clipping_follows_the_core_and_ends_with_the_call', () => {
+    // #591: Voice settings reads it for the "input too hot" hint
+    connect()
+    emit({ kind: 'mic_clipping', clipping: true })
+    expect(voice.micClipping).toBe(true)
+    emit({ kind: 'mic_clipping', clipping: false })
+    expect(voice.micClipping).toBe(false)
+    emit({ kind: 'mic_clipping', clipping: true })
+    emit({ kind: 'state', channel_id: null, connection: 'disconnected', controls: { muted: false, deafened: false } })
+    expect(voice.micClipping).toBe(false)
+  })
+
   it('the_mic_warning_sits_above_the_call_row', () => {
     // #139: it grows upward, so the connected row and the hang-up button stay put
     connect()

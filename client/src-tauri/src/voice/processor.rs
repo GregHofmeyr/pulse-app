@@ -203,13 +203,15 @@ impl MicChain {
         self.level
     }
 
-    /// Blocks the running denoiser delays the audio by (Standard 1, Strong 3, low delay 1).
+    /// Blocks the running denoiser delays the audio by (Standard 1, Light and Strong 3, low delay 1).
     pub fn denoise_delay_blocks(&self) -> usize {
         match self.level {
             NsLevel::Off => 0,
             NsLevel::Standard => 1,
             // DeepFilterNet: its lookahead plus one block of overlap-add
-            NsLevel::Strong | NsLevel::StrongLowDelay => self.denoiser.gate_lead_blocks() + 1,
+            NsLevel::Light | NsLevel::Strong | NsLevel::StrongLowDelay => {
+                self.denoiser.gate_lead_blocks() + 1
+            }
         }
     }
 
@@ -363,6 +365,8 @@ pub fn trim_backlog(
 pub enum Model {
     /// Strong: the bundled model.
     Normal,
+    /// Light (#601): the bundled model at a gentler attenuation limit.
+    Light,
     /// Strong (low delay): the downloaded one (#77).
     LowDelay,
 }
@@ -371,13 +375,14 @@ impl Model {
     pub fn level(self) -> NsLevel {
         match self {
             Self::Normal => NsLevel::Strong,
+            Self::Light => NsLevel::Light,
             Self::LowDelay => NsLevel::StrongLowDelay,
         }
     }
 }
 
 /// Tracks which level is wanted and which one is being aimed for (they differ after a fallback: low delay → Strong →
-/// Standard), so a slow model load can't overwrite a newer choice or fallback.
+/// Standard, or Light → Standard), so a slow model load can't overwrite a newer choice or fallback.
 pub struct Switcher {
     wanted: NsLevel,
     target: NsLevel,
@@ -439,10 +444,47 @@ const STRONG_TOO_HEAVY: &str = "Strong was too heavy for this PC, using Standard
 const STRONG_STOPPED: &str = "Strong stopped working, using Standard";
 const LL_STALLED: &str = "Strong (low delay) stalled, using Strong for now";
 const STRONG_STALLED: &str = "Strong stalled, using Standard for now";
+const LIGHT_UNAVAILABLE: &str = "Light unavailable, using Standard";
+const LIGHT_TOO_HEAVY: &str = "Light was too heavy for this PC, using Standard";
+const LIGHT_STOPPED: &str = "Light stopped working, using Standard";
+const LIGHT_STALLED: &str = "Light stalled, using Standard for now";
+
+/// Why a bundled-model level (Light or Strong) fell back to Standard, worded for that level.
+struct StepDown {
+    unavailable: &'static str,
+    too_heavy: &'static str,
+    stopped: &'static str,
+    stalled: &'static str,
+}
+
+const STRONG_STEP_DOWN: StepDown = StepDown {
+    unavailable: STRONG_UNAVAILABLE,
+    too_heavy: STRONG_TOO_HEAVY,
+    stopped: STRONG_STOPPED,
+    stalled: STRONG_STALLED,
+};
+
+const LIGHT_STEP_DOWN: StepDown = StepDown {
+    unavailable: LIGHT_UNAVAILABLE,
+    too_heavy: LIGHT_TOO_HEAVY,
+    stopped: LIGHT_STOPPED,
+    stalled: LIGHT_STALLED,
+};
+
+/// The notes for a fall back from `level` to Standard (Light's own; Strong's otherwise).
+fn step_down(level: NsLevel) -> &'static StepDown {
+    if level == NsLevel::Light {
+        &LIGHT_STEP_DOWN
+    } else {
+        &STRONG_STEP_DOWN
+    }
+}
 
 /// Noise suppression's engine: what the user picked, what can run, and the model loads in between. The fallback
-/// chain is Strong (low delay) → Strong → Standard: a missing, damaged, failed or too-heavy low-delay model gives
-/// Strong (with a note), and Strong's own failures give Standard, as before.
+/// chains are Strong (low delay) → Strong → Standard and Light → Standard: a missing, damaged, failed or too-heavy
+/// low-delay model gives Strong (with a note), and Light's or Strong's own failures give Standard, as before. Light
+/// (#601) runs Strong's model, so it costs Strong's CPU and steps straight down to Standard, the next cheaper engine,
+/// never up to Strong (which would cut harder than the user asked for).
 pub struct NsControl {
     switcher: Switcher,
     load_tx: std_mpsc::Sender<LoadResult>,
@@ -481,8 +523,8 @@ impl NsControl {
         self.models.as_ref().is_some_and(|m| m.present())
     }
 
-    /// The user picked `level` (also at start). Between Strong and low delay the running model carries on until the
-    /// other has loaded; from Off or Standard, Standard runs meanwhile.
+    /// The user picked `level` (also at start). Between DeepFilterNet levels (Light, Strong, low delay) the running
+    /// model carries on until the other has loaded; from Off or Standard, Standard runs meanwhile.
     pub fn choose(&mut self, level: NsLevel, chain: &mut MicChain, shared: &Shared) {
         self.recovery.reset();
         self.aim(level, chain, shared);
@@ -497,6 +539,7 @@ impl NsControl {
                 chain.set_denoiser(level, make_fast(level));
                 return set_status(shared, level, None);
             }
+            NsLevel::Light => Model::Light,
             NsLevel::Strong => Model::Normal,
             NsLevel::StrongLowDelay if !self.low_delay_present() => {
                 return self.fall_back_to_strong(LL_MISSING, chain, shared);
@@ -550,11 +593,11 @@ impl NsControl {
                     let note = if missing { LL_MISSING } else { LL_UNAVAILABLE };
                     self.fall_back_to_strong(note, chain, shared);
                 }
-                (Model::Normal, Err(e)) => {
+                (Model::Normal | Model::Light, Err(e)) => {
                     self.recovery.cancel();
-                    report_load_failure(shared, &e.to_string());
+                    report_load_failure(shared, model.level(), &e.to_string());
                     self.switcher
-                        .fall_back(NsLevel::Standard, STRONG_UNAVAILABLE);
+                        .fall_back(NsLevel::Standard, step_down(model.level()).unavailable);
                     if chain.level() != NsLevel::Standard {
                         chain.set_denoiser(NsLevel::Standard, make_fast(NsLevel::Standard));
                     }
@@ -590,8 +633,8 @@ impl NsControl {
         chain.level().is_deep_filter() && chain.level() == self.switcher.target()
     }
 
-    /// This PC can't keep up: low delay → Strong, Strong → Standard. One level up is tried again once the PC has
-    /// been calm for a while ([`Self::tick`]).
+    /// This PC can't keep up: low delay → Strong, Strong → Standard, Light → Standard. One level up is tried again
+    /// once the PC has been calm for a while ([`Self::tick`]).
     pub fn overloaded(&mut self, chain: &mut MicChain, shared: &Shared, now: Instant) {
         self.recovery.stepped_down(now);
         self.busy.reset();
@@ -602,13 +645,14 @@ impl NsControl {
             self.fall_back_to_strong(LL_TOO_HEAVY, chain, shared);
         } else {
             tracing::warn!(
-                "noise suppression: this PC can't keep up with Strong, switching to Standard"
+                level = ?chain.level(),
+                "noise suppression: this PC can't keep up, switching to Standard"
             );
-            self.fall_back_to_standard(STRONG_TOO_HEAVY, chain, shared);
+            self.fall_back_to_standard(step_down(chain.level()).too_heavy, chain, shared);
         }
     }
 
-    /// Replace an engine that stopped working: low delay → Strong, Strong → Standard. True if it replaced one.
+    /// Replace an engine that stopped working: low delay → Strong, Light or Strong → Standard. True if it replaced one.
     ///
     /// A worker that only stopped answering in time (a game loading, the model paged out, a resume from sleep) is
     /// treated like an overload: the step down is temporary, and after a calm spell the level is tried again with a
@@ -626,8 +670,8 @@ impl NsControl {
                 );
                 self.fall_back_to_strong(LL_STALLED, chain, shared);
             } else {
-                tracing::warn!("noise suppression: Strong stalled, using Standard for now");
-                self.fall_back_to_standard(STRONG_STALLED, chain, shared);
+                tracing::warn!(level = ?chain.level(), "noise suppression: stalled, using Standard for now");
+                self.fall_back_to_standard(step_down(chain.level()).stalled, chain, shared);
             }
             return true;
         }
@@ -636,8 +680,9 @@ impl NsControl {
             tracing::warn!("noise suppression: Strong (low delay) stopped working, using Strong");
             self.fall_back_to_strong(LL_STOPPED, chain, shared);
         } else {
+            let note = step_down(chain.level()).stopped;
             recover_failed(chain, shared);
-            self.switcher.fall_back(NsLevel::Standard, STRONG_STOPPED);
+            self.switcher.fall_back(NsLevel::Standard, note);
         }
         true
     }
@@ -667,8 +712,9 @@ impl NsControl {
         }
     }
 
-    /// After a too-heavy step down and a calm spell: try one level up (Standard → Strong, Strong → low delay), never
-    /// past what's wanted. Not while a model loads. True if it stepped up.
+    /// After a too-heavy step down and a calm spell: try one level up (Standard → Light when Light is wanted, else
+    /// Standard → Strong, Strong → low delay), never past what's wanted. Not while a model loads. True if it stepped
+    /// up.
     pub fn tick(&mut self, now: Instant, chain: &mut MicChain, shared: &Shared) -> bool {
         if chain.level() != self.switcher.target() || !self.recovery.due(now) {
             return false;
@@ -676,6 +722,7 @@ impl NsControl {
         self.busy.reset();
         let wanted = self.switcher.wanted();
         let up = match chain.level() {
+            NsLevel::Standard if wanted == NsLevel::Light => NsLevel::Light,
             NsLevel::Standard if wanted.is_deep_filter() => NsLevel::Strong,
             NsLevel::Strong if wanted == NsLevel::StrongLowDelay => NsLevel::StrongLowDelay,
             _ => return false,
@@ -696,14 +743,16 @@ fn set_status(shared: &Shared, active: NsLevel, note: Option<String>) {
     shared.set_ns_status(NsStatus { active, note });
 }
 
-pub fn report_load_failure(shared: &Shared, err: &str) {
+/// `level` (Light or Strong) couldn't load its model: Standard runs, with a note.
+pub fn report_load_failure(shared: &Shared, level: NsLevel, err: &str) {
     tracing::warn!(
         error = err,
-        "noise suppression: Strong failed to load, using Standard"
+        level = ?level,
+        "noise suppression: the model failed to load, using Standard"
     );
     shared.set_ns_status(NsStatus {
         active: NsLevel::Standard,
-        note: Some(STRONG_UNAVAILABLE.into()),
+        note: Some(step_down(level).unavailable.into()),
     });
 }
 
@@ -790,6 +839,7 @@ pub fn start_strong(
         .spawn(move || {
             let loaded = match model {
                 Model::Normal => DeepFilter::new(),
+                Model::Light => DeepFilter::light(),
                 Model::LowDelay => models
                     .ok_or(LoadError::Missing)
                     .and_then(|m| m.load())
@@ -836,11 +886,12 @@ pub fn recover_failed(chain: &mut MicChain, shared: &Shared) -> bool {
     if !chain.denoiser_failed() {
         return false;
     }
-    tracing::warn!("noise suppression: Strong stopped working, using Standard");
+    let note = step_down(chain.level()).stopped;
+    tracing::warn!(level = ?chain.level(), "noise suppression: stopped working, using Standard");
     chain.set_denoiser(NsLevel::Standard, make_fast(NsLevel::Standard));
     shared.set_ns_status(NsStatus {
         active: NsLevel::Standard,
-        note: Some(STRONG_STOPPED.into()),
+        note: Some(note.into()),
     });
     true
 }
@@ -2068,7 +2119,7 @@ mod tests {
     #[test]
     fn strong_load_failure_falls_back_to_standard_with_a_note() {
         let sh = shared_with(AudioConfig::default());
-        report_load_failure(&sh, "boom");
+        report_load_failure(&sh, NsLevel::Strong, "boom");
         let st = sh.take_ns_status_change().unwrap();
         assert_eq!(st.active, NsLevel::Standard);
         assert!(st.note.unwrap().contains("Strong unavailable"));
@@ -2537,6 +2588,133 @@ mod tests {
         ns.overloaded(&mut c, &sh, t0);
         assert!(!ns.tick(t0 + 9 * MIN, &mut c, &sh));
         assert!(ns.tick(t0 + 10 * MIN, &mut c, &sh));
+    }
+
+    // --- Light (#601): Strong's model at a gentler limit, stepping down to Standard ---
+
+    /// Light loads on the Strong worker (Standard stands in meanwhile) and runs with Strong's delay.
+    #[test]
+    fn light_loads_on_the_worker_with_standard_meanwhile() {
+        let sh = shared_with(AudioConfig::default());
+        let mut ns = NsControl::new(NsLevel::Off, None);
+        let mut c = off_chain();
+        ns.choose(NsLevel::Light, &mut c, &sh);
+        assert_eq!(
+            status(&sh),
+            (NsLevel::Standard, None),
+            "Standard while Light loads"
+        );
+        assert!(!ns.measures(&c), "not measured while Standard stands in");
+        settle(&mut ns, &mut c, &sh);
+        assert_eq!(c.level(), NsLevel::Light);
+        assert_eq!(status(&sh), (NsLevel::Light, None));
+        assert_eq!(
+            c.denoiser.gate_lead_blocks(),
+            2,
+            "Strong's model, Strong's lead"
+        );
+        assert_eq!(c.denoise_delay_blocks(), 3);
+        assert!(
+            ns.measures(&c),
+            "Light's time counts towards the overload check"
+        );
+    }
+
+    /// Between Light and Strong the running model carries on until the other has loaded (no Standard in between).
+    #[test]
+    fn light_and_strong_swap_without_standard_in_between() {
+        let sh = shared_with(AudioConfig::default());
+        let mut ns = NsControl::new(NsLevel::Off, None);
+        let mut c = off_chain();
+        ns.choose(NsLevel::Light, &mut c, &sh);
+        settle(&mut ns, &mut c, &sh);
+        ns.choose(NsLevel::Strong, &mut c, &sh);
+        assert_eq!(c.level(), NsLevel::Light, "Light runs while Strong loads");
+        settle(&mut ns, &mut c, &sh);
+        assert_eq!(c.level(), NsLevel::Strong);
+        ns.choose(NsLevel::Light, &mut c, &sh);
+        assert_eq!(c.level(), NsLevel::Strong, "Strong runs while Light loads");
+        settle(&mut ns, &mut c, &sh);
+        assert_eq!(c.level(), NsLevel::Light);
+    }
+
+    /// Too heavy: Light → Standard with Light's own note; after the calm spell it steps back up to Light, never to
+    /// Strong (which would cut harder than asked for).
+    #[test]
+    fn overload_steps_light_down_to_standard_and_back_up_to_light() {
+        let sh = shared_with(AudioConfig::default());
+        let mut ns = NsControl::new(NsLevel::Off, None);
+        let mut c = off_chain();
+        ns.choose(NsLevel::Light, &mut c, &sh);
+        settle(&mut ns, &mut c, &sh);
+        sh.take_ns_status_change();
+        let t0 = Instant::now();
+        ns.overloaded(&mut c, &sh, t0);
+        assert_eq!(c.level(), NsLevel::Standard);
+        assert_eq!(
+            status(&sh),
+            (NsLevel::Standard, Some(LIGHT_TOO_HEAVY.into()))
+        );
+        assert_eq!(ns.switcher().wanted(), NsLevel::Light, "the choice is kept");
+        assert!(!ns.measures(&c), "Standard isn't measured");
+
+        assert!(!ns.tick(t0 + 4 * MIN, &mut c, &sh));
+        assert!(ns.tick(t0 + 5 * MIN, &mut c, &sh), "steps back up");
+        assert_eq!(ns.switcher().target(), NsLevel::Light);
+        settle(&mut ns, &mut c, &sh);
+        assert_eq!(c.level(), NsLevel::Light);
+        assert_eq!(status(&sh).1, None, "the note goes");
+        assert!(
+            !ns.tick(t0 + 600 * MIN, &mut c, &sh),
+            "nothing above what's wanted"
+        );
+    }
+
+    /// A Light stall steps down for now (and is retried after the calm spell); a crash is given up on for the call.
+    #[test]
+    fn light_stalls_and_crashes_fall_back_to_standard_with_lights_notes() {
+        let sh = shared_with(AudioConfig::default());
+        let mut ns = NsControl::new(NsLevel::Off, None);
+        let mut c = off_chain();
+        let t0 = Instant::now();
+        ns.switcher.request(NsLevel::Light);
+        c.set_denoiser(NsLevel::Light, Box::new(Stalled));
+        assert!(ns.recover(&mut c, &sh, t0));
+        assert_eq!(status(&sh), (NsLevel::Standard, Some(LIGHT_STALLED.into())));
+        assert!(ns.recovery.pending());
+        assert!(ns.tick(t0 + 5 * MIN, &mut c, &sh));
+        assert_eq!(ns.switcher().target(), NsLevel::Light);
+
+        let mut ns = NsControl::new(NsLevel::Off, None);
+        ns.switcher.request(NsLevel::Light);
+        c.set_denoiser(NsLevel::Light, Box::new(Dead));
+        assert!(ns.recover(&mut c, &sh, t0));
+        assert_eq!(c.level(), NsLevel::Standard);
+        assert_eq!(status(&sh), (NsLevel::Standard, Some(LIGHT_STOPPED.into())));
+        assert_eq!(ns.switcher().note().as_deref(), Some(LIGHT_STOPPED));
+        assert!(!ns.recovery.pending());
+        assert!(!ns.tick(t0 + 600 * MIN, &mut c, &sh));
+    }
+
+    #[test]
+    fn light_load_failure_says_light() {
+        let sh = shared_with(AudioConfig::default());
+        report_load_failure(&sh, NsLevel::Light, "boom");
+        assert_eq!(
+            status(&sh),
+            (NsLevel::Standard, Some(LIGHT_UNAVAILABLE.into()))
+        );
+    }
+
+    #[test]
+    fn the_light_worker_loads_lights_model() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        start_strong(3, Model::Light, None, tx);
+        let (g, model, worker) = rx
+            .recv_timeout(Duration::from_secs(10))
+            .expect("load finishes");
+        assert_eq!((g, model, model.level()), (3, Model::Light, NsLevel::Light));
+        assert_eq!(worker.expect("model loads").gate_lead_blocks(), 2);
     }
 
     fn proc_cfg(level: NsLevel, gain: f32, version: u64) -> ProcCfg {

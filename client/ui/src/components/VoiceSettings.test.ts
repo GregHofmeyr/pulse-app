@@ -52,15 +52,37 @@ describe('VoiceSettings noise suppression', () => {
     const c = mount(VoiceSettings, { target: document.body })
     flushSync()
     const radios = () => [...document.querySelectorAll<HTMLButtonElement>('[role=radiogroup][aria-label="Noise suppression"] [role=radio]')]
-    expect(radios().map((r) => r.textContent)).toEqual(['Off', 'Standard', 'Strong', 'Strong (low delay)'])
-    radios()[2].click()
+    expect(radios().map((r) => r.textContent)).toEqual(['Off', 'Standard', 'Light', 'Strong', 'Strong (low delay)'])
+    radios()[3].click()
     flushSync()
     await Promise.resolve()
-    expect(radios().map((r) => r.getAttribute('aria-checked'))).toEqual(['false', 'false', 'true', 'false'])
+    expect(radios().map((r) => r.getAttribute('aria-checked'))).toEqual(['false', 'false', 'false', 'true', 'false'])
     const applied = invoke.mock.calls.filter(([cmd]) => cmd === 'set_audio_config').at(-1)?.[1] as { config?: { noise_suppression?: string } } | undefined
     expect(JSON.stringify(applied)).toContain('"noise_suppression":"strong"')
     unmount(c)
     document.body.innerHTML = ''
+  })
+
+  it('Light (#601): offered between Standard and Strong, described when picked, applied and saved', async () => {
+    localStorage.clear()
+    const c = mount(VoiceSettings, { target: document.body })
+    flushSync()
+    const light = () => document.querySelector<HTMLButtonElement>('[role=radiogroup][aria-label="Noise suppression"] [role=radio]:nth-child(3)')!
+    const note = () => document.querySelector('[data-ns-light]')
+    expect(light().textContent).toBe('Light')
+    expect(note()).toBeNull()
+    light().click()
+    flushSync()
+    await Promise.resolve()
+    expect(light().getAttribute('aria-checked')).toBe('true')
+    expect(note()?.textContent).toContain('mics that already clean up their own sound')
+    const applied = invoke.mock.calls.filter(([cmd]) => cmd === 'set_audio_config').at(-1)?.[1]
+    expect(JSON.stringify(applied)).toContain('"noise_suppression":"light"')
+    expect(localStorage.getItem('pulse.audio')).toContain('"noise_suppression":"light"')
+    expect(invoke.mock.calls.some(([cmd]) => cmd === 'model_download'), 'no model download for Light').toBe(false)
+    unmount(c)
+    document.body.innerHTML = ''
+    localStorage.clear()
   })
 })
 
@@ -100,9 +122,9 @@ describe('VoiceSettings Strong (low delay) (#77)', () => {
     const c = mount(VoiceSettings, { target: document.body })
     await settle()
     expect(text()).not.toContain('Less delay')
-    radios()[3].click()
+    radios()[4].click()
     await settle()
-    expect(radios().map((r) => r.getAttribute('aria-checked'))).toEqual(['false', 'false', 'false', 'true'])
+    expect(radios().map((r) => r.getAttribute('aria-checked'))).toEqual(['false', 'false', 'false', 'false', 'true'])
     const applied = calls('set_audio_config').at(-1)?.[1]
     expect(JSON.stringify(applied)).toContain('"noise_suppression":"strong_low_delay"')
     expect(text()).toContain('Less delay, uses more CPU and memory.')
@@ -118,7 +140,7 @@ describe('VoiceSettings Strong (low delay) (#77)', () => {
   it('a failed download says why, and Retry downloads again', async () => {
     const c = mount(VoiceSettings, { target: document.body })
     await settle()
-    radios()[3].click()
+    radios()[4].click()
     await settle()
     finish!({ state: 'failed', error: "couldn't reach the server" })
     await settle()
@@ -136,7 +158,7 @@ describe('VoiceSettings Strong (low delay) (#77)', () => {
     status = { state: 'ready' }
     const c = mount(VoiceSettings, { target: document.body })
     await settle()
-    radios()[3].click()
+    radios()[4].click()
     await settle()
     expect(calls('model_download')).toHaveLength(0)
     expect(document.querySelector('[data-model-state]')).toBeNull()
@@ -276,7 +298,7 @@ describe('VoiceSettings pre-processed mic hint (#588)', () => {
   }
   const hint = () => document.querySelector('[data-processed-mic-hint]')
 
-  it('shows under Strong for a Sonar default mic, goes away on Standard, and never changes the level', async () => {
+  it('shows under Strong for a Sonar default mic, suggests Light, goes away on Light, and never changes the level', async () => {
     invoke.mockImplementation(async (cmd: string) =>
       cmd === 'list_audio_devices'
         ? {
@@ -291,11 +313,11 @@ describe('VoiceSettings pre-processed mic hint (#588)', () => {
     const c = mount(VoiceSettings, { target: document.body })
     await settle()
     expect(hint()?.textContent).toBe(
-      'Your mic already cleans up its sound (SteelSeries Sonar). Standard noise suppression may sound more natural.',
+      'Your mic already cleans up its sound (SteelSeries Sonar). Light noise suppression may sound more natural.',
     )
     expect(invoke.mock.calls.some(([cmd]) => cmd === 'set_audio_config')).toBe(false)
     const radios = [...document.querySelectorAll<HTMLElement>('[role=radiogroup][aria-label="Noise suppression"] [role=radio]')]
-    radios.find((r) => r.textContent === 'Standard')!.click()
+    radios.find((r) => r.textContent === 'Light')!.click()
     await settle()
     expect(hint()).toBeNull()
     unmount(c)
@@ -435,6 +457,66 @@ describe('VoiceSettings mic test during a call', () => {
       unmount(c)
       document.body.innerHTML = ''
       voice.channelId = null
+    }
+  })
+})
+
+describe('VoiceSettings input too hot (#591)', () => {
+  beforeEach(() => {
+    invoke.mockClear()
+    invoke.mockImplementation(async () => undefined)
+    voice.channelId = null
+    voice.joining = null
+    voice.micClipping = false
+  })
+  const warn = () => document.querySelector('[data-mic-clipping]')
+  const settle = async () => {
+    for (let i = 0; i < 3; i++) await Promise.resolve()
+    flushSync()
+  }
+
+  it('in a call: shows while the core says the mic clips, and goes when it stops', () => {
+    voice.channelId = 'c1'
+    const c = mount(VoiceSettings, { target: document.body })
+    try {
+      flushSync()
+      expect(warn()).toBeNull()
+      voice.micClipping = true
+      flushSync()
+      expect(warn()?.textContent).toMatch(/^Your mic is clipping\. Turn its input level down in .+ or your mic's app\.$/)
+      expect(warn()?.getAttribute('role')).toBe('status')
+      voice.micClipping = false
+      flushSync()
+      expect(warn()).toBeNull()
+    } finally {
+      unmount(c)
+      document.body.innerHTML = ''
+      voice.channelId = null
+      voice.micClipping = false
+    }
+  })
+
+  it('in the mic test: shown while testing, never once the test has stopped, and a new test starts clean', async () => {
+    const c = mount(VoiceSettings, { target: document.body })
+    const button = () => document.querySelector<HTMLButtonElement>('.check button')!
+    try {
+      flushSync()
+      voice.micClipping = true
+      flushSync()
+      expect(warn(), 'no mic running: nothing to say').toBeNull()
+      button().click()
+      await settle()
+      expect(warn(), 'a new test starts clean').toBeNull()
+      voice.micClipping = true
+      flushSync()
+      expect(warn()).not.toBeNull()
+      button().click()
+      await settle()
+      expect(warn()).toBeNull()
+    } finally {
+      unmount(c)
+      document.body.innerHTML = ''
+      voice.micClipping = false
     }
   })
 })

@@ -134,8 +134,8 @@ pub fn input_gain(pct: u16) -> f32 {
 pub struct DeviceInfo {
     pub name: String,
     pub is_default: bool,
-    /// An input that already cleans up its own sound, and what does it (#588): Voice settings suggests Standard
-    /// over Strong for it.
+    /// An input that already cleans up its own sound, and what does it (#588): Voice settings suggests Light
+    /// (#601) over Strong for it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub processed_by: Option<&'static str>,
 }
@@ -1914,11 +1914,12 @@ mod tests {
         );
     }
 
-    /// #77: saved levels read back unchanged, the new one included, and nothing else in the config moves.
+    /// #77, #601: saved levels read back unchanged, the newer ones (low delay, Light) included, and nothing else in the config moves.
     #[test]
     fn saved_noise_levels_read_back_unchanged() {
         for (name, level) in [
             ("off", NsLevel::Off),
+            ("light", NsLevel::Light),
             ("standard", NsLevel::Standard),
             ("strong", NsLevel::Strong),
             ("strong_low_delay", NsLevel::StrongLowDelay),

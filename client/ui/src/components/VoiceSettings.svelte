@@ -88,6 +88,8 @@
       if (testing) await voiceApi.stopMicTest()
       else await voiceApi.startMicTest(cfg)
       testing = !testing
+      // each test judges clipping afresh (the core's hint starts over); out of a call nothing else clears it
+      if (!inCall) voice.micClipping = false
     } catch (e) {
       error = typeof e === 'string' ? e : 'Mic test failed'
     }
@@ -124,6 +126,7 @@
   const levels: { value: NsLevel; label: string }[] = [
     { value: 'off', label: 'Off' },
     { value: 'standard', label: 'Standard' },
+    { value: 'light', label: 'Light' },
     { value: 'strong', label: 'Strong' },
     { value: 'strong_low_delay', label: 'Strong (low delay)' },
   ]
@@ -175,6 +178,9 @@
 
 <div class="settings-field"><span class="settings-label">NOISE SUPPRESSION</span>
   <Segmented label="Noise suppression" options={levels} value={cfg.noise_suppression} onchange={pickLevel} />
+  {#if cfg.noise_suppression === 'light'}
+    <small data-ns-light>A gentle cleanup for mics that already clean up their own sound, like SteelSeries Sonar or NVIDIA Broadcast.</small>
+  {/if}
   {#if cfg.noise_suppression === 'strong_low_delay'}
     <small>Less delay, uses more CPU and memory.</small>
     {#if modelText}
@@ -219,6 +225,9 @@
     <button class="btn btn-secondary" onclick={() => sample && void api.revealPath(sample.raw).catch(() => {})}>Show in folder</button>
   </div>
 {/if}
+{#if voice.micClipping && (testing || inCall)}
+  <p class="warn" data-mic-clipping role="status">Your mic is clipping. Turn its input level down in {linux ? 'your system sound settings' : 'Windows'} or your mic's app.</p>
+{/if}
 {#if testing && silentFor > 3000}
   <p class="warn" role="status">No sound from your mic. Check it isn't muted, or pick a different input in your system sound settings. Some Bluetooth headsets need a different headset codec.</p>
 {/if}
@@ -252,7 +261,7 @@
   .sens input[type='range'] { position: relative; width: 100%; margin: 0; background: transparent; -webkit-appearance: none; appearance: none; height: 22px; }
   .sens input[type='range']::-webkit-slider-runnable-track { background: transparent; height: 22px; }
   .sens input[type='range']::-webkit-slider-thumb { -webkit-appearance: none; width: 6px; height: 22px; border-radius: 3px; background: var(--text); box-shadow: 0 0 0 2px var(--ring); }
-  .warn { margin: -8px 0 0; padding: 10px 12px; border-radius: var(--radius-md); background: var(--warn-soft); color: var(--warn-text); font-size: 13px; }
+  .warn { margin: -8px 0 0; padding: 10px 12px; border-radius: var(--radius-md); background: var(--warn-soft); color: var(--warn-text); font-size: 13px; overflow-wrap: anywhere; }
   .check { display: flex; align-items: center; gap: 12px; padding: 16px; background: var(--bg-2); border-radius: 14px; }
   .error { margin: 0; color: var(--danger-text); font-size: 13px; }
   .toggles { display: flex; flex-direction: column; }
