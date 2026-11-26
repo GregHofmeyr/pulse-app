@@ -18,6 +18,7 @@ import type { UpdateProfileRequest } from '../lib/protocol/UpdateProfileRequest'
 import type { MediaInfo } from '../lib/protocol/MediaInfo'
 import type { Badge } from '../lib/protocol/Badge'
 import { motion } from '../lib/animate.svelte'
+import { windowFocus } from '../lib/windowFocus.svelte'
 import { RING_COLORS, speakCss } from '../lib/speakingRing'
 import { previewUser, draftFrom } from '../lib/profileDraft'
 import { nameBg } from '../lib/theme.svelte'
@@ -301,7 +302,8 @@ describe('speaking ring (#651)', () => {
   const ring = () => stage().querySelector<HTMLElement>('.ring-box')!
   const caption = () => document.querySelector<HTMLElement>('.ring-caption')!.textContent!.trim()
   afterEach(() => {
-    motion.reducedMotion = false
+    Object.assign(motion, { reducedMotion: false, streaming: false })
+    windowFocus.focused = true
   })
 
   it('the_speaking_ring_tab_follows_name_style', async () => {
@@ -395,6 +397,8 @@ describe('speaking ring (#651)', () => {
     vi.useFakeTimers()
     const baseline = vi.getTimerCount()
     showTab('Speaking ring')
+    FakeIntersectionObserver.set(stage(), true)
+    flushSync()
     expect(ring().dataset.ring).toBe('on')
     expect(caption()).toBe('Preview · talking')
     vi.advanceTimersByTime(70)
@@ -413,6 +417,101 @@ describe('speaking ring (#651)', () => {
     vi.advanceTimersByTime(1000)
     expect(vi.getTimerCount()).toBe(baseline)
     expect(stage().style.getPropertyValue('--lvl')).toBe('')
+  })
+
+  it('the_preview_is_still_while_you_are_live', async () => {
+    await open(saved({ user: { ...alex, ring_style: 'bars' } }))
+    vi.useFakeTimers()
+    const baseline = vi.getTimerCount()
+    motion.streaming = true
+    showTab('Speaking ring')
+    FakeIntersectionObserver.set(stage(), true)
+    flushSync()
+    // drawn still, so the caption says still, and no envelope runs
+    expect(ring().dataset.ring).toBe('still')
+    expect(caption()).toBe("Preview · still (you're live)")
+    vi.advanceTimersByTime(1000)
+    expect(vi.getTimerCount()).toBe(baseline)
+    expect(stage().style.getPropertyValue('--lvl')).toBe('')
+    // going off air: it talks again
+    motion.streaming = false
+    flushSync()
+    expect(caption()).toBe('Preview · talking')
+    vi.advanceTimersByTime(70)
+    expect(vi.getTimerCount()).toBeGreaterThan(baseline)
+  })
+
+  it('the_envelope_stops_while_the_window_is_unfocused_or_the_preview_off_screen', async () => {
+    await open(saved({ user: { ...alex, ring_style: 'dots' } }))
+    vi.useFakeTimers()
+    const baseline = vi.getTimerCount()
+    showTab('Speaking ring')
+    FakeIntersectionObserver.set(stage(), true)
+    flushSync()
+    vi.advanceTimersByTime(70)
+    expect(vi.getTimerCount()).toBeGreaterThan(baseline)
+    // the window loses focus (minimised, another app on top): the same signal animated emoji follow
+    windowFocus.focused = false
+    flushSync()
+    vi.advanceTimersByTime(1000)
+    expect(vi.getTimerCount()).toBe(baseline)
+    windowFocus.focused = true
+    flushSync()
+    expect(vi.getTimerCount()).toBeGreaterThan(baseline)
+    // scrolled out of view
+    FakeIntersectionObserver.set(stage(), false)
+    flushSync()
+    vi.advanceTimersByTime(1000)
+    expect(vi.getTimerCount()).toBe(baseline)
+  })
+
+  describe('style chip tooltips', () => {
+    // jsdom lays nothing out: a chip "overflows" when its label is longer than 12 characters
+    const wide = (b: Element) => (b.textContent!.trim().length > 12 ? 160 : 60)
+    beforeEach(() => {
+      Object.defineProperty(HTMLButtonElement.prototype, 'scrollWidth', { configurable: true, get() { return wide(this) } })
+      Object.defineProperty(HTMLButtonElement.prototype, 'clientWidth', { configurable: true, get() { return 100 } })
+    })
+    afterEach(() => {
+      delete (HTMLButtonElement.prototype as { scrollWidth?: number }).scrollWidth
+      delete (HTMLButtonElement.prototype as { clientWidth?: number }).clientWidth
+      vi.unstubAllGlobals()
+      vi.stubGlobal('IntersectionObserver', FakeIntersectionObserver)
+      vi.stubGlobal('matchMedia', fakeMatchMedia(false).matchMedia)
+    })
+
+    it('a_chip_tip_shows_only_when_its_label_is_cut_off', async () => {
+      await open()
+      showTab('Speaking ring')
+      expect(option('Ring style', 'Bars round the ring').dataset.tip).toBe('Bars round the ring')
+      expect(option('Ring style', 'Classic').dataset.tip).toBeUndefined()
+      expect(option('Ring style', 'Wave of dots').dataset.tip).toBeUndefined()
+    })
+
+    it('a_resize_rechecks_the_chips', async () => {
+      const observers: { cb: () => void; observed: Element[] }[] = []
+      vi.stubGlobal('ResizeObserver', class {
+        observed: Element[] = []
+        constructor(public cb: () => void) { observers.push(this) }
+        observe(el: Element) { this.observed.push(el) }
+        unobserve() {}
+        disconnect() { this.observed = [] }
+      })
+      await open()
+      showTab('Speaking ring')
+      const grids = [...document.querySelectorAll('.ring-grid')]
+      // one observer per grid
+      expect(observers.filter((o) => o.observed.some((e) => grids.includes(e)))).toHaveLength(2)
+      expect(option('Ring style', 'Bars round the ring').dataset.tip).toBe('Bars round the ring')
+      // the pane gets wider: everything fits, no tips
+      Object.defineProperty(HTMLButtonElement.prototype, 'clientWidth', { configurable: true, get() { return 200 } })
+      for (const o of observers) o.cb()
+      expect(option('Ring style', 'Bars round the ring').dataset.tip).toBeUndefined()
+      // narrower again: Classic is cut off too
+      Object.defineProperty(HTMLButtonElement.prototype, 'clientWidth', { configurable: true, get() { return 40 } })
+      for (const o of observers) o.cb()
+      expect(option('Ring style', 'Classic').dataset.tip).toBe('Classic')
+    })
   })
 })
 

@@ -30,8 +30,9 @@
   import { perFrame } from '../lib/perFrame'
   import Loading from './Loading.svelte'
   import SpeakingRing from './SpeakingRing.svelte'
-  import { motion } from '../lib/animate.svelte'
-  import { envelopeStep, isReactive, PREVIEW_D, RING_COLORS, RING_STYLES, speakCss, type RingColor } from '../lib/speakingRing'
+  import { motion, observe } from '../lib/animate.svelte'
+  import { windowFocus } from '../lib/windowFocus.svelte'
+  import { envelopeStep, isReactive, PREVIEW_D, RING_COLORS, RING_STYLES, ringState, speakCss, type RingColor } from '../lib/speakingRing'
   import { nameBg } from '../lib/theme.svelte'
 
   let { dirty = $bindable(false), settling = $bindable(null) }: {
@@ -153,7 +154,17 @@
   // The preview's fake speech (a reactive style only): --lvl written straight onto the stage every 70 ms, as the call
   // tiles get theirs, and only while the tab is shown and motion is allowed.
   let ringStage = $state<HTMLElement>()
-  const envelopeOn = $derived(tab === 'ring' && !motion.reducedMotion && !!draft && isReactive(draft.ringStyle))
+  /** The preview as SpeakingRing draws it: still under reduced motion or while you're live, as call tiles are. */
+  const previewRing = $derived(draft ? ringState({ lit: true, place: 'preview', style: draft.ringStyle, reducedMotion: motion.reducedMotion, streaming: motion.streaming, animating: true }) : 'off')
+  const previewCaption = $derived(previewRing !== 'still' ? 'Preview · talking' : motion.reducedMotion ? 'Preview · still (reduced motion is on)' : "Preview · still (you're live)")
+  // on screen (a hidden tab or a scrolled-away preview isn't), and the window focused: what animated emoji follow
+  let stageSeen = $state(false)
+  $effect(() => {
+    const el = ringStage
+    if (!el) return
+    return observe(el, (v) => (stageSeen = v))
+  })
+  const envelopeOn = $derived(tab === 'ring' && previewRing === 'on' && stageSeen && windowFocus.focused && !!draft && isReactive(draft.ringStyle))
   $effect(() => {
     const el = ringStage
     if (!el || !envelopeOn) return
@@ -167,6 +178,21 @@
       el.style.removeProperty('--lvl')
     }
   })
+
+  /** A style chip's tip only when its label is cut off (ellipsised); rechecked whenever its grid changes size. */
+  function tipWhenCut(grid: HTMLElement) {
+    const check = () => {
+      for (const b of grid.querySelectorAll<HTMLElement>('.ring-chip')) {
+        if (b.scrollWidth > b.clientWidth) b.dataset.tip = b.textContent!.trim()
+        else delete b.dataset.tip
+      }
+    }
+    check()
+    if (typeof ResizeObserver === 'undefined') return
+    const ro = new ResizeObserver(check)
+    ro.observe(grid)
+    return () => ro.disconnect()
+  }
 
   function take(p: Profile) {
     profile = p
@@ -612,7 +638,7 @@
                 <Avatar id={me.id} name={pu.display_name} user={pu} size={PREVIEW_D} />
                 <SpeakingRing userId={me.id} d={PREVIEW_D} speaking place="preview" style={draft.ringStyle} color={draft.ringColor} user={pu} />
               </div>
-              <p class="ring-caption">{motion.reducedMotion ? 'Preview · still (reduced motion is on)' : 'Preview · talking'}</p>
+              <p class="ring-caption">{previewCaption}</p>
             </div>
             <div class="ring-controls">
               <div class="settings-field">
@@ -622,10 +648,10 @@
                   {#each RING_GROUPS as g (g.key)}
                     <div class="ring-group" role="group" aria-labelledby="{uid}-ring-{g.key}">
                       <span class="ring-group-label" id="{uid}-ring-{g.key}">{g.label}</span>
-                      <div class="ring-grid">
+                      <div class="ring-grid" {@attach tipWhenCut}>
                         {#each g.styles as r (r.key)}
                           <button type="button" role="radio" class="toggle-chip ring-chip" aria-checked={draft.ringStyle === r.key} tabindex={draft.ringStyle === r.key ? 0 : -1}
-                            data-tip={r.label} onclick={() => (draft!.ringStyle = r.key)}>{r.label}</button>
+                            onclick={() => (draft!.ringStyle = r.key)}>{r.label}</button>
                         {/each}
                       </div>
                     </div>
