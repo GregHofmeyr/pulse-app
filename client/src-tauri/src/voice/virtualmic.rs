@@ -1,7 +1,7 @@
 //! Virtual mics that already clean up their own sound (#588): SteelSeries Sonar, NVIDIA Broadcast, Krisp and the
 //! like run their own noise suppression (and often a compressor and EQ) before Pulse sees a sample. Strong on top
 //! is suppression on suppression, which carves the voice (the audit behind #586). Recognised by device name only,
-//! so Voice settings can suggest Standard; nothing is changed automatically.
+//! so Voice settings can suggest Light (#601); nothing is changed automatically.
 
 /// (lowercase fragment of the device name, the name shown to the person). First match wins.
 const KNOWN: &[(&str, &str)] = &[
