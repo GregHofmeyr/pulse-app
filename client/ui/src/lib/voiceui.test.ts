@@ -120,10 +120,11 @@ describe('processedMicHint (#588)', () => {
     { name: 'Microphone (NVIDIA Broadcast)', is_default: false, processed_by: 'NVIDIA Broadcast' },
   ]
   it('only for a processed mic under Strong (either model)', () => {
-    const want = 'Your mic already cleans up its sound (NVIDIA Broadcast). Standard noise suppression may sound more natural.'
+    const want = 'Your mic already cleans up its sound (NVIDIA Broadcast). Light noise suppression may sound more natural.'
     expect(processedMicHint(inputs, 'Microphone (NVIDIA Broadcast)', 'strong')).toBe(want)
     expect(processedMicHint(inputs, 'Microphone (NVIDIA Broadcast)', 'strong_low_delay')).toBe(want)
     expect(processedMicHint(inputs, 'Microphone (NVIDIA Broadcast)', 'standard')).toBeNull()
+    expect(processedMicHint(inputs, 'Microphone (NVIDIA Broadcast)', 'light'), 'already on the suggestion').toBeNull()
     expect(processedMicHint(inputs, 'Microphone (NVIDIA Broadcast)', 'off')).toBeNull()
     expect(processedMicHint(inputs, 'Mic (Realtek)', 'strong')).toBeNull()
   })
@@ -166,8 +167,8 @@ describe('migrateAudioConfig', () => {
   it('keeps an explicit new level', () => {
     expect(migrateAudioConfig({ noise_suppression: 'standard', noise_suppress: false }).noise_suppression).toBe('standard')
   })
-  it('#77: every saved level reads back unchanged, Strong (low delay) included; an unknown one gets the default', () => {
-    for (const level of ['off', 'standard', 'strong', 'strong_low_delay'])
+  it('#77, #601: every saved level reads back unchanged, Strong (low delay) and Light included; an unknown one gets the default', () => {
+    for (const level of ['off', 'standard', 'light', 'strong', 'strong_low_delay'])
       expect(migrateAudioConfig({ noise_suppression: level, sensitivity: 0.05 })).toEqual({ ...defaultAudioConfig, noise_suppression: level, sensitivity: 0.05 })
     expect(migrateAudioConfig({ noise_suppression: 'ultra' }).noise_suppression).toBe('strong')
     expect(defaultAudioConfig.noise_suppression).toBe('strong')

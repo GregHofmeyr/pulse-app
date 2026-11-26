@@ -127,6 +127,27 @@ struct Conn {
     events: JoinHandle<()>,
 }
 
+/// Stream audio's bitrate cap (#598): 128 kbps, stereo Opus' usual level for music and game audio.
+/// The SDK's own default is 48 kbps, thin for stereo (#587 keeps this track stereo). Audio has one
+/// encoding for every viewer, so a viewer's Data saver (a smaller video layer) can't lower it; next
+/// to that layer (500 kbps at the least) and with RED off it's a small part of what a viewer gets.
+pub const STREAM_AUDIO_BPS: u64 = 128_000;
+
+/// How stream audio is sent: stereo (its 2-channel source) at [`STREAM_AUDIO_BPS`], no DTX (game
+/// audio is rarely silent), no RED (it would double the 128 kbps for every viewer; a lost
+/// stream-audio packet matters less than a lost word). Also used by tests/voice_bitrate_it.rs.
+pub fn stream_audio_publish_options() -> TrackPublishOptions {
+    TrackPublishOptions {
+        source: TrackSource::ScreenshareAudio,
+        audio_encoding: Some(livekit::options::AudioEncoding {
+            max_bitrate: STREAM_AUDIO_BPS,
+        }),
+        dtx: false,
+        red: false,
+        ..Default::default()
+    }
+}
+
 /// Who we watch and what we receive from them, shared with the room's event task.
 struct Watch {
     /// The streamers' uids.
@@ -909,12 +930,7 @@ impl StreamAudio {
             .local_participant()
             .publish_track(
                 LocalTrack::Audio(track.clone()),
-                TrackPublishOptions {
-                    source: TrackSource::ScreenshareAudio,
-                    dtx: false,
-                    red: false,
-                    ..Default::default()
-                },
+                stream_audio_publish_options(),
             )
             .await
             .map_err(|e| e.to_string())?;
@@ -1081,6 +1097,17 @@ fn reuses(have: ChannelId, have_ghost: bool, want: ChannelId, want_ghost: bool) 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #598: stream audio is capped at a stereo music bitrate, not the SDK's 48 kbps, and keeps
+    /// DTX and RED off.
+    #[test]
+    fn stream_audio_is_published_at_a_stereo_music_bitrate() {
+        let o = stream_audio_publish_options();
+        assert_eq!(o.source, TrackSource::ScreenshareAudio);
+        assert_eq!(o.audio_encoding.map(|e| e.max_bitrate), Some(128_000));
+        assert!((96_000..=128_000).contains(&STREAM_AUDIO_BPS));
+        assert!(!o.dtx && !o.red);
+    }
     use crate::voice::mixer::{SourceKind, mixer, percent_to_gain};
 
     /// #360: unpublishing the stream-sound track (and closing `#a`) gives up after

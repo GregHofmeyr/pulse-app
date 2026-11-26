@@ -101,6 +101,16 @@ describe('BuildPopout', () => {
     expect(text()).toContain('ARCHIVED')
   })
 
+  it('brought forward by another Pop out, it shows the new build at once, its screenshots by their own build (#639)', async () => {
+    await show()
+    current = snap({ message_id: 'M2', title: 'Bleed rogue' })
+    window.dispatchEvent(new Event('focus'))
+    await flush()
+    expect(document.querySelector('.build-popout .bar .title')?.textContent).toBe('Bleed rogue')
+    expect(document.querySelector('.build-view h1')?.textContent).toBe('Bleed rogue')
+    expect(calls('build_window_image_urls')).toEqual([{ messageId: 'M1' }, { messageId: 'M2' }])
+  })
+
   it('the on-top switch says what it is, and each click calls set_build_window_on_top', async () => {
     await show()
     // asked once as it opens, re-stating the opening state: whether this window can be kept on top at all (QPMKJE)

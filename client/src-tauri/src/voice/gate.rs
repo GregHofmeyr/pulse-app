@@ -1,6 +1,8 @@
 //! Voice gate: decides when the mic is "on". Automatic mode opens on speech (model probability with
 //! hysteresis) that is also clearly above the room's noise floor; manual mode on an RMS threshold.
-//! Both hold 450 ms, fade out over 100 ms, and keep 20 ms of pre-roll so first syllables survive.
+//! Both keep 20 ms of pre-roll so first syllables survive, fade in over that pre-roll (20 ms), hold
+//! 450 ms and then fade out over 150 ms. Both fades follow an S-curve (smoothstep), so the gain
+//! has no corner at either end of a fade: no click, and a trailing syllable tails off (#592).
 //! The pre-roll is only for the opening edge: once open, the gate catches up in the first quiet
 //! moment (a pause between words) and then passes audio straight through, with no delay.
 
@@ -18,7 +20,13 @@ const FLOOR_MIN_DB: f32 = -80.0;
 const FLOOR_RISE_QUIET_DB: f32 = 0.1;
 const FLOOR_RISE_UNKNOWN_DB: f32 = 0.01;
 const HOLD: Duration = Duration::from_millis(450);
-const FADE_BLOCKS: f32 = 10.0;
+/// Fade-in: 20 ms, the length of the pre-roll. An opening releases the 20 ms before the audio it
+/// opened on (from the gate's history, or from the denoiser's lead in auto), so the fade runs over
+/// that lead-in and the audio the gate opened on is already at full level: a soft onset comes up
+/// smoothly, the word itself is never faded (#592).
+const FADE_IN_BLOCKS: f32 = 2.0;
+/// Fade-out after the hold: 150 ms, so a trailing syllable tails off instead of being chopped (#592).
+const FADE_OUT_BLOCKS: f32 = 15.0;
 /// Pre-roll in front of the audio the gate opens on: 20 ms, so first syllables survive. Part or all
 /// of it can come from the denoiser's own delay.
 pub const PREROLL_BLOCKS: usize = 2;
@@ -32,8 +40,9 @@ pub struct VoiceGate {
     /// Room noise floor in dB; learned from the first block.
     floor_db: Option<f32>,
     open_until: Option<Instant>,
-    /// Gain applied at the start of the next emitted block (fades towards 0 when closed).
-    gain: f32,
+    /// Where the next emitted block starts on the fade, 0 (closed) to 1 (open): it moves linearly,
+    /// the gain applied is its S-curve (`fade_gain`).
+    fade: f32,
     /// The last `preroll` input blocks, oldest first: what an opening edge releases.
     history: VecDeque<Vec<f32>>,
     /// How many blocks behind the input the output runs now: the full pre-roll while closed,
@@ -44,6 +53,13 @@ pub struct VoiceGate {
     /// Blocks since the gate last opened from silence: no catching up until the pre-roll and
     /// the block that opened it have gone out (the pre-roll is what an opening is for).
     since_open: usize,
+}
+
+/// The gain at `fade` (0..=1) along a fade: smoothstep, flat at both ends, so neither the start
+/// nor the end of a fade puts a corner in the waveform.
+fn fade_gain(fade: f32) -> f32 {
+    let t = fade.clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
 }
 
 fn db(x: f32) -> f32 {
@@ -58,7 +74,7 @@ impl VoiceGate {
             speech: false,
             floor_db: None,
             open_until: None,
-            gain: 0.0,
+            fade: 0.0,
             history: (0..PREROLL_BLOCKS).map(|_| vec![0.0; FRAME]).collect(),
             lag: PREROLL_BLOCKS,
             out: vec![0.0; FRAME],
@@ -79,7 +95,7 @@ impl VoiceGate {
     /// Forget buffered audio and any open state (mute: nothing may leak afterwards).
     pub fn reset(&mut self) {
         self.open_until = None;
-        self.gain = 0.0;
+        self.fade = 0.0;
         self.speech = false;
         self.history.iter_mut().for_each(|b| b.fill(0.0));
         self.lag = self.history.len();
@@ -172,7 +188,7 @@ impl VoiceGate {
             self.open_until = Some(now + HOLD);
         }
         let open = self.open_until.is_some_and(|t| now < t);
-        if !open && self.gain == 0.0 {
+        if !open && self.fade == 0.0 {
             self.lag = self.history.len(); // silent: re-arm the pre-roll for the next opening
             self.since_open = 0;
         }
@@ -201,21 +217,25 @@ impl VoiceGate {
             oldest.copy_from_slice(block);
             self.history.push_back(oldest);
         }
-        let start = self.gain;
+        let start = self.fade;
         let end = if open {
-            1.0
+            (start + 1.0 / FADE_IN_BLOCKS).min(1.0)
         } else {
-            (start - 1.0 / FADE_BLOCKS).max(0.0)
+            (start - 1.0 / FADE_OUT_BLOCKS).max(0.0)
         };
-        let n = out.len() as f32;
-        for (i, (o, v)) in block.iter_mut().zip(&out).enumerate() {
-            *o = v * (start + (end - start) * i as f32 / n);
+        if start == 1.0 && end == 1.0 {
+            block.copy_from_slice(&out); // fully open: straight through
+        } else {
+            let n = out.len() as f32;
+            for (i, (o, v)) in block.iter_mut().zip(&out).enumerate() {
+                *o = v * fade_gain(start + (end - start) * i as f32 / n);
+            }
         }
         self.out = out;
         if open {
             self.since_open += 1;
         }
-        self.gain = end;
+        self.fade = end;
         start > 0.0 || end > 0.0
     }
 }
@@ -301,7 +321,7 @@ mod tests {
     }
 
     #[test]
-    fn holds_450ms_then_fades_over_100ms() {
+    fn holds_450ms_then_fades_over_150ms() {
         let (t0, mut k) = (Instant::now(), 0);
         let mut g = VoiceGate::new(true, 0.02);
         feed(&mut g, t0, &mut k, 100, 0.001, Some(0.0));
@@ -309,9 +329,120 @@ mod tests {
         let out = feed(&mut g, t0, &mut k, 70, 0.1, Some(0.0)); // speech prob drops
         // 2 blocks of pre-roll delay + 45 blocks hold: still full level (word endings survive)
         assert!((rms(&out[40]) - 0.1).abs() < 1e-3, "inside hold");
-        let fading = rms(&out[52]);
-        assert!(fading > 0.0 && fading < 0.09, "fading: {fading}");
-        assert_eq!(rms(&out[60]), 0.0, "closed after 100 ms fade");
+        let levels: Vec<f32> = out[45..62].iter().map(|b| rms(b)).collect();
+        assert!(
+            levels.iter().filter(|&&l| l > 0.0 && l < 0.099).count() >= 14,
+            "fading over ~150 ms: {levels:?}"
+        );
+        assert_eq!(rms(&out[62]), 0.0, "closed after the 150 ms fade");
+    }
+
+    /// A low tone: its own sample-to-sample steps are small, so any big one is the gate's.
+    fn tone(k: u64, amp: f32) -> Vec<f32> {
+        (0..FRAME)
+            .map(|i| {
+                let n = k as f32 * FRAME as f32 + i as f32;
+                amp * (std::f32::consts::TAU * 200.0 * n / 48_000.0).sin()
+            })
+            .collect()
+    }
+
+    /// Runs a manual gate (open at rms >= 0.05) over `amps` (one tone block each); returns the
+    /// output, concatenated, and the per-block peaks.
+    fn run_tone(amps: &[f32]) -> (Vec<f32>, Vec<f32>) {
+        let t0 = Instant::now();
+        let mut g = VoiceGate::new(false, 0.05);
+        let mut all = Vec::new();
+        let mut peaks = Vec::new();
+        for (k, &amp) in amps.iter().enumerate() {
+            let mut b = tone(k as u64, amp);
+            let level = rms(&b);
+            g.process(
+                &mut b,
+                level,
+                None,
+                t0 + Duration::from_millis(k as u64 * 10),
+            );
+            peaks.push(b.iter().fold(0.0f32, |m, v| m.max(v.abs())));
+            all.extend(b);
+        }
+        (all, peaks)
+    }
+
+    /// #592: the opening fade runs over the pre-roll, so the audio the gate opened on goes out at
+    /// full level: the fade is 20 ms, and nothing is cut.
+    #[test]
+    fn an_onset_reaches_full_level_within_the_fade_in() {
+        let mut amps = vec![0.0; 10];
+        amps.extend([0.2; 10]); // loud from block 10: opens there
+        let (all, peaks) = run_tone(&amps);
+        // the output runs 2 blocks behind, so block 12 is the first loud block coming out
+        assert!(peaks[..10].iter().all(|&p| p == 0.0), "closed before");
+        let opened_on = rms(&all[12 * FRAME..13 * FRAME]);
+        let full = rms(&tone(12, 0.2));
+        assert!(
+            (opened_on - full).abs() < full * 0.01,
+            "the block it opened on is at full level, not faded: {opened_on} vs {full}"
+        );
+        // the pre-roll here is silence, so feed a soft lead-in to see it fades in rather than steps
+        let mut amps = vec![0.0; 10];
+        amps.extend([0.03, 0.03]); // soft lead-in, under the threshold
+        amps.extend([0.2; 10]);
+        let (all, peaks) = run_tone(&amps);
+        assert!(
+            peaks[12] > 0.0 && peaks[12] < 0.03,
+            "first pre-roll block fades in"
+        );
+        assert!(
+            (peaks[14] - 0.2).abs() < 0.01,
+            "full level on the opening audio"
+        );
+        // the fade is a rise (peak per tone period), never a cut back to 0
+        let env: Vec<f32> = all[12 * FRAME..15 * FRAME]
+            .chunks(240)
+            .map(|c| c.iter().fold(0.0f32, |m, v| m.max(v.abs())))
+            .collect();
+        assert!(
+            env.windows(2).all(|w| w[1] >= w[0]),
+            "the fade-in only rises: {env:?}"
+        );
+    }
+
+    /// #592: the release after the hold ramps down over several blocks instead of stepping to 0.
+    #[test]
+    fn the_release_ramps_instead_of_stepping() {
+        let mut amps = vec![0.2; 10];
+        amps.extend([0.04; 80]); // under the threshold (and not quiet enough to catch up)
+        let (_, peaks) = run_tone(&amps);
+        let fading: Vec<f32> = peaks
+            .iter()
+            .copied()
+            .filter(|&p| p > 0.001 && p < 0.039)
+            .collect();
+        assert!(fading.len() >= 12, "ramps over ~15 blocks: {peaks:?}");
+        assert!(
+            fading.windows(2).all(|w| w[1] <= w[0] + 1e-4),
+            "the release only falls: {fading:?}"
+        );
+        assert_eq!(*peaks.last().unwrap(), 0.0, "closed in the end");
+    }
+
+    /// #592: no clicks: opening, holding and closing never step the waveform by more than a
+    /// little over the tone's own sample-to-sample change.
+    #[test]
+    fn the_edges_never_click() {
+        let mut amps = vec![0.0; 10];
+        amps.extend([0.3; 20]);
+        amps.extend([0.04; 80]); // released
+        amps.extend([0.3; 20]); // opens again
+        amps.extend([0.0; 80]); // and closes on silence
+        let (all, _) = run_tone(&amps);
+        let own = 0.3 * std::f32::consts::TAU * 200.0 / 48_000.0; // the tone's biggest step
+        let step = all
+            .windows(2)
+            .map(|w| (w[1] - w[0]).abs())
+            .fold(0.0f32, f32::max);
+        assert!(step < own * 1.5, "a step of {step} (the tone's own: {own})");
     }
 
     #[test]

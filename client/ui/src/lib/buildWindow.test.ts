@@ -53,6 +53,48 @@ describe('the build pop-out from the main window', () => {
     expect(poppedOut.messageId).toBe('M001')
   })
 
+  it('of two Pop outs at once, the later is the one noted, whichever answer comes first (#639)', async () => {
+    const answers: Array<() => void> = []
+    invoke.mockImplementation((cmd: string) => (cmd === 'open_build_window' ? new Promise<undefined>((r) => answers.push(() => r(undefined))) : Promise.resolve(undefined)))
+    const first = popOutBuild(build('M001'))
+    const second = popOutBuild(build('M002'))
+    answers[1]()
+    await second
+    answers[0]()
+    await first
+    expect(calls('open_build_window').map((a) => (a.snapshot as { message_id: string }).message_id)).toEqual(['M001', 'M002'])
+    expect(poppedOut.messageId).toBe('M002')
+    // its edits are the ones sent on
+    event({ t: 'MessageUpdated', d: { message: build('M002', { title: 'Raven endgame' }) } })
+    event({ t: 'MessageUpdated', d: { message: build('M001', { title: 'Other' }) } })
+    await settle()
+    expect(calls('update_build_window').map((a) => (a.snapshot as { message_id: string }).message_id)).toEqual(['M002'])
+  })
+
+  it("A closing (its build deleted) while B's Pop out is in flight still notes B", async () => {
+    await popOutBuild(build('M001'))
+    let answer = () => {}
+    invoke.mockImplementation((cmd: string) => (cmd === 'open_build_window' ? new Promise<undefined>((r) => (answer = () => r(undefined))) : Promise.resolve(undefined)))
+    const second = popOutBuild(build('M002'))
+    event({ t: 'MessageDeleted', d: { channel_id: 'B1', message_id: 'M001', author_id: 'U2', mentions: [], thread_root_id: null } } as Event)
+    answer()
+    await second
+    expect(poppedOut.messageId).toBe('M002')
+    event({ t: 'MessageUpdated', d: { message: build('M002', { title: 'Raven endgame' }) } })
+    await settle()
+    expect(calls('update_build_window').map((a) => (a.snapshot as { message_id: string }).message_id)).toEqual(['M002'])
+  })
+
+  it('a sign-out while a Pop out is in flight notes nothing of it', async () => {
+    let answer = () => {}
+    invoke.mockImplementation((cmd: string) => (cmd === 'open_build_window' ? new Promise<undefined>((r) => (answer = () => r(undefined))) : Promise.resolve(undefined)))
+    const open = popOutBuild(build('M001'))
+    resetState()
+    answer()
+    await open
+    expect(poppedOut.messageId).toBeNull()
+  })
+
   it("its build's edit and archive are sent on; another build's are not", async () => {
     await popOutBuild(build('M001'))
     event({ t: 'MessageUpdated', d: { message: build('M001', { title: 'Raven endgame' }) } })

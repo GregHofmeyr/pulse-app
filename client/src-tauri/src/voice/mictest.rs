@@ -155,6 +155,8 @@ impl MicTest {
             // the call's 5 s `voice: mic` line, here too: a mic can be diagnosed without a call (#583)
             shared.mic_levels.take();
             let mut ticks = 0u32;
+            // "your mic is clipping" (#591), judged afresh for this test
+            let mut clip = super::miclevels::ClipHint::default();
             loop {
                 tick.tick().await;
                 ticks += 1;
@@ -171,6 +173,9 @@ impl MicTest {
                     speaker,
                     gate_open,
                 });
+                if let Some(clipping) = clip.update(shared.mic_levels.clipped_total()) {
+                    events(VoiceEvent::MicClipping { clipping });
+                }
                 if let Some(st) = shared.take_ns_status_change() {
                     events(VoiceEvent::NoiseSuppression {
                         active: st.active,
