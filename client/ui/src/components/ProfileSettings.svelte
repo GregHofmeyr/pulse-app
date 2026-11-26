@@ -1,5 +1,5 @@
 <script lang="ts">
-  // Settings → Profile (spec §4; redesigned in #467): four tabs (About you, Card, Name style, Badges) on the left, the
+  // Settings → Profile (spec §4; redesigned in #467): five tabs (About you, Card, Name style, Speaking ring, Badges) on the left, the
   // live preview always beside them (on top in a narrow window). Hovering the preview's avatar or banner offers to
   // change it. Everything, uploads and the badge order included, is staged until Save sends it; the store isn't
   // touched before then, so leaving without saving leaves you exactly as you were. Explanations are tooltips.
@@ -29,6 +29,10 @@
   import type { Profile } from '../lib/protocol/Profile'
   import { perFrame } from '../lib/perFrame'
   import Loading from './Loading.svelte'
+  import SpeakingRing from './SpeakingRing.svelte'
+  import { motion } from '../lib/animate.svelte'
+  import { envelopeStep, isReactive, PREVIEW_D, RING_COLORS, RING_STYLES, speakCss, type RingColor } from '../lib/speakingRing'
+  import { nameBg } from '../lib/theme.svelte'
 
   let { dirty = $bindable(false), settling = $bindable(null) }: {
     /** Unsaved changes, an upload still in flight included: leaving would lose them. */
@@ -39,9 +43,9 @@
 
   const uid = $props.id()
   type Kind = 'avatar' | 'banner'
-  type Tab = 'about' | 'card' | 'name' | 'badges'
+  type Tab = 'about' | 'card' | 'name' | 'ring' | 'badges'
   const TABS: { key: Tab; label: string }[] = [
-    { key: 'about', label: 'About you' }, { key: 'card', label: 'Card' }, { key: 'name', label: 'Name style' }, { key: 'badges', label: 'Badges' },
+    { key: 'about', label: 'About you' }, { key: 'card', label: 'Card' }, { key: 'name', label: 'Name style' }, { key: 'ring', label: 'Speaking ring' }, { key: 'badges', label: 'Badges' },
   ]
   let tab = $state<Tab>('about')
   /** The bio counter shows from here on (#467: only near the limit). */
@@ -137,6 +141,32 @@
       // no storage: it stays dismissed until Settings closes
     }
   }
+
+  // --- the speaking ring (#651 §7.1): a style, a colour, and a live preview of your draft ---
+  const RING_GROUPS = [
+    { key: 'looping', label: 'Still or looping', styles: RING_STYLES.filter((r) => !r.reactive) },
+    { key: 'voice', label: 'Follows your voice', styles: RING_STYLES.filter((r) => r.reactive) },
+  ]
+  /** A swatch's colour, as the ring would draw it on this theme (the light themes' White is ink). */
+  const swatchCss = (c: RingColor) => speakCss(pu, c, nameBg('side'))
+  const profileTip = $derived(draft?.colors.length ? 'Your name colour, from Name style' : "Your name colour, from Name style. You haven't set one, so it's green.")
+  // The preview's fake speech (a reactive style only): --lvl written straight onto the stage every 70 ms, as the call
+  // tiles get theirs, and only while the tab is shown and motion is allowed.
+  let ringStage = $state<HTMLElement>()
+  const envelopeOn = $derived(tab === 'ring' && !motion.reducedMotion && !!draft && isReactive(draft.ringStyle))
+  $effect(() => {
+    const el = ringStage
+    if (!el || !envelopeOn) return
+    let s = { lvl: 0, pause: 0 }
+    const id = setInterval(() => {
+      s = envelopeStep(s, Math.random())
+      el.style.setProperty('--lvl', String(s.lvl))
+    }, 70)
+    return () => {
+      clearInterval(id)
+      el.style.removeProperty('--lvl')
+    }
+  })
 
   function take(p: Profile) {
     profile = p
@@ -570,6 +600,52 @@
           </div>
         </div>
 
+        <div class="panel" role="tabpanel" id="{uid}-panel-ring" aria-labelledby="{uid}-tab-ring" hidden={tab !== 'ring'}>
+          <div class="ring-head">
+            <h3 class="settings-section-title">Speaking ring</h3>
+            <p class="muted">How your avatar lights up when you talk. Everyone in the call sees it.</p>
+          </div>
+          <!-- the preview on the left, the controls on the right; stacked when there's no room beside it -->
+          <div class="ring-row">
+            <div class="ring-preview">
+              <div class="ring-stage" bind:this={ringStage}>
+                <Avatar id={me.id} name={pu.display_name} user={pu} size={PREVIEW_D} />
+                <SpeakingRing userId={me.id} d={PREVIEW_D} speaking place="preview" style={draft.ringStyle} color={draft.ringColor} user={pu} />
+              </div>
+              <p class="ring-caption">{motion.reducedMotion ? 'Preview · still (reduced motion is on)' : 'Preview · talking'}</p>
+            </div>
+            <div class="ring-controls">
+              <div class="settings-field">
+                <span class="settings-label">Style</span>
+                <!-- one radiogroup across both groups: the arrows run from Viewfinder on to Liquid -->
+                <div class="ring-styles" role="radiogroup" aria-label="Ring style" tabindex="-1" onkeydown={radioKeys}>
+                  {#each RING_GROUPS as g (g.key)}
+                    <div class="ring-group" role="group" aria-labelledby="{uid}-ring-{g.key}">
+                      <span class="ring-group-label" id="{uid}-ring-{g.key}">{g.label}</span>
+                      <div class="ring-grid">
+                        {#each g.styles as r (r.key)}
+                          <button type="button" role="radio" class="toggle-chip ring-chip" aria-checked={draft.ringStyle === r.key} tabindex={draft.ringStyle === r.key ? 0 : -1}
+                            data-tip={r.label} onclick={() => (draft!.ringStyle = r.key)}>{r.label}</button>
+                        {/each}
+                      </div>
+                    </div>
+                  {/each}
+                </div>
+              </div>
+              <div class="settings-field">
+                <span class="settings-label">Colour</span>
+                <div class="ring-swatches" role="radiogroup" aria-label="Ring colour" tabindex="-1" onkeydown={radioKeys}>
+                  {#each RING_COLORS as c (c.key)}
+                    <button type="button" role="radio" class="swatch round ring-swatch" aria-label={c.label} data-tip={c.key === 'profile' ? profileTip : c.label}
+                      aria-checked={draft.ringColor === c.key} tabindex={draft.ringColor === c.key ? 0 : -1} style:--swatch={swatchCss(c.key)} onclick={() => (draft!.ringColor = c.key)}></button>
+                  {/each}
+                </div>
+              </div>
+              <p class="muted ring-note">With reduced motion on, everyone sees the still version of each ring. In big calls some rings show still to keep things smooth.</p>
+            </div>
+          </div>
+        </div>
+
         <div class="panel" role="tabpanel" id="{uid}-panel-badges" aria-labelledby="{uid}-tab-badges" hidden={tab !== 'badges'}>
           {#if held.size === 0}
             <p class="muted">No badges yet. The ones you earn can go on your card.</p>
@@ -718,4 +794,22 @@
   .typing-suggestions { flex-wrap: wrap; }
   .typing-preview { margin: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--text-3); }
   .typing-preview strong { color: var(--text); }
+  /* the speaking ring (#651 §7.1): nothing spills at any width. The preview panel keeps its 200px; with no room beside
+     it, the row wraps and the controls go under it. The chips ellipsise in their cells, the swatches wrap. */
+  .ring-head { display: flex; flex-direction: column; gap: 2px; margin-bottom: 16px; }
+  .ring-head p { margin: 0; }
+  .ring-row { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 20px; }
+  .ring-preview { flex: 0 0 200px; width: 200px; height: 200px; box-sizing: border-box; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 8px; background: var(--bg-1); border: 1px solid var(--bg-3); border-radius: var(--radius-xl); overflow: hidden; }
+  /* the avatar's own box; its margin reserves the ring box's 0.16 D outset, and it's the ring's stacking context */
+  .ring-stage { position: relative; flex: none; width: 96px; height: 96px; margin: calc(96px * .16); isolation: isolate; border-radius: 50%; }
+  .ring-caption { margin: 0; max-width: 100%; text-align: center; overflow-wrap: anywhere; font-size: 12px; color: var(--text-3); }
+  .ring-controls { flex: 1 1 240px; min-width: 0; display: flex; flex-direction: column; gap: 16px; }
+  .ring-styles { display: flex; flex-direction: column; gap: 12px; }
+  .ring-group { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+  .ring-group-label { font-size: 12px; color: var(--text-3); }
+  .ring-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+  .ring-chip { display: block; min-width: 0; text-align: center; line-height: 26px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ring-swatches { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  .ring-swatch { flex: none; background: var(--swatch); }
+  .ring-note { margin: 0; }
 </style>

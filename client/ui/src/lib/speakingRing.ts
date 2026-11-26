@@ -101,3 +101,21 @@ export function ringState(o: { lit: boolean; place: RingPlace; style: RingStyle;
 export function watchesLevels(style: RingStyle, o: { reducedMotion: boolean; streaming: boolean; place: RingPlace }): boolean {
   return isReactive(style) && !o.reducedMotion && !o.streaming && o.place !== 'list' && o.place !== 'preview'
 }
+
+/** The Profile settings preview (§3.3, §7.1): a 96px avatar, whose 1.32 D ring box (127px) fits the 200px panel. */
+export const PREVIEW_D = 96
+export const PREVIEW_BOX = 200
+
+/** The preview's fake speech envelope: the level shown, and ticks left in a pause (a breath between words). */
+export type EnvelopeState = { lvl: number; pause: number }
+
+/** One 70 ms tick of the preview's envelope, `r` a random number in [0, 1): a cheap walk, biased a little upwards so
+ * it reaches loud, that now and then drops into a pause of 3 to 6 ticks at 0. */
+export function envelopeStep(s: EnvelopeState, r: number): EnvelopeState {
+  if (s.pause > 0) return { lvl: 0, pause: s.pause - 1 }
+  if (r < 0.04) return { lvl: 0, pause: 2 + Math.floor(r * 100) }
+  // after a pause, speech starts again at once rather than creeping up from silence
+  const from = s.lvl === 0 ? 0.35 : s.lvl
+  const lvl = Math.min(1, Math.max(0, from + (r - 0.45) * 0.7))
+  return { lvl: Math.round(lvl * 20) / 20, pause: 0 }
+}

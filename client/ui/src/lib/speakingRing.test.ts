@@ -2,7 +2,7 @@
 import { describe, expect, it } from 'vitest'
 import { contrast } from './color'
 import type { User } from './protocol/User'
-import { effectiveStyle, RING_COLORS, RING_STYLES, ringColorOf, ringState, ringStyleOf, speakCss, watchesLevels, type RingPlace, type RingStyle } from './speakingRing'
+import { effectiveStyle, envelopeStep, PREVIEW_BOX, PREVIEW_D, RING_COLORS, RING_STYLES, ringColorOf, ringState, ringStyleOf, speakCss, watchesLevels, type RingPlace, type RingStyle } from './speakingRing'
 
 const user = (extra: Partial<User> = {}, colors: string[] = []): User => ({
   id: 'U1',
@@ -116,5 +116,41 @@ describe('speaking rings (#651)', () => {
     expect(watchesLevels('bars', { ...o, place: 'preview' })).toBe(false)
     expect(watchesLevels('dots', { ...o, place: 'band' })).toBe(true)
     expect(watchesLevels('liquid', { ...o, place: 'strip' })).toBe(true)
+  })
+})
+
+describe('the Profile settings preview (#651 §7.1)', () => {
+  // a small seeded PRNG (mulberry32), so the walk is the same every run
+  const seeded = (seed: number) => () => {
+    seed = (seed + 0x6d2b79f5) | 0
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed)
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  }
+
+  it('the_preview_envelope_stays_in_range_and_pauses', () => {
+    for (const seed of [1, 7, 651]) {
+      const rand = seeded(seed)
+      let s = { lvl: 0, pause: 0 }
+      const lvls: number[] = []
+      for (let i = 0; i < 300; i++) {
+        s = envelopeStep(s, rand())
+        lvls.push(s.lvl)
+      }
+      expect(lvls.every((l) => l >= 0 && l <= 1), `seed ${seed}`).toBe(true)
+      // a pause: three or more ticks at 0 in a row, like a breath between words
+      let run = 0
+      let longest = 0
+      for (const l of lvls) longest = Math.max(longest, (run = l === 0 ? run + 1 : 0))
+      expect(longest, `seed ${seed}`).toBeGreaterThanOrEqual(3)
+      // and loud enough somewhere to show the top of the scale
+      expect(Math.max(...lvls), `seed ${seed}`).toBeGreaterThanOrEqual(0.7)
+    }
+  })
+
+  it('the_preview_avatar_and_its_ring_box_fit_the_panel', () => {
+    expect(PREVIEW_D).toBe(96)
+    expect(PREVIEW_BOX).toBe(200)
+    expect(PREVIEW_D * 1.32).toBeLessThanOrEqual(PREVIEW_BOX)
   })
 })

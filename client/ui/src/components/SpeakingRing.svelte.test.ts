@@ -24,7 +24,8 @@ import { ringPrefs } from '../lib/speakingRing.svelte'
 import { app } from '../lib/store.svelte'
 import { emptyState } from '../lib/state'
 import type { User } from '../lib/protocol/User'
-import type { RingPlace, RingStyle } from '../lib/speakingRing'
+import { speakCss, type RingColor, type RingPlace, type RingStyle } from '../lib/speakingRing'
+import { nameBg } from '../lib/theme.svelte'
 
 const person = (ring_style?: string, ring_color?: string): User => ({
   id: 'U1',
@@ -39,7 +40,7 @@ const person = (ring_style?: string, ring_color?: string): User => ({
 const withUser = (u: User) => (app.state = { ...emptyState(), me: u })
 
 let cmp: ReturnType<typeof mount> | undefined
-let props: { userId: string; d: number; speaking: boolean; place: RingPlace; style?: RingStyle }
+let props: { userId: string; d: number; speaking: boolean; place: RingPlace; style?: RingStyle; color?: RingColor; user?: User }
 function render(p: Partial<typeof props> = {}) {
   const fresh = $state({ userId: 'U1', d: 96, speaking: false, place: 'stage' as RingPlace, ...p })
   props = fresh
@@ -187,6 +188,15 @@ describe('SpeakingRing (#651)', () => {
     const box = render({ place: 'preview', style: 'orbit', speaking: true })
     expect(box.dataset.style).toBe('orbit')
     expect(box.dataset.ring).toBe('on')
+  })
+
+  it('the_preview_takes_the_drafts_profile_colour', () => {
+    // the saved you has no name colour; the draft (not saved yet) has one: the preview shows the draft's
+    withUser(person())
+    const draft: User = { ...person(), style: { font: null, colors: ['#ffc4a3'] } }
+    const box = render({ place: 'preview', style: 'pulse', color: 'profile', user: draft, speaking: true })
+    expect(box.style.getPropertyValue('--speak')).toBe(speakCss(draft, 'profile', nameBg('side')))
+    expect(box.style.getPropertyValue('--speak')).not.toBe('var(--speak-green)')
   })
 
   it('only_reactive_visible_rings_watch', () => {

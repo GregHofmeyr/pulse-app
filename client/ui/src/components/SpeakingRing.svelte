@@ -19,6 +19,7 @@
   import { isAnimating, ringPrefs } from '../lib/speakingRing.svelte'
   import { app } from '../lib/store.svelte'
   import { nameBg } from '../lib/theme.svelte'
+  import type { User } from '../lib/protocol/User'
 
   let {
     userId,
@@ -27,6 +28,7 @@
     place,
     style,
     color,
+    user: draftUser,
   }: {
     userId: string
     /** The avatar's diameter in px. */
@@ -37,9 +39,11 @@
     /** The preview's draft style and colour (they override the person's own). */
     style?: RingStyle
     color?: RingColor
+    /** The preview's draft you, so "Profile colour" follows a name colour not saved yet. */
+    user?: User
   } = $props()
 
-  const user = $derived(userOf(app.state, userId))
+  const user = $derived(draftUser ?? userOf(app.state, userId))
   const preview = $derived(place === 'preview')
   const eff = $derived(preview ? (style ?? ringStyleOf(user)) : effectiveStyle(style ?? ringStyleOf(user), { classicForAll: ringPrefs.classic }))
   const css = $derived(speakCss(user, color ?? ringColorOf(user), nameBg('side')))
