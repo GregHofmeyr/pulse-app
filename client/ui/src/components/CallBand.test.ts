@@ -3,6 +3,7 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { flushSync, mount, unmount } from 'svelte'
+import { compile } from 'svelte/compiler'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { fakeMatchMedia, FakeIntersectionObserver } from '../lib/testMotion'
 
@@ -109,6 +110,16 @@ describe('CallBand', () => {
     expect(css).toMatch(/\.who \{[^}]*isolation: isolate/)
     expect(css).toMatch(/\.flag \{[^}]*z-index: 2/)
     expect(css).not.toMatch(/\.who\.speaking :global\(\.av\)/)
+  })
+  it('fits a narrow window: a big group never spills sideways, and the rings at its edges are not cut', () => {
+    const css = compile(readFileSync(resolve(__dirname, 'CallBand.svelte'), 'utf8'), { filename: 'CallBand.svelte', css: 'external', cssHash: () => 's' }).css!.code
+    const people = css.match(/\.people\.s \{([^}]*)\}/)![1]
+    expect(people).toMatch(/min-width:\s*0/)
+    expect(people).toMatch(/overflow:\s*hidden/)
+    // the clip sits outside the ring boxes: padding for the 0.16 D outset, taken back by a negative margin
+    const pad = Number(/padding:\s*(\d+)px/.exec(people)![1])
+    expect(pad).toBeGreaterThanOrEqual(0.16 * 34)
+    expect(people).toMatch(new RegExp(`margin:\\s*-${pad}px`))
   })
   it('once you are in: mute, deafen and leave', () => {
     app.state = { ...app.state, calls: { DM1: call('DM1') }, voice: { DM1: [{ user_id: 'U1', flags: { muted: false, deafened: false } }] } }
