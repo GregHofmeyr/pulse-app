@@ -63,7 +63,7 @@ async fn join(vm: &VoiceManager, api: &Api, token: &str, channel: ChannelId) {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore]
+#[ignore = "needs dev LiveKit: just voice-it"]
 async fn server_mute_drops_the_mic_at_livekit_and_undoing_it_publishes_again() {
     let _turn = livekit_turn().await;
     let mut cfg = testing::test_config();
@@ -263,7 +263,7 @@ async fn eventually<F: std::future::Future<Output = bool>>(secs: u64, f: impl Fn
 /// grant). Judged by sound actually arriving and the SDK's subscribe events, not the SDK's
 /// `track()`, which outlives a server-side revoke.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore]
+#[ignore = "needs dev LiveKit: just voice-it"]
 async fn livekit_stops_and_restarts_audio_with_can_subscribe() {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicU32, Ordering};
@@ -382,7 +382,7 @@ async fn hears(vm: &VoiceManager) -> bool {
 /// playout), and the undeafen brings it back without a rejoin, also for a join made while
 /// deafened.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore]
+#[ignore = "needs dev LiveKit: just voice-it"]
 async fn server_deafen_stops_audio_at_livekit_and_undeafen_hears_again() {
     let _turn = livekit_turn().await;
     let w = world().await;

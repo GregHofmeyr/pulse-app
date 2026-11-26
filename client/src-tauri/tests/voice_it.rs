@@ -84,7 +84,7 @@ fn bot_publishes_tone(room: &str) {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore]
+#[ignore = "needs dev LiveKit: just voice-it"]
 async fn receives_peer_audio_at_real_time_across_rejoins() {
     let _turn = livekit_turn().await;
     let mut cfg = testing::test_config();
@@ -150,7 +150,7 @@ async fn receives_peer_audio_at_real_time_across_rejoins() {
 /// Field bug (2026-10-02): rapid leave/rejoin left the client stuck "connecting" and Leave hung behind it.
 /// Every join and leave must finish (or fail) within a bounded time, whatever the timing.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore]
+#[ignore = "needs dev LiveKit: just voice-it"]
 async fn rapid_join_leave_never_hangs() {
     let _turn = livekit_turn().await;
     let mut cfg = testing::test_config();
@@ -220,7 +220,7 @@ async fn rapid_join_leave_never_hangs() {
 /// join starts, but audio only goes to LiveKit once the room is connected; whatever piled up in
 /// between must not be sent late for the rest of the call.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore]
+#[ignore = "needs dev LiveKit: just voice-it"]
 async fn mic_audio_is_not_sent_late_after_joining() {
     let _turn = livekit_turn().await;
     let mut cfg = testing::test_config();
@@ -265,7 +265,7 @@ async fn mic_audio_is_not_sent_late_after_joining() {
 /// Probe on this machine's real default devices: how much audio piles up in the mic test's playback
 /// queue, beyond its deliberate 300 ms delay. Run: `cargo test -p pulse-client --test voice_it mic_test -- --ignored --nocapture`.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore]
+#[ignore = "opens the real mic and speakers: just voice-it-devices"]
 async fn mic_test_queue_on_real_devices() {
     let t = pulse_client::voice::mictest::MicTest::default();
     t.start(&AudioConfig::default(), std::sync::Arc::new(|_| {}))
@@ -282,7 +282,7 @@ async fn mic_test_queue_on_real_devices() {
 /// Our own mic path end to end: what one Pulse client sends, another receives at real time
 /// (the send side uses WebRTC's unbuffered fast path, paced by our 10 ms frames).
 #[tokio::test(flavor = "multi_thread")]
-#[ignore]
+#[ignore = "needs dev LiveKit: just voice-it"]
 async fn one_client_hears_another_at_real_time() {
     let _turn = livekit_turn().await;
     let mut cfg = testing::test_config();
@@ -340,7 +340,7 @@ async fn one_client_hears_another_at_real_time() {
 /// A two-person DM call (#50): alex starts it (sam is rung), both connect to the DM's room, and
 /// sam hears alex at real time, as in a server voice channel.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore]
+#[ignore = "needs dev LiveKit: just voice-it"]
 async fn a_dm_call_rings_and_carries_audio() {
     let _turn = livekit_turn().await;
     let mut cfg = testing::test_config();
@@ -395,7 +395,7 @@ async fn a_dm_call_rings_and_carries_audio() {
 /// On this machine's real devices: a call that nobody touches never reopens them (device
 /// following must not churn, e.g. on ALSA's "default" or a name that differs between lists).
 #[tokio::test(flavor = "multi_thread")]
-#[ignore]
+#[ignore = "opens the real mic and speakers: just voice-it-devices"]
 async fn real_devices_are_not_reopened_without_a_reason() {
     let _turn = livekit_turn().await;
     // also shows the voice log lines (join phases, path stats) on a real machine
@@ -434,7 +434,7 @@ async fn real_devices_are_not_reopened_without_a_reason() {
 
 /// Probe: what looking up a device by name costs on this machine (UI sounds do it per sound).
 #[test]
-#[ignore]
+#[ignore = "a probe on this machine's devices (opens nothing): just voice-it"]
 fn device_lookup_cost() {
     use pulse_client::voice::devices::{device_names, find_device};
     let (_, outs) = device_names();
@@ -451,7 +451,7 @@ fn device_lookup_cost() {
 
 /// On this machine's real devices: reopening the output leaves the mic stream running.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore]
+#[ignore = "opens the real mic and speakers: just voice-it-devices"]
 async fn reopening_one_side_leaves_the_other_alone() {
     use pulse_client::voice::devices::{AudioIo, Shared, Sides};
     let cfg = AudioConfig::default();
@@ -478,7 +478,7 @@ async fn reopening_one_side_leaves_the_other_alone() {
 /// Leave while the devices are still opening, after the room already connected: the room must
 /// be closed, not dropped (a dropped livekit Room stays connected: a ghost others still see).
 #[tokio::test(flavor = "multi_thread")]
-#[ignore]
+#[ignore = "needs dev LiveKit: just voice-it"]
 async fn leaving_while_devices_open_leaves_no_ghost() {
     let _turn = livekit_turn().await;
     let mut cfg = testing::test_config();
@@ -622,7 +622,7 @@ impl HoldAfterJoin {
 /// LiveKit told: a dropped connect left the participant listed until LiveKit timed it out
 /// (~15 s), and one that came up meanwhile would have been a ghost everyone saw.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore]
+#[ignore = "needs dev LiveKit: just voice-it"]
 async fn leaving_mid_connect_leaves_no_ghost() {
     let _turn = livekit_turn().await;
     let hold = HoldAfterJoin::start().await;
@@ -715,7 +715,7 @@ async fn leaving_mid_connect_leaves_no_ghost() {
 
 /// "Connected" (and the join sound) must not wait a round trip for the mic publish.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore]
+#[ignore = "needs dev LiveKit: just voice-it"]
 async fn connected_shows_before_the_mic_is_published() {
     let _turn = livekit_turn().await;
     let mut cfg = testing::test_config();
@@ -779,7 +779,7 @@ async fn connected_shows_before_the_mic_is_published() {
 /// The join reports its stages in order, with "connected" (state) between starting audio and the
 /// final connected stage.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore]
+#[ignore = "needs dev LiveKit: just voice-it"]
 async fn stages_arrive_in_order() {
     let _turn = livekit_turn().await;
     let mut cfg = testing::test_config();
@@ -847,7 +847,7 @@ async fn stages_arrive_in_order() {
 /// A switch goes straight to the new room: no Disconnected flash (leave sound) between rooms,
 /// and no waiting for the old room's close.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore]
+#[ignore = "needs dev LiveKit: just voice-it"]
 async fn switching_channels_goes_straight_to_the_new_room() {
     let _turn = livekit_turn().await;
     let mut cfg = testing::test_config();
@@ -919,7 +919,7 @@ async fn switching_channels_goes_straight_to_the_new_room() {
 /// A switch whose join fails ends Disconnected (not stuck "connecting", not back in A), and
 /// the old room's close never pulls us back into it (the rejoin loop runs).
 #[tokio::test(flavor = "multi_thread")]
-#[ignore]
+#[ignore = "needs dev LiveKit: just voice-it"]
 async fn a_failed_switch_ends_disconnected_and_the_old_room_stays_left() {
     let _turn = livekit_turn().await;
     let mut cfg = testing::test_config();
@@ -992,7 +992,7 @@ async fn a_failed_switch_ends_disconnected_and_the_old_room_stays_left() {
 
 /// A switch keeps the devices, the processor and Strong's model; Leave lets them go.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore]
+#[ignore = "needs dev LiveKit: just voice-it"]
 async fn switching_keeps_the_audio_pipeline_and_leave_drops_it() {
     let _turn = livekit_turn().await;
     let mut cfg = testing::test_config();
@@ -1046,7 +1046,7 @@ async fn switching_keeps_the_audio_pipeline_and_leave_drops_it() {
 /// One person publishing a mic AND stream audio: the listener plays both, and unpublishing the
 /// stream audio leaves the mic playing (screen-share spec §2, step zero).
 #[tokio::test(flavor = "multi_thread")]
-#[ignore]
+#[ignore = "needs dev LiveKit: just voice-it"]
 async fn two_tracks_from_one_person_both_play() {
     use livekit::options::TrackPublishOptions;
     use livekit::prelude::*;
@@ -1192,7 +1192,7 @@ async fn two_tracks_from_one_person_both_play() {
 /// A mic that delivers only digital silence while unmuted (the null devices send zeros) raises the
 /// "no sound from your mic" warning, through the real call loop; muting clears it.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore]
+#[ignore = "needs dev LiveKit: just voice-it"]
 async fn a_silent_mic_is_reported_and_muting_clears_it() {
     let _turn = livekit_turn().await;
     let mut cfg = testing::test_config();
@@ -1255,7 +1255,7 @@ async fn a_silent_mic_is_reported_and_muting_clears_it() {
 /// reproduced it: one of the two in-process Rooms always stays alive, so libwebrtc never
 /// terminates the voice engine (the cause; see the next test).
 #[tokio::test(flavor = "multi_thread")]
-#[ignore]
+#[ignore = "needs dev LiveKit: just voice-it"]
 async fn hears_a_peer_again_after_leaving_and_rejoining() {
     use livekit::options::TrackPublishOptions;
     use livekit::prelude::*;
@@ -1386,7 +1386,7 @@ async fn hears_a_peer_again_after_leaving_and_rejoining() {
 /// #227, patched in vendor/livekit (`leaving_while_others_stay_releases_the_connection`); the bot
 /// stays, as the field's peer is in another process too.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore]
+#[ignore = "needs dev LiveKit: just voice-it"]
 async fn hears_a_peer_after_every_connection_in_the_process_has_gone() {
     let _turn = livekit_turn().await;
     let _ = tracing_subscriber::fmt()
@@ -1470,7 +1470,7 @@ async fn hears_a_peer_after_every_connection_in_the_process_has_gone() {
 /// `live_peer_connections`, both ways round: alex (the app's VoiceManager) leaves while sam (a bare
 /// SDK Room) still publishes, then sam closes while alex still publishes.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore]
+#[ignore = "needs dev LiveKit: just voice-it"]
 async fn leaving_while_others_stay_releases_the_connection() {
     use livekit::options::TrackPublishOptions;
     use livekit::prelude::*;

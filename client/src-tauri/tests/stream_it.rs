@@ -189,7 +189,7 @@ async fn audio_publish_accepted(room: &Room, source: TrackSource) -> bool {
 
 /// The spec's most important isolation test: voice audio never reaches the stream room.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore]
+#[ignore = "needs dev LiveKit: just voice-it"]
 async fn stream_room_never_sees_voice_tracks() {
     let _turn = livekit_turn().await;
     let f = fixture().await;
@@ -243,7 +243,7 @@ async fn stream_room_never_sees_voice_tracks() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore]
+#[ignore = "needs dev LiveKit: just voice-it"]
 async fn v_ticket_cannot_publish_audio() {
     let _turn = livekit_turn().await;
     let f = fixture().await;
@@ -256,7 +256,7 @@ async fn v_ticket_cannot_publish_audio() {
 /// A ghost (a server member outside the call) gets subscribe-only stream-room tickets: it hears
 /// a stream's audio, can't publish anything, and never sees the voice room.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore]
+#[ignore = "needs dev LiveKit: just voice-it"]
 async fn a_ghost_hears_stream_audio_and_cannot_publish() {
     let _turn = livekit_turn().await;
     let f = fixture().await;
@@ -332,7 +332,7 @@ async fn a_ghost_hears_stream_audio_and_cannot_publish() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore]
+#[ignore = "needs dev LiveKit: just voice-it"]
 async fn a_ticket_publishes_screenshare_audio() {
     let _turn = livekit_turn().await;
     let f = fixture().await;
@@ -423,7 +423,7 @@ where
 /// CI can't capture). sam watches before it is published, kim after; both hear it through
 /// their voice mixer as one source that never lights the speaking ring. Unwatching removes it.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore]
+#[ignore = "needs dev LiveKit: just voice-it"]
 async fn published_stream_audio_reaches_a_watcher() {
     let _turn = livekit_turn().await;
     let f = fixture().await;
@@ -494,7 +494,7 @@ async fn published_stream_audio_reaches_a_watcher() {
 
 /// Leaving voice leaves the stream room too: the `#a` participant is gone for everyone in it.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore]
+#[ignore = "needs dev LiveKit: just voice-it"]
 async fn leave_voice_closes_the_stream_connection() {
     let _turn = livekit_turn().await;
     let f = fixture().await;
@@ -557,7 +557,7 @@ fn closed_log() -> (
 /// and drops the connection, instead of capturing into a dead room until the next stop, and
 /// tells the UI (which connects again).
 #[tokio::test(flavor = "multi_thread")]
-#[ignore]
+#[ignore = "needs dev LiveKit: just voice-it"]
 async fn a_room_closed_by_livekit_stops_publishing() {
     let _turn = livekit_turn().await;
     let f = fixture().await;
@@ -668,7 +668,7 @@ impl Drop for Relay {
 /// after the leave, it is closed at once rather than left in the stream room (the epoch check in
 /// `ensure_connected`). The ticket request is held at a relay, so the leave lands mid-connect.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore]
+#[ignore = "needs dev LiveKit: just voice-it"]
 async fn a_connect_that_lands_after_a_leave_is_dropped() {
     let _turn = livekit_turn().await;
     let f = fixture().await;
