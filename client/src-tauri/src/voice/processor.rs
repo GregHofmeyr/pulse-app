@@ -556,11 +556,16 @@ impl NsControl {
         set_status(shared, chain.level(), None);
     }
 
-    /// Aim for Strong instead of low delay. A Strong that's running already carries on.
+    /// Aim for Strong instead of low delay. A Strong that's running already carries on; a running Light carries on
+    /// until Strong has loaded. Low delay itself (the one being fallen back from) or a non-DeepFilterNet engine gives
+    /// way to Standard meanwhile.
     fn fall_back_to_strong(&mut self, note: &str, chain: &mut MicChain, shared: &Shared) {
         let g = self.switcher.fall_back(NsLevel::Strong, note);
-        if chain.level() != NsLevel::Strong {
-            chain.set_denoiser(NsLevel::Standard, make_fast(NsLevel::Standard));
+        let running = chain.level();
+        if running != NsLevel::Strong {
+            if !running.is_deep_filter() || running == NsLevel::StrongLowDelay {
+                chain.set_denoiser(NsLevel::Standard, make_fast(NsLevel::Standard));
+            }
             self.start(g, Model::Normal);
         }
         set_status(shared, chain.level(), Some(note.to_string()));
@@ -2636,6 +2641,25 @@ mod tests {
         assert_eq!(c.level(), NsLevel::Strong, "Strong runs while Light loads");
         settle(&mut ns, &mut c, &sh);
         assert_eq!(c.level(), NsLevel::Light);
+    }
+
+    /// Review of #674: low delay picked while Light runs and isn't downloaded: Light carries on while Strong loads
+    /// (no Standard in between), as Strong itself would.
+    #[test]
+    fn light_runs_while_strong_loads_in_place_of_a_missing_low_delay() {
+        let sh = shared_with(AudioConfig::default());
+        let (_d, store) = ll_store();
+        let mut ns = NsControl::new(NsLevel::Off, Some(store));
+        let mut c = off_chain();
+        ns.choose(NsLevel::Light, &mut c, &sh);
+        settle(&mut ns, &mut c, &sh);
+        sh.take_ns_status_change();
+        ns.choose(NsLevel::StrongLowDelay, &mut c, &sh);
+        assert_eq!(c.level(), NsLevel::Light, "Light keeps running");
+        assert_eq!(status(&sh), (NsLevel::Light, Some(LL_MISSING.into())));
+        settle(&mut ns, &mut c, &sh);
+        assert_eq!(c.level(), NsLevel::Strong);
+        assert_eq!(status(&sh), (NsLevel::Strong, Some(LL_MISSING.into())));
     }
 
     /// Too heavy: Light → Standard with Light's own note; after the calm spell it steps back up to Light, never to

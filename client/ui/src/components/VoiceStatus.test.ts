@@ -304,6 +304,18 @@ describe('VoiceStatus panel behaviour', () => {
     expect(voice.micClipping).toBe(false)
   })
 
+  it('mic_clipping_is_judged_afresh_in_each_channel', () => {
+    // review of #674: a switch (or a join with the mic test's hint still up) starts from off
+    connect()
+    emit({ kind: 'mic_clipping', clipping: true })
+    emit({ kind: 'state', channel_id: 'V2', connection: 'connected', controls: { muted: false, deafened: false } })
+    expect(voice.micClipping).toBe(false)
+    voice.micClipping = true
+    emit({ kind: 'state', channel_id: 'V2', connection: 'connected', controls: { muted: true, deafened: false } })
+    expect(voice.micClipping, 'the same channel keeps it').toBe(true)
+    voice.micClipping = false
+  })
+
   it('the_mic_warning_sits_above_the_call_row', () => {
     // #139: it grows upward, so the connected row and the hang-up button stay put
     connect()

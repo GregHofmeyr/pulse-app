@@ -222,6 +222,8 @@ export async function startVoiceListening() {
         }
         // a report belongs to one call: the next one starts empty
         if (prev.channelId !== e.channel_id) voice.link = null
+        // clipping (#591) is judged afresh for each call; the core's new hint starts from off too
+        if (prev.channelId !== e.channel_id) voice.micClipping = false
         voice.channelId = e.channel_id
         voice.connection = e.connection
         voice.controls = e.controls

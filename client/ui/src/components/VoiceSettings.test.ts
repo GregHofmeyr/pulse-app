@@ -519,6 +519,52 @@ describe('VoiceSettings input too hot (#591)', () => {
       voice.micClipping = false
     }
   })
+
+  it('a setting change restarts the test, and the restarted test starts clean (review of #674)', async () => {
+    const c = mount(VoiceSettings, { target: document.body })
+    const button = () => document.querySelector<HTMLButtonElement>('.check button')!
+    try {
+      flushSync()
+      button().click()
+      await settle()
+      voice.micClipping = true
+      flushSync()
+      expect(warn()).not.toBeNull()
+      invoke.mockClear()
+      document.querySelector<HTMLButtonElement>('button.switch[aria-label="Voice clarity EQ"]')!.click()
+      await settle()
+      expect(invoke.mock.calls.some(([cmd]) => cmd === 'start_mic_test'), 'the test restarted').toBe(true)
+      expect(voice.micClipping).toBe(false)
+      flushSync()
+      expect(warn()).toBeNull()
+    } finally {
+      unmount(c)
+      document.body.innerHTML = ''
+      voice.micClipping = false
+    }
+  })
+
+  it('joining a call while the test shows the hint drops it (review of #674)', async () => {
+    const c = mount(VoiceSettings, { target: document.body })
+    const button = () => document.querySelector<HTMLButtonElement>('.check button')!
+    try {
+      flushSync()
+      button().click()
+      await settle()
+      voice.micClipping = true
+      flushSync()
+      expect(warn()).not.toBeNull()
+      voice.channelId = 'c1'
+      flushSync()
+      expect(voice.micClipping).toBe(false)
+      expect(warn(), 'the call judges its own mic').toBeNull()
+    } finally {
+      unmount(c)
+      document.body.innerHTML = ''
+      voice.channelId = null
+      voice.micClipping = false
+    }
+  })
 })
 
 describe('VoiceSettings mic test: hear yourself as others do (#659)', () => {

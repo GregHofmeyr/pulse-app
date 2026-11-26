@@ -15,9 +15,13 @@
   let testing = $state(false)
   // In a call (or joining one) the devices are the call's: a test would open them twice (the core refuses it too).
   const inCall = $derived(!!voice.channelId || !!voice.joining)
-  // joining stops a running test (core-side): the button goes back to "Let's check"
+  // joining stops a running test (core-side): the button goes back to "Let's check", and the test's clipping hint
+  // goes with it (the call judges its own mic, #591)
   $effect(() => {
-    if (inCall && testing) testing = false
+    if (inCall && testing) {
+      testing = false
+      voice.micClipping = false
+    }
   })
   const SENS_MAX = 0.2
   // how long the mic has been completely silent (drives the "no sound" hint)
@@ -75,6 +79,8 @@
       await voiceApi.setAudioConfig(cfg)
       if (testing) {
         await voiceApi.stopMicTest()
+        // the restarted test judges clipping afresh (#591)
+        voice.micClipping = false
         await voiceApi.startMicTest(cfg)
       }
     } catch (e) {

@@ -236,10 +236,13 @@ pub struct ClipHint {
 }
 
 impl ClipHint {
-    /// One tick with the clipped total now; `Some(on)` when the hint changes.
+    /// One tick with the clipped total now; `Some(on)` when the hint changes, and `Some(false)` on the first tick, so
+    /// each new run (a restarted mic test, a call joined) starts the UI from a known "off".
     pub fn update(&mut self, total: u64) -> Option<bool> {
-        let clipped = total.saturating_sub(self.last.unwrap_or(total));
-        self.last = Some(total);
+        let Some(last) = self.last.replace(total) else {
+            return Some(false);
+        };
+        let clipped = total.saturating_sub(last);
         let hot = clipped >= HOT_SAMPLES;
         self.history = (self.history << 1 | hot as u64) & ((1u64 << HOT_WINDOW) - 1);
         self.calm = if hot { 0 } else { self.calm.saturating_add(1) };
@@ -377,8 +380,8 @@ mod tests {
         let mut h = ClipHint::default();
         assert_eq!(
             h.update(500),
-            None,
-            "clipping from before this run doesn't count"
+            Some(false),
+            "the first tick says off (clipping from before this run doesn't count)"
         );
         let mut total = 500;
         assert_eq!(feed(&mut h, &mut total, 0, 10), NONE);
@@ -396,6 +399,16 @@ mod tests {
 
     /// The debounce: one-off clips never show it, a sprinkle of single full-scale samples doesn't either, and a voice
     /// clipping on every few words keeps it up rather than flickering between words.
+    /// Review of #674: a new run (a mic test restarted by a setting change, a call joined) starts the UI from a known
+    /// "off", whatever an earlier run left it showing; after that only changes are reported.
+    #[test]
+    fn a_new_hint_reports_off_on_its_first_tick() {
+        let mut h = ClipHint::default();
+        assert_eq!(h.update(1_000_000), Some(false));
+        assert_eq!(h.update(1_000_000), None, "then only changes");
+        assert!(!h.on());
+    }
+
     #[test]
     fn the_hint_is_debounced() {
         let (mut h, mut total) = (ClipHint::default(), 0);
