@@ -17,6 +17,10 @@ pub struct Controls {
     /// mute, it outlasts a session and the audio thread reads it. Not part of the UI's state.
     #[serde(skip)]
     meter_views: u16,
+    /// A reactive speaking ring is on screen (#651): per-speaker levels are sent only while it is.
+    /// A flag, not a counter: the UI counts its tiles.
+    #[serde(skip)]
+    ring_view: bool,
 }
 
 impl Controls {
@@ -80,11 +84,22 @@ impl Controls {
     /// The page (re)loaded: views from the old page can't send their close any more.
     pub fn reset_meters(&mut self) {
         self.meter_views = 0;
+        self.ring_view = false;
     }
 
     /// Levels go to the UI only while this holds.
     pub fn meters_shown(&self) -> bool {
         self.meter_views > 0
+    }
+
+    /// A reactive speaking ring appeared (`true`) or the last one went (`false`).
+    pub fn watch_rings(&mut self, on: bool) {
+        self.ring_view = on;
+    }
+
+    /// Speaking levels go to the UI only while this holds.
+    pub fn rings_shown(&self) -> bool {
+        self.ring_view
     }
 
     /// The mic chain has to clean audio: it goes out, or the meter shows the cleaned level.
@@ -128,6 +143,25 @@ mod tests {
             !c.meters_shown(),
             "the new page's open/close pair balances again"
         );
+    }
+
+    #[test]
+    fn rings_are_shown_only_while_watched() {
+        let mut c = Controls::default();
+        assert!(!c.rings_shown());
+        c.watch_rings(true);
+        assert!(c.rings_shown());
+        c.watch_rings(true);
+        c.watch_rings(false);
+        assert!(!c.rings_shown(), "a flag, not a counter: the UI counts");
+    }
+
+    #[test]
+    fn a_reloaded_page_forgets_ring_watching() {
+        let mut c = Controls::default();
+        c.watch_rings(true); // the old page's unwatch never comes
+        c.reset_meters();
+        assert!(!c.rings_shown());
     }
 
     #[test]

@@ -31,6 +31,11 @@ impl SpeakingTracker {
         self.current = speaking.clone();
         Some(speaking)
     }
+
+    /// The speaking set as last reported by `update` (sorted).
+    pub fn current(&self) -> &[String] {
+        &self.current
+    }
 }
 
 #[cfg(test)]
@@ -60,6 +65,17 @@ mod tests {
             s.update(&[("a".into(), 0.0)], t0 + Duration::from_millis(400)),
             Some(vec![])
         );
+    }
+
+    #[test]
+    fn current_is_the_last_reported_set() {
+        let t0 = Instant::now();
+        let mut s = SpeakingTracker::default();
+        assert!(s.current().is_empty());
+        s.update(&[("b".into(), 0.1), ("a".into(), 0.1)], t0);
+        assert_eq!(s.current(), &["a".to_string(), "b".to_string()]);
+        s.update(&[("a".into(), 0.0)], t0 + Duration::from_millis(400));
+        assert!(s.current().is_empty());
     }
 
     #[test]

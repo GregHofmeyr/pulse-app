@@ -24,6 +24,7 @@ pub mod playout;
 pub mod processor;
 pub mod rejoin;
 pub mod resampler;
+pub mod ringlevels;
 pub mod rings;
 pub mod rtprio;
 pub mod rx;
@@ -2433,13 +2434,18 @@ impl VoiceManager {
         self.controls.lock().unwrap().watch_meters(on);
     }
 
+    /// A reactive speaking ring appeared in (`true`) or the last one left the UI (#651).
+    pub fn watch_rings(&self, on: bool) {
+        self.controls.lock().unwrap().watch_rings(on);
+    }
+
     /// The status panel opened (`true`) or closed: link figures are sent only while it is open.
     pub fn watch_link(&self, on: bool) {
         self.link.set_watching(on);
     }
 
-    /// A fresh page (first load or a webview reload): the meters and status panel the previous
-    /// page showed are gone, and their close calls will never come.
+    /// A fresh page (first load or a webview reload): the meters, rings and status panel the
+    /// previous page showed are gone, and their close calls will never come.
     pub fn reset_page_views(&self) {
         self.controls.lock().unwrap().reset_meters();
         self.link.set_watching(false);
@@ -4165,6 +4171,17 @@ mod tests {
         vm.reset_page_views();
         assert!(!vm.link.is_watching(), "link polling outlived the page");
         assert!(!vm.controls.lock().unwrap().meters_shown());
+    }
+
+    /// A webview reload with reactive rings on screen: the old page's unwatch never comes, so
+    /// ring levels stop until the new page watches again (#651).
+    #[test]
+    fn a_reloaded_page_stops_ring_levels() {
+        let (vm, _) = collecting_manager();
+        vm.watch_rings(true);
+        assert!(vm.controls.lock().unwrap().rings_shown());
+        vm.reset_page_views();
+        assert!(!vm.controls.lock().unwrap().rings_shown());
     }
 
     /// A join that never got a session (failed or cancelled) must not leave the last call's
