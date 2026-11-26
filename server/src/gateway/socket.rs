@@ -87,8 +87,8 @@ enum Auth {
     /// The user, their session's token hash, and the protocol version the client speaks.
     Ok(UserId, String, u32),
     Denied,
-    /// The client is older than [`MIN_CLIENT_VERSION`] (and signed in: see [`authenticate`]).
-    Outdated,
+    /// The client is older than [`MIN_CLIENT_VERSION`]: who it is signed in as (see [`authenticate`]).
+    Outdated(UserId),
     Internal,
 }
 
@@ -111,7 +111,7 @@ async fn authenticate(socket: &mut WebSocket, s: &AppState) -> Auth {
     // update first, its update screen would ask for the manifest with that dead session, get 401, take it as "nothing
     // to install" and wait there for good. Signed in again, it reconnects, gets 4005 and can fetch the update.
     match session::authenticate(&s.db, &token).await {
-        Ok(Some(_)) if client_version < MIN_CLIENT_VERSION => Auth::Outdated,
+        Ok(Some(user)) if client_version < MIN_CLIENT_VERSION => Auth::Outdated(user),
         Ok(Some(user)) => Auth::Ok(user, session::hash_token(&token), client_version),
         Ok(None) => Auth::Denied,
         // Don't tell the client to re-auth (and wipe its keychain) because our DB hiccuped.
@@ -371,8 +371,14 @@ async fn run(
             (u, h, v)
         }
         Auth::Denied => return close(socket, CLOSE_UNAUTHORIZED, "unauthorized").await,
-        Auth::Outdated => {
-            s.limits.gateway_ip.refund(&ip_key); // signed in: as good as a connect
+        Auth::Outdated(me) => {
+            // No refund: an old app that keeps reconnecting stays throttled. Its connect is noted, so `versions`
+            // shows who is still on an old app during a rollout.
+            tracing::info!(user = %me, version = ?app_version, "gateway: an outdated app; asking it to update");
+            let db = s.db.clone();
+            tokio::spawn(async move {
+                crate::app_versions::record_connect(&db, me, app_version.as_deref()).await
+            });
             return close(socket, CLOSE_UPDATE_REQUIRED, "update required").await;
         }
         Auth::Internal => {
@@ -381,6 +387,8 @@ async fn run(
         }
     };
     // Only with a Windows update published: with nothing to install, the forced update screen would lock it out.
+    // Superseded by MIN_CLIENT_VERSION 5 (#634): every app before 0.2.17 speaks protocol 4 or older and is turned away
+    // above. This block can go with the protocol-4 compat code (`builds::compat`) in a later PR.
     if rescue && crate::app_versions::windows_update_published(&s.cfg.updates_dir).await {
         // After the session check, so a signed-out app gets 4001 and the login screen first; signed in, its forced
         // update screen asks for the manifest with this session. It stops reconnecting on 4005.

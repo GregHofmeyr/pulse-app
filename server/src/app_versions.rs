@@ -40,6 +40,10 @@ pub fn header_platform(headers: &HeaderMap) -> Option<String> {
 /// Windows (no updater there). Apps before 0.2.18 say no platform, so a Linux build without the version header is
 /// turned away too until it's rebuilt. The gateway also checks a Windows update is published
 /// ([`windows_update_published`]) before it turns anyone away.
+///
+/// Superseded since #634: [`crate::gateway::socket::MIN_CLIENT_VERSION`] 5 turns away every app before 0.2.20 (all of
+/// them speak protocol 4 or older), whatever its headers, platform or the manifest. Kept until it goes with the
+/// protocol-4 compat code.
 pub fn needs_rescue(enabled: bool, version: Option<&str>, platform: Option<&str>) -> bool {
     enabled && version.is_none() && platform.is_none_or(|p| p == "windows")
 }
