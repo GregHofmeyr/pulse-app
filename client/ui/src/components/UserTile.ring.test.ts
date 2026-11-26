@@ -93,13 +93,37 @@ describe('the ring on the stage and strip (#651)', () => {
     voice.speaking = new Set(['U2'])
     flushSync()
     expect([btn.getAttribute('style'), tile.getAttribute('style')]).toEqual(before)
+    // nothing keyed to speaking or the ring changes the box: only colours and the ring layers differ
+    for (const m of css.matchAll(/([^{}]+)\{([^}]*)\}/g)) {
+      const sel = m[1].replace(/\/\*[\s\S]*?\*\//g, '')
+      if (!/speaking|ring/.test(sel)) continue
+      expect(m[2], sel).not.toMatch(/(^|[;\s])(margin|padding|width|height|min-width|min-height|max-width|max-height)\s*:/)
+    }
+  })
+
+  it('every_style_keeps_the_same_box', async () => {
+    const { RING_STYLES } = await import('../lib/speakingRing')
+    voice.speaking = new Set(['U2'])
+    let first: string | null = null
+    for (const { key } of RING_STYLES) {
+      app.state = { ...emptyState(), me: { id: 'U2', username: 'sam', display_name: 'sam', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] }, ring_style: key } }
+      cmp = mount(UserTile, { target: document.body, props: { entry, height: 300, onMenu: () => {} } })
+      flushSync()
+      expect(document.querySelector<HTMLElement>('.ring-box')!.dataset.style).toBe(key)
+      const shape = JSON.stringify([document.querySelector('.avatar-btn')!.getAttribute('style'), document.querySelector('.tile')!.getAttribute('style'), document.querySelector('.av')!.getAttribute('style')])
+      first ??= shape
+      expect(shape, key).toBe(first)
+      unmount(cmp)
+      cmp = undefined
+      document.body.innerHTML = ''
+    }
   })
 
   it('the_strip_slot_leaves_room_for_the_ring_box', () => {
     // FullView's strip slot: its 16:9 tile, less the 2px borders, holds the 36px avatar with its 6px margins, the gap
     // and the 12px name row
     const slot = Number(/\.slot\s*\{\s*flex:\s*0 0 (\d+)px/.exec(readFileSync(resolve(__dirname, 'FullView.svelte'), 'utf8'))![1])
-    expect(slot / (16 / 9) - 4).toBeGreaterThanOrEqual(36 + 2 * 6 + 4 + Math.ceil(12 * 1.4))
+    expect(slot / (16 / 9) - 4).toBeGreaterThanOrEqual(36 + 2 * 6 + 4 + Math.ceil(12 * 1.4) + 3) // and a few px of slack
   })
 
   it('the_tile_clips_on_purpose', () => {

@@ -116,8 +116,9 @@
 <style>
   .band { flex-shrink: 0; display: flex; align-items: center; gap: 12px; padding: 10px 18px; background: var(--bg-inset); border-bottom: 1px solid var(--bg-3); }
   .band.ringing { background: var(--ok-soft); }
-  /* 12px between avatars: room for two ring boxes' 0.16 D outsets (#651); the band's 10px padding covers above and below */
-  .people { display: flex; gap: 12px; }
+  /* 12px between avatars: room for two ring boxes' 0.16 D outsets (#651). A big group in a narrow window clips rather
+     than spilling sideways; the clip sits 6px out (padding, taken back by the margin) so the edge rings aren't cut. */
+  .people { display: flex; gap: 12px; min-width: 0; overflow: hidden; padding: 6px; margin: -6px; }
   .who { position: relative; padding: 0; border: 0; background: none; border-radius: 50%; isolation: isolate; }
   .who.pending { opacity: .5; }
   .flag { z-index: 2; position: absolute; right: -3px; bottom: -3px; width: 17px; height: 17px; border-radius: 50%; display: grid; place-items: center; background: var(--danger); color: var(--on-danger); box-shadow: 0 0 0 2px var(--ring); }

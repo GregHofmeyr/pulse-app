@@ -6,6 +6,7 @@
 // the page reloads. Each visible reactive ring counts here; the core hears only the 0 ↔ 1 changes, and nothing while
 // the window is hidden.
 import { invoke } from '@tauri-apps/api/core'
+import { rings } from './soundRings.svelte'
 
 const byUser = new Map<string, Set<HTMLElement>>()
 const userOf = new WeakMap<HTMLElement, string>()
@@ -75,8 +76,14 @@ export function nextBucket(b: Bucket, lvl: number, now: number): Bucket {
 
 const buckets = new WeakMap<HTMLElement, Bucket>()
 
+/** The ring left `on`: its CSS animations restart at 1x when it next lights, so its speed bucket starts over too. */
+export function resetSpeed(el: HTMLElement): void {
+  buckets.delete(el)
+}
+
 function speed(el: HTMLElement, lvl: number, now: number): void {
-  if (el.dataset.style !== 'dots') return
+  // only a moving Wave of dots: a still or off one has no animations to speed up, and restarts at 1x
+  if (el.dataset.style !== 'dots' || el.dataset.ring !== 'on') return
   const prev = buckets.get(el) ?? { rate: 1, pending: null, since: now }
   const next = nextBucket(prev, lvl, now)
   buckets.set(el, next)
@@ -86,29 +93,41 @@ function speed(el: HTMLElement, lvl: number, now: number): void {
   }
 }
 
+// Ids in the last frame and this one: two sets swapped and cleared, so a frame (14 a second) allocates nothing.
 let lastIds = new Set<string>()
+let theseIds = new Set<string>()
+const NONE: readonly HTMLElement[] = []
 
-/** One `speaking_levels` frame. Someone missing from it (they stopped) eases to 0 rather than snapping; `{}` (the last
- * speaker stopped) zeroes every ring that has a level. A ring that goes off removes its `--lvl` itself once it has faded. */
+/** Eases a ring whose voice level stopped: to 0 with the scale transition, or, while their soundboard sound still lights
+ * it, back to the calm .5 fallback (removing --lvl transitions just the same). */
+function ease(id: string, el: HTMLElement): void {
+  if (rings.users.has(id)) el.style.removeProperty('--lvl')
+  else el.style.setProperty('--lvl', '0')
+}
+
+/** One `speaking_levels` frame. Someone missing from it (they stopped) eases down rather than snapping; `{}` (the last
+ * speaker stopped) eases every ring that has a level. A ring that goes off removes its `--lvl` itself once faded. */
 export function apply(levels: Record<string, number>): void {
   const now = Date.now()
-  const ids = Object.keys(levels)
-  if (!ids.length) {
-    // every ring that has a level eases to 0; one that never had one (soundboard-lit) keeps its .5 fallback
-    for (const set of byUser.values()) for (const el of set) if (el.style.getPropertyValue('--lvl')) el.style.setProperty('--lvl', '0')
-    lastIds = new Set()
-    return
-  }
-  for (const id of lastIds) {
-    if (id in levels) continue
-    for (const el of byUser.get(id) ?? []) el.style.setProperty('--lvl', '0')
-  }
-  for (const id of ids) {
-    const v = levels[id]
-    for (const el of byUser.get(id) ?? []) {
-      el.style.setProperty('--lvl', String(v))
-      speed(el, v, now)
+  theseIds.clear()
+  for (const id in levels) theseIds.add(id)
+  if (!theseIds.size) {
+    // a ring that never had a level (soundboard-lit) keeps its .5 fallback
+    for (const [id, set] of byUser) for (const el of set) if (el.style.getPropertyValue('--lvl')) ease(id, el)
+  } else {
+    for (const id of lastIds) {
+      if (theseIds.has(id)) continue
+      for (const el of byUser.get(id) ?? NONE) ease(id, el)
+    }
+    for (const id of theseIds) {
+      const v = levels[id]
+      for (const el of byUser.get(id) ?? NONE) {
+        el.style.setProperty('--lvl', String(v))
+        speed(el, v, now)
+      }
     }
   }
-  lastIds = new Set(ids)
+  const swap = lastIds
+  lastIds = theseIds
+  theseIds = swap
 }

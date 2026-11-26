@@ -13,7 +13,7 @@
   // layers stay mounted. Levels (--lvl) are written onto the root by lib/ringLevels, never through state.
   import { untrack } from 'svelte'
   import { motion, observe } from '../lib/animate.svelte'
-  import { register, setWatching } from '../lib/ringLevels.svelte'
+  import { register, resetSpeed, setWatching } from '../lib/ringLevels.svelte'
   import { userOf } from '../lib/selectors'
   import { effectiveStyle, ringColorOf, ringState, ringStyleOf, speakCss, watchesLevels, type RingColor, type RingPlace, type RingStyle } from '../lib/speakingRing'
   import { isAnimating, ringPrefs } from '../lib/speakingRing.svelte'
@@ -74,14 +74,17 @@
     if (box) setWatching(box, onScreen && watches)
   })
 
-  // Going off: the layers fade (CSS), the level eases down with them, then --lvl is cleared.
+  // Going off: the layers fade (CSS), the level eases down with them, then --lvl is cleared. Leaving `on` at all
+  // restarts the CSS animations next time, so the Wave of dots speed bucket starts over.
   let fade: ReturnType<typeof setTimeout> | undefined
   let wasLit = false
   $effect(() => {
     const lit = ringNow !== 'off'
+    const on = ringNow === 'on'
     const el = box
     if (!el) return
     untrack(() => {
+      if (!on) resetSpeed(el)
       if (lit) {
         clearTimeout(fade)
         fade = undefined
