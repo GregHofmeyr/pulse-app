@@ -502,27 +502,33 @@ async fn a_layout_save_must_name_the_builds_channel() {
         v.sort_by_key(|c| c.position);
         v.into_iter().map(|c| c.id).collect::<Vec<_>>()
     };
-    let body = json!({
-        "revision": layout.revision,
-        "uncategorised": in_cat(None),
-        "categories": layout.categories.iter().map(|k| json!({ "id": k.id, "channels": in_cat(Some(k.id)) })).collect::<Vec<_>>(),
-    });
-    let r = app
-        .http
-        .put(app.url(&format!("/servers/{}/layout", s.id)))
-        .bearer_auth(&alex)
-        .json(&body)
-        .send()
-        .await
-        .unwrap();
+    // `with` adds the builds channel at the end of its own category (or the uncategorised list)
+    let body = |with: bool| {
+        let list = |cat: Option<pulse_protocol::ids::CategoryId>| {
+            let mut v = in_cat(cat);
+            if with && ch.category_id == cat {
+                v.push(ch.id);
+            }
+            v
+        };
+        json!({
+            "revision": layout.revision,
+            "uncategorised": list(None),
+            "categories": layout.categories.iter().map(|k| json!({ "id": k.id, "channels": list(Some(k.id)) })).collect::<Vec<_>>(),
+        })
+    };
+    let save = |b: serde_json::Value| {
+        app.http
+            .put(app.url(&format!("/servers/{}/layout", s.id)))
+            .bearer_auth(&alex)
+            .json(&b)
+            .send()
+    };
+    let r = save(body(false)).await.unwrap();
     assert_eq!(r.status(), 409, "a save names every channel");
-    let still: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM channels WHERE id = ? AND deleted_at IS NULL")
-            .bind(ch.id.to_string())
-            .fetch_one(&app.db)
-            .await
-            .unwrap();
-    assert_eq!(still, 1);
+    // the control: the same save naming the builds channel goes through, so the 409 was for leaving it out
+    let r = save(body(true)).await.unwrap();
+    assert!(r.status().is_success(), "the full save {}", r.status());
 }
 
 // ---- Create, get and list (Task 2) ----

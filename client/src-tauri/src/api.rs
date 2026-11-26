@@ -341,8 +341,8 @@ pub struct Api {
 
 impl Api {
     pub fn new(base: &str) -> Self {
-        // every request says which protocol it speaks, the same as the gateway's Hello: without it the server answers
-        // as it would an older client (no builds channels in channel lists, #617)
+        // every request says which protocol it speaks, the same as the gateway's Hello, so a future protocol bump can
+        // tell old and new apps apart over REST too
         let mut headers = reqwest::header::HeaderMap::new();
         headers.insert(
             pulse_protocol::PROTOCOL_HEADER,
