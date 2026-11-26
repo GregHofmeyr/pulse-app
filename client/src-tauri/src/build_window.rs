@@ -362,13 +362,48 @@ pub async fn build_window_image_urls(
     }
 }
 
-/// The pop-out's always-on-top switch (pop-out only).
+/// The pop-out's always-on-top switch (pop-out only). Whether the window can be kept on top here: false under
+/// Wayland, whose GTK backend ignores keep-above (there is no protocol for it), so nothing is done and the pop-out
+/// shows no switch (QPMKJE: a switch that does nothing). The pop-out asks once as it opens, re-stating its opening
+/// state (on top), so this command doubles as that question rather than the gate letting it call another.
 #[tauri::command]
-pub fn set_build_window_on_top(app: AppHandle, on: bool) -> Result<(), String> {
+pub fn set_build_window_on_top(app: AppHandle, on: bool) -> Result<bool, String> {
     let w = app
         .get_webview_window(BUILD_LABEL)
         .ok_or("The pop-out is closed.")?;
-    w.set_always_on_top(on).map_err(|e| e.to_string())
+    if !can_keep_on_top(&w)? {
+        return Ok(false);
+    }
+    w.set_always_on_top(on).map_err(|e| e.to_string())?;
+    Ok(true)
+}
+
+/// Whether a GDK display of this type name honours keep-above (every backend but Wayland's).
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn keeps_above(display_type: &str) -> bool {
+    display_type != "GdkWaylandDisplay"
+}
+
+/// Whether `w` can be kept on top: on Linux, by its GDK display's backend (read on the main thread, as GTK needs).
+#[cfg(target_os = "linux")]
+fn can_keep_on_top(w: &tauri::WebviewWindow) -> Result<bool, String> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let win = w.clone();
+    w.run_on_main_thread(move || {
+        use gtk::prelude::*;
+        let ok = win
+            .gtk_window()
+            .map(|g| keeps_above(g.display().type_().name()))
+            .unwrap_or(true);
+        let _ = tx.send(ok);
+    })
+    .map_err(|e| e.to_string())?;
+    rx.recv().map_err(|e| e.to_string())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn can_keep_on_top(_: &tauri::WebviewWindow) -> Result<bool, String> {
+    Ok(true)
 }
 
 #[cfg(test)]
@@ -405,6 +440,13 @@ mod tests {
             url: Some(format!("https://example.r2.cloudflarestorage.com/{id}")),
             expires_at: None,
         }
+    }
+
+    #[test]
+    fn only_wayland_cannot_keep_the_pop_out_on_top() {
+        assert!(!keeps_above("GdkWaylandDisplay"));
+        assert!(keeps_above("GdkX11Display"));
+        assert!(keeps_above("GdkWin32Display"));
     }
 
     #[test]

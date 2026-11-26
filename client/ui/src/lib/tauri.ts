@@ -699,7 +699,8 @@ export const api = {
   closeBuildWindow: (messageId: string) => invoke<boolean>('close_build_window', { messageId }),
   buildWindowSnapshot: () => invoke<BuildSnapshot | null>('build_window_snapshot'),
   buildWindowImageUrls: (messageId: string) => invoke<AttachmentUrl[]>('build_window_image_urls', { messageId }),
-  setBuildWindowOnTop: (on: boolean) => invoke<void>('set_build_window_on_top', { on }),
+  /** Whether the pop-out can be kept on top here (false under Wayland: nothing was done). */
+  setBuildWindowOnTop: (on: boolean) => invoke<boolean>('set_build_window_on_top', { on }),
   /** Save a new build (#618): the core uploads `staged` screenshots in order under `body.nonce` (after any ids
    *  `body.attachments` lists), then posts it. Retrying with the same nonce uploads nothing twice. */
   createBuild: (channelId: string, body: CreateBuildRequest, staged: string[] = []) =>
