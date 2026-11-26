@@ -71,6 +71,30 @@ describe('the build pop-out from the main window', () => {
     expect(calls('update_build_window').map((a) => (a.snapshot as { message_id: string }).message_id)).toEqual(['M002'])
   })
 
+  it("A closing (its build deleted) while B's Pop out is in flight still notes B", async () => {
+    await popOutBuild(build('M001'))
+    let answer = () => {}
+    invoke.mockImplementation((cmd: string) => (cmd === 'open_build_window' ? new Promise<undefined>((r) => (answer = () => r(undefined))) : Promise.resolve(undefined)))
+    const second = popOutBuild(build('M002'))
+    event({ t: 'MessageDeleted', d: { channel_id: 'B1', message_id: 'M001', author_id: 'U2', mentions: [], thread_root_id: null } } as Event)
+    answer()
+    await second
+    expect(poppedOut.messageId).toBe('M002')
+    event({ t: 'MessageUpdated', d: { message: build('M002', { title: 'Raven endgame' }) } })
+    await settle()
+    expect(calls('update_build_window').map((a) => (a.snapshot as { message_id: string }).message_id)).toEqual(['M002'])
+  })
+
+  it('a sign-out while a Pop out is in flight notes nothing of it', async () => {
+    let answer = () => {}
+    invoke.mockImplementation((cmd: string) => (cmd === 'open_build_window' ? new Promise<undefined>((r) => (answer = () => r(undefined))) : Promise.resolve(undefined)))
+    const open = popOutBuild(build('M001'))
+    resetState()
+    answer()
+    await open
+    expect(poppedOut.messageId).toBeNull()
+  })
+
   it("its build's edit and archive are sent on; another build's are not", async () => {
     await popOutBuild(build('M001'))
     event({ t: 'MessageUpdated', d: { message: build('M001', { title: 'Raven endgame' }) } })

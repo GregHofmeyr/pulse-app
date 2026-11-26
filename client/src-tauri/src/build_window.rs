@@ -70,8 +70,8 @@ struct Inner {
 /// What [`BuildWindow::switch`] did.
 #[derive(Debug, PartialEq)]
 pub enum Switch {
-    /// The live window shows the new snapshot now.
-    Done,
+    /// The live window shows the new snapshot now (a copy of it, should that window turn out to be gone).
+    Done(Box<BuildSnapshot>),
     /// Signed out since the open began: nothing stored.
     SignedOut,
     /// No live window (none, or it's closing): a new one must be built for the snapshot, handed back.
@@ -104,12 +104,16 @@ impl BuildWindow {
         Some(i.generation)
     }
 
-    /// The window of `generation` is built and up.
-    pub fn built(&self, generation: u64) {
+    /// The window of `generation` is built and up: whether it still has its build. A close (the build deleted or out
+    /// of reach) while it was being built found no window to destroy but cleared the snapshot, and nothing else
+    /// clears it while an open holds the lock; then it must go, not show "This build is gone."
+    pub fn built(&self, generation: u64) -> bool {
         let mut i = self.inner();
-        if i.generation == generation {
-            i.live = Some(generation);
+        if i.generation != generation || i.snapshot.is_none() {
+            return false;
         }
+        i.live = Some(generation);
+        true
     }
 
     /// The live window takes `snapshot` in place (same window, same generation: nothing moves on screen), or says
@@ -122,8 +126,8 @@ impl BuildWindow {
         if i.live != Some(i.generation) {
             return Switch::NoWindow(Box::new(snapshot));
         }
-        i.snapshot = Some(snapshot);
-        Switch::Done
+        i.snapshot = Some(snapshot.clone());
+        Switch::Done(Box::new(snapshot))
     }
 
     /// Whether a sign-out came since `ticket` (a window built for it must go).
@@ -293,12 +297,12 @@ pub(crate) async fn open_in(
     let title = snapshot.title.clone();
     // a window already up shows this build in place, and comes forward: no second window, nothing moves
     let snapshot = match win.switch(ticket, snapshot) {
-        Switch::Done if p.exists() => {
+        Switch::Done(_) if p.exists() => {
             p.bring_forward(&title);
             return Ok(());
         }
-        // it went meanwhile (a close of its build): its "closed" clears this snapshot too, so build one
-        Switch::Done => win.snapshot().ok_or(SIGNED_OUT)?,
+        // it went meanwhile (its late "closed" may clear the snapshot just stored): a new one, for this copy
+        Switch::Done(s) => *s,
         Switch::SignedOut => return Err(SIGNED_OUT.into()),
         Switch::NoWindow(s) => *s,
     };
@@ -318,12 +322,16 @@ pub(crate) async fn open_in(
         win.closed(generation);
         return Err(e);
     }
-    win.built(generation);
     // signed out while it was being built (the sign-out's close found no window yet): it goes now
     if win.signed_out_since(ticket) {
         p.destroy();
         win.clear();
         return Err(SIGNED_OUT.into());
+    }
+    // closed while it was being built (its build deleted): likewise
+    if !win.built(generation) {
+        p.destroy();
+        return Err(CLOSED.into());
     }
     Ok(())
 }
@@ -406,6 +414,9 @@ pub async fn open_build_window(
 }
 
 const SIGNED_OUT: &str = "Signed out.";
+
+/// Closed (its build deleted or out of reach) while it was being built.
+const CLOSED: &str = "The pop-out was closed.";
 
 /// A newer copy of the build on show (main window only): the pop-out picks it up on its next look. Another build's
 /// copy is ignored.
@@ -692,6 +703,11 @@ mod tests {
         builds: u32,
         /// Brought forward with these titles (reused, not rebuilt).
         forwards: Vec<String>,
+        /// How long the event loop takes to destroy a window (60 ms when unset).
+        destroy_delay: Option<Duration>,
+        /// A window gone from the app whose "destroyed" handler hasn't run yet: it runs as the next look finds no
+        /// window (the race with an open's look, made certain).
+        destroyed_pending: Option<u64>,
     }
 
     impl FakePopout {
@@ -711,15 +727,25 @@ mod tests {
 
     impl Popout for FakePopout {
         fn exists(&self) -> bool {
-            self.state().shown.is_some()
+            let (shown, pending) = {
+                let mut s = self.state();
+                (s.shown, s.destroyed_pending.take())
+            };
+            if let Some(generation) = pending {
+                self.1.closed(generation);
+            }
+            shown.is_some()
         }
         fn destroy(&self) {
-            let Some(generation) = self.state().shown else {
+            let (Some(generation), delay) = ({
+                let s = self.state();
+                (s.shown, s.destroy_delay)
+            }) else {
                 return;
             };
             let me = self.clone();
             tokio::spawn(async move {
-                tokio::time::sleep(Duration::from_millis(60)).await;
+                tokio::time::sleep(delay.unwrap_or(Duration::from_millis(60))).await;
                 {
                     let mut s = me.state();
                     if s.shown == Some(generation) {
@@ -860,6 +886,110 @@ mod tests {
             win.snapshot().is_none(),
             "the old account's build is never stored"
         );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_sign_out_while_the_window_is_being_built_takes_it_and_says_so() {
+        let win = std::sync::Arc::new(BuildWindow::default());
+        let p = FakePopout::new(&win);
+        let (r, _) = tokio::join!(
+            open_in(
+                &p,
+                &win,
+                win.begin(),
+                snap(MessageId::new(), "Frost mage", &[]),
+                true
+            ),
+            async {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+                win.sign_out();
+            }
+        );
+        settle().await;
+        assert_eq!(r, Err(SIGNED_OUT.to_string()));
+        assert!(!p.exists());
+        assert!(win.snapshot().is_none());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_close_while_the_window_is_being_built_takes_the_new_window_too() {
+        let win = std::sync::Arc::new(BuildWindow::default());
+        let p = FakePopout::new(&win);
+        let a = MessageId::new();
+        // the build is deleted (close: no window to find yet) while its pop-out is being built
+        let (r, _) = tokio::join!(
+            open_in(&p, &win, win.begin(), snap(a, "Frost mage", &[]), true),
+            async {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+                win.clear();
+            }
+        );
+        settle().await;
+        assert_eq!(r, Err(CLOSED.to_string()));
+        assert!(!p.exists(), "no window left on \"This build is gone.\"");
+        assert!(win.snapshot().is_none());
+        // the next Pop out works
+        open_in(&p, &win, win.begin(), snap(a, "Frost mage", &[]), true)
+            .await
+            .unwrap();
+        assert!(p.exists());
+        assert_eq!(win.snapshot().map(|s| s.message_id), Some(a));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_late_destroyed_between_the_switch_and_the_look_still_opens_the_build() {
+        let win = std::sync::Arc::new(BuildWindow::default());
+        let p = FakePopout::new(&win);
+        let (a, b) = (MessageId::new(), MessageId::new());
+        let g1 = open_in(&p, &win, win.begin(), snap(a, "Frost mage", &[]), true)
+            .await
+            .map(|_| p.state().shown.unwrap())
+            .unwrap();
+        // the window is gone from the app, its "destroyed" not yet handled: it lands as the open looks
+        {
+            let mut s = p.state();
+            s.shown = None;
+            s.taken = false;
+            s.destroyed_pending = Some(g1);
+        }
+        let r = open_in(&p, &win, win.begin(), snap(b, "Bleed rogue", &[]), true).await;
+        settle().await;
+        assert_eq!(r, Ok(()), "not \"Signed out.\"");
+        assert!(p.exists());
+        assert_eq!(p.state().builds, 2);
+        assert_eq!(win.snapshot().map(|s| s.message_id), Some(b));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_window_slow_to_go_fails_the_open_cleanly() {
+        let win = std::sync::Arc::new(BuildWindow::default());
+        let p = FakePopout::new(&win);
+        let (a, b) = (MessageId::new(), MessageId::new());
+        open_in(&p, &win, win.begin(), snap(a, "Frost mage", &[]), true)
+            .await
+            .unwrap();
+        // closing, and the event loop takes longer than the open waits (1 s)
+        p.state().destroy_delay = Some(Duration::from_secs(3));
+        p.user_closes();
+        let r = tokio::time::timeout(
+            Duration::from_secs(2),
+            open_in(&p, &win, win.begin(), snap(b, "Bleed rogue", &[]), true),
+        )
+        .await
+        .expect("the open gives up rather than hang");
+        assert!(r.is_err(), "the label is still taken: {r:?}");
+        assert!(
+            win.snapshot().is_none(),
+            "nothing stored for a window that never came"
+        );
+        tokio::time::sleep(Duration::from_secs(5)).await;
+        assert!(!p.exists());
+        assert!(win.snapshot().is_none());
+        // and the next Pop out works
+        open_in(&p, &win, win.begin(), snap(b, "Bleed rogue", &[]), true)
+            .await
+            .unwrap();
+        assert_eq!(win.snapshot().map(|s| s.message_id), Some(b));
     }
 
     fn deleted(id: MessageId, thread_root_id: Option<MessageId>) -> Event {
