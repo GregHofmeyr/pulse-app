@@ -39,14 +39,30 @@ export function swapTracker(): (key: string | null) => boolean {
   }
 }
 
-/** Zero-width spaces, joiners and marks, word joiners, the BOM and the Hangul fillers (names.rs `invisible`). */
-const INVISIBLE = /[\u034f\u115f\u1160\u180e\u200b-\u200f\u2060-\u2064\u3164\ufeff\uffa0]/u
-const drawn = (c: string | undefined) => !!c && !/\s/u.test(c) && !INVISIBLE.test(c)
+/** A format character (Cf) or one that draws nothing: zero-width spaces, joiners and marks, word joiners, the BOM, the
+ *  Hangul fillers, the soft hyphen, the braille blank, the Mongolian variation selectors (names.rs `hides`). */
+const HIDES = /[\p{Cf}\u00ad\u034f\u115f\u1160\u180b-\u180f\u200b-\u200f\u2060-\u2064\u2800\u3164\ufeff\uffa0]/u
+const SPACE = /\p{White_Space}/u
+const drawn = (c: string | undefined) => !!c && !SPACE.test(c) && !HIDES.test(c)
+const TAG = /[\u{e0020}-\u{e007f}]/u
 
-/** Whether text reads as a link: a scheme, `www.`, or a domain (`pulse.app`). names.rs `has_link`. */
+/** Whether text holds a character that hides: any HIDES one, but a joiner between two drawn characters (an emoji's
+ *  parts) and a run of tag characters straight after 🏴 (a subdivision flag) are allowed. names.rs `has_hidden`. */
+function hasHidden(s: string): boolean {
+  const cs = [...s]
+  let flag = false
+  return cs.some((c, i) => {
+    flag = TAG.test(c) && (flag || cs[i - 1] === '\u{1f3f4}')
+    return HIDES.test(c) && !flag && !(c === '\u200d' && drawn(cs[i - 1]) && drawn(cs[i + 1]))
+  })
+}
+
+/** Whether text reads as a link: a scheme, `www.`, or a domain: a letter or digit, a dot or a lookalike, then two
+ *  letters of any script (`pulse.app`, `пример.рф`; `brain.exe` too, which is fine). names.rs `has_link`, class for
+ *  class (Unicode L and N; ASCII-only lowercasing). */
 function hasLink(s: string): boolean {
-  const t = s.toLowerCase()
-  return t.includes('://') || t.includes('www.') || /[\p{L}\p{N}]\.[a-z]{2}/u.test(t)
+  const t = s.replace(/[\u3002\uff0e\uff61\u2024\u2027\ufe52]/gu, '.').replace(/[A-Z]/g, (c) => c.toLowerCase())
+  return t.includes('://') || t.includes('www.') || /[\p{L}\p{N}]\.\p{L}\p{L}/u.test(t)
 }
 
 /** Why typing text can't be saved, or null if it can (blank can: the plain "is typing"). The server's rules. */
@@ -55,9 +71,7 @@ export function typingTextProblem(text: string): string | null {
   if (!t) return null
   if (charCount(t) > TYPING_TEXT_MAX) return 'Typing text can be up to 32 characters.'
   if (/[\p{Cc}\u2028\u2029\u202a-\u202e\u2066-\u2069]/u.test(t)) return "Typing text can't contain line breaks or control characters."
-  // no invisible characters, but a joiner between two drawn ones (inside an emoji) is part of the picture
-  const cs = [...t]
-  if (cs.some((c, i) => INVISIBLE.test(c) && !(c === '\u200d' && drawn(cs[i - 1]) && drawn(cs[i + 1])))) return "Typing text can't contain invisible characters."
+  if (hasHidden(t)) return "Typing text can't contain invisible characters."
   if (hasLink(t)) return "Typing text can't contain links."
   return null
 }

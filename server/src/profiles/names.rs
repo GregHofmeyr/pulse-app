@@ -1,6 +1,8 @@
 //! The rules every name you can choose follows: display names, server nicknames and private
 //! nicknames alike (#47, #48).
 
+use unicode_properties::{GeneralCategory, GeneralCategoryGroup, UnicodeGeneralCategory};
+
 use crate::error::{AppError, AppResult};
 
 /// Longest name, in characters, after trimming.
@@ -46,8 +48,10 @@ pub fn clean(s: &str) -> AppResult<String> {
 
 /// What shows after "<name> is" while someone types (#652), as the name rules have it (trimmed,
 /// at most 32 characters, no line breaks, control or direction characters), and stricter: no
-/// zero-width characters at all except a joiner inside an emoji, and no links. Blank is `None`:
-/// the plain "is typing".
+/// format characters (Unicode Cf) or other invisible ones at all, except a joiner between two
+/// drawn characters (inside an emoji) and the tags of a subdivision flag (right after 🏴); and no
+/// links. Blank is `None`: the plain "is typing". The client's `typingTextProblem`
+/// (client/ui/src/lib/typingLine.ts) is the same rule.
 pub fn clean_typing_text(s: &str) -> AppResult<Option<String>> {
     let s = s.trim();
     if s.is_empty() {
@@ -62,13 +66,7 @@ pub fn clean_typing_text(s: &str) -> AppResult<Option<String>> {
         }
         Err(Broken::Invisible) => return bad("Typing text can't contain invisible characters."),
     }
-    let chars: Vec<char> = s.chars().collect();
-    let drawn = |c: Option<&char>| c.is_some_and(|c| !c.is_whitespace() && !invisible(*c));
-    let hidden = chars.iter().enumerate().any(|(i, &c)| {
-        invisible(c)
-            && !(c == '\u{200d}' && i > 0 && drawn(chars.get(i - 1)) && drawn(chars.get(i + 1)))
-    });
-    if hidden {
+    if has_hidden(s) {
         return bad("Typing text can't contain invisible characters.");
     }
     if has_link(s) {
@@ -77,20 +75,57 @@ pub fn clean_typing_text(s: &str) -> AppResult<Option<String>> {
     Ok(Some(s.to_owned()))
 }
 
+/// Whether text holds a character that draws nothing or hides what's around it: any format
+/// character (Unicode Cf) or [`invisible`] one, but a joiner between two drawn characters (an
+/// emoji's parts) and a run of tag characters straight after 🏴 (a subdivision flag) are allowed.
+fn has_hidden(s: &str) -> bool {
+    let c: Vec<char> = s.chars().collect();
+    let drawn = |x: Option<&char>| x.is_some_and(|x| !x.is_whitespace() && !hides(*x));
+    let mut flag = false; // inside 🏴's tag run
+    c.iter().enumerate().any(|(i, &x)| {
+        let tag = matches!(x, '\u{e0020}'..='\u{e007f}');
+        flag = tag && (flag || (i > 0 && c[i - 1] == '\u{1f3f4}'));
+        hides(x)
+            && !flag
+            && !(x == '\u{200d}' && i > 0 && drawn(c.get(i - 1)) && drawn(c.get(i + 1)))
+    })
+}
+
+/// A format character (Cf: zero-width ones, direction marks, the soft hyphen, tags, interlinear
+/// annotation marks) or an [`invisible`] one.
+fn hides(c: char) -> bool {
+    invisible(c) || c.general_category() == GeneralCategory::Format
+}
+
+/// The characters that read as a dot in a domain: `.` and its lookalikes (ideographic, fullwidth
+/// and halfwidth full stops, the one-dot leader, the hyphenation point, the small full stop).
+fn dot(c: char) -> bool {
+    matches!(
+        c,
+        '.' | '\u{3002}' | '\u{ff0e}' | '\u{ff61}' | '\u{2024}' | '\u{2027}' | '\u{fe52}'
+    )
+}
+
 /// Whether text carries something that reads as a link: a scheme (`://`), `www.`, or a domain
-/// (a letter or digit, a dot, then two or more letters, as in `pulse.app`). `v1.2` and `...`
-/// aren't.
+/// (a letter or digit, a dot or lookalike, then two letters of any script, as in `pulse.app` or
+/// `пример.рф`). `v1.2` and `...` aren't; `brain.exe` is, and that's fine. Letters and digits are
+/// Unicode categories L and N, as the client's `\p{L}` and `\p{N}`.
 fn has_link(s: &str) -> bool {
-    let lower = s.to_lowercase();
-    if lower.contains("://") || lower.contains("www.") {
+    let c: Vec<char> = s
+        .chars()
+        .map(|x| if dot(x) { '.' } else { x.to_ascii_lowercase() })
+        .collect();
+    let text: String = c.iter().collect();
+    if text.contains("://") || text.contains("www.") {
         return true;
     }
-    let c: Vec<char> = lower.chars().collect();
+    let letter = |x: char| x.general_category_group() == GeneralCategoryGroup::Letter;
+    let number = |x: char| x.general_category_group() == GeneralCategoryGroup::Number;
     (1..c.len().saturating_sub(2)).any(|i| {
         c[i] == '.'
-            && c[i - 1].is_alphanumeric()
-            && c[i + 1].is_ascii_alphabetic()
-            && c[i + 2].is_ascii_alphabetic()
+            && (letter(c[i - 1]) || number(c[i - 1]))
+            && letter(c[i + 1])
+            && letter(c[i + 2])
     })
 }
 
@@ -100,17 +135,20 @@ fn breaks_layout(c: char) -> bool {
     matches!(c, '\u{2028}' | '\u{2029}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
 }
 
-/// Characters that draw nothing: zero-width spaces, joiners and marks, word joiners, the BOM and
-/// the Hangul fillers. Allowed inside a name (emoji need joiners), never as all of it.
+/// Characters that draw nothing: zero-width spaces, joiners and marks, word joiners, the BOM, the
+/// Hangul fillers, the soft hyphen, the braille blank and the Mongolian variation selectors.
+/// Allowed inside a name (emoji need joiners), never as all of it.
 fn invisible(c: char) -> bool {
     matches!(
         c,
-        '\u{034f}'
+        '\u{ad}'
+            | '\u{034f}'
             | '\u{115f}'
             | '\u{1160}'
-            | '\u{180e}'
+            | '\u{180b}'..='\u{180f}'
             | '\u{200b}'..='\u{200f}'
             | '\u{2060}'..='\u{2064}'
+            | '\u{2800}'
             | '\u{3164}'
             | '\u{feff}'
             | '\u{ffa0}'
@@ -325,6 +363,73 @@ mod tests {
         // dots that aren't a domain are fine
         for ok in ["typing a novel...", "on v1.2", "cooking. again", "3.14"] {
             assert!(clean_typing_text(ok).is_ok(), "{ok:?}");
+        }
+    }
+
+    /// The typing-text rules as both sides keep them (#652 review). A literal copy is in
+    /// client/ui/src/lib/typingLine.test.ts (`TYPING_TEXT_CASES`): change one side and both tests
+    /// fail, so the server never refuses what the client let through. `None`: accepted.
+    const TYPING_TEXT_CASES: &[(&str, Option<&str>)] = &[
+        ("cooking", None),
+        ("cooking 👩\u{200d}🍳", None),
+        (
+            "from 🏴\u{e0067}\u{e0062}\u{e0073}\u{e0063}\u{e0074}\u{e007f}",
+            None,
+        ),
+        ("hearts ❤\u{fe0f}", None),
+        ("typing a novel...", None),
+        ("on v1.2", None),
+        ("3.14", None),
+        ("cooking. again", None),
+        ("\u{200b}", Some(INVISIBLE_MSG)),
+        ("yap\u{200b}ping", Some(INVISIBLE_MSG)),
+        ("\u{200d}barking", Some(INVISIBLE_MSG)),
+        ("a \u{200d} b", Some(INVISIBLE_MSG)),
+        ("yap\u{61c}ping", Some(INVISIBLE_MSG)),
+        ("yap\u{e0020}ping", Some(INVISIBLE_MSG)),
+        ("yap\u{e0041}ping", Some(INVISIBLE_MSG)),
+        ("yap\u{e007f}ping", Some(INVISIBLE_MSG)),
+        ("yap\u{ad}ping", Some(INVISIBLE_MSG)),
+        ("yap\u{2800}ping", Some(INVISIBLE_MSG)),
+        ("\u{2800}", Some(INVISIBLE_MSG)),
+        ("yap\u{180b}ping", Some(INVISIBLE_MSG)),
+        ("yap\u{180c}ping", Some(INVISIBLE_MSG)),
+        ("yap\u{180d}ping", Some(INVISIBLE_MSG)),
+        ("yap\u{180f}ping", Some(INVISIBLE_MSG)),
+        ("yap\u{fff9}ping", Some(INVISIBLE_MSG)),
+        ("yap\u{fffa}ping", Some(INVISIBLE_MSG)),
+        ("yap\u{fffb}ping", Some(INVISIBLE_MSG)),
+        ("a\nb", Some(CONTROL_MSG)),
+        ("\u{202e}gnippay", Some(CONTROL_MSG)),
+        ("https://example.com", Some(LINK_MSG)),
+        ("www.example", Some(LINK_MSG)),
+        ("WWW.EXAMPLE", Some(LINK_MSG)),
+        ("on pulse.app", Some(LINK_MSG)),
+        ("pulse\u{3002}app", Some(LINK_MSG)),
+        ("pulse\u{ff0e}app", Some(LINK_MSG)),
+        ("pulse\u{ff61}app", Some(LINK_MSG)),
+        ("pulse\u{2024}app", Some(LINK_MSG)),
+        ("pulse\u{2027}app", Some(LINK_MSG)),
+        ("pulse\u{fe52}app", Some(LINK_MSG)),
+        ("пример.рф", Some(LINK_MSG)),
+        ("brain.exe", Some(LINK_MSG)),
+    ];
+    const INVISIBLE_MSG: &str = "Typing text can't contain invisible characters.";
+    const CONTROL_MSG: &str = "Typing text can't contain line breaks or control characters.";
+    const LINK_MSG: &str = "Typing text can't contain links.";
+
+    #[test]
+    fn typing_text_cases_match_the_client() {
+        for (text, want) in TYPING_TEXT_CASES {
+            let got = clean_typing_text(text).err().map(|e| e.to_string());
+            assert_eq!(got.as_deref(), *want, "{text:?}");
+        }
+    }
+
+    #[test]
+    fn the_new_invisible_characters_are_never_all_of_a_name() {
+        for bad in ["\u{2800}", "\u{ad}", "\u{180b}\u{180f}"] {
+            assert!(clean(bad).is_err(), "{bad:?}");
         }
     }
 

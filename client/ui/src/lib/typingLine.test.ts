@@ -208,3 +208,62 @@ describe('typing again right after a send (#652 review)', () => {
     for (let t = 700; t <= 4000; t += 20) expect(at(t), `at ${t} ms`).toBe('kim is barking')
   })
 })
+
+/** A literal copy of TYPING_TEXT_CASES in server/src/profiles/names.rs (#652 review): change one side and both tests
+ *  fail, so the server never refuses what this preview let through. null: accepted. */
+const INVISIBLE = "Typing text can't contain invisible characters."
+const CONTROL = "Typing text can't contain line breaks or control characters."
+const LINK = "Typing text can't contain links."
+const TYPING_TEXT_CASES: [string, string | null][] = [
+  ['cooking', null],
+  ['cooking 👩\u{200d}🍳', null],
+  ['from 🏴\u{e0067}\u{e0062}\u{e0073}\u{e0063}\u{e0074}\u{e007f}', null],
+  ['hearts ❤\u{fe0f}', null],
+  ['typing a novel...', null],
+  ['on v1.2', null],
+  ['3.14', null],
+  ['cooking. again', null],
+  ['\u{200b}', INVISIBLE],
+  ['yap\u{200b}ping', INVISIBLE],
+  ['\u{200d}barking', INVISIBLE],
+  ['a \u{200d} b', INVISIBLE],
+  ['yap\u{61c}ping', INVISIBLE],
+  ['yap\u{e0020}ping', INVISIBLE],
+  ['yap\u{e0041}ping', INVISIBLE],
+  ['yap\u{e007f}ping', INVISIBLE],
+  ['yap\u{ad}ping', INVISIBLE],
+  ['yap\u{2800}ping', INVISIBLE],
+  ['\u{2800}', INVISIBLE],
+  ['yap\u{180b}ping', INVISIBLE],
+  ['yap\u{180c}ping', INVISIBLE],
+  ['yap\u{180d}ping', INVISIBLE],
+  ['yap\u{180f}ping', INVISIBLE],
+  ['yap\u{fff9}ping', INVISIBLE],
+  ['yap\u{fffa}ping', INVISIBLE],
+  ['yap\u{fffb}ping', INVISIBLE],
+  ['a\nb', CONTROL],
+  ['\u{202e}gnippay', CONTROL],
+  ['https://example.com', LINK],
+  ['www.example', LINK],
+  ['WWW.EXAMPLE', LINK],
+  ['on pulse.app', LINK],
+  ['pulse\u{3002}app', LINK],
+  ['pulse\u{ff0e}app', LINK],
+  ['pulse\u{ff61}app', LINK],
+  ['pulse\u{2024}app', LINK],
+  ['pulse\u{2027}app', LINK],
+  ['pulse\u{fe52}app', LINK],
+  ['пример.рф', LINK],
+  ['brain.exe', LINK],
+]
+
+describe('typing text rules match the server, case for case', () => {
+  it.each(TYPING_TEXT_CASES)('%j', (text, want) => {
+    expect(typingTextProblem(text)).toBe(want)
+  })
+})
+
+it('the new invisible characters are never all of a name (names.rs, the same set)', async () => {
+  const { nameProblem } = await import('./profileDraft')
+  for (const bad of ['\u{2800}', '\u{ad}', '\u{180b}\u{180f}']) expect(nameProblem(bad), bad).toContain('see')
+})
