@@ -1,4 +1,4 @@
-//! Shared by the LiveKit integration tests (voice_it, stream_it).
+//! Shared by the LiveKit integration tests (voice_it, stream_it, server_mute_it, voice_bitrate_it).
 
 /// The LiveKit tests in one test binary take turns.
 ///
@@ -18,4 +18,28 @@ static LIVEKIT: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
 /// the next test's start; that is a connection or two, not the burst above.
 pub async fn livekit_turn() -> tokio::sync::SemaphorePermit<'static> {
     LIVEKIT.acquire().await.expect("never closed")
+}
+
+/// Each person's loudest voice level over `window`. `VoiceManager::mixer_levels()` races the
+/// session's ring tick, which drains the same meters every 70 ms (#651), so one read covers at
+/// most that long: poll faster than the tick and keep the max.
+#[allow(dead_code)] // not every test binary listens for sound
+pub async fn levels_over(
+    vm: &pulse_client::voice::VoiceManager,
+    window: std::time::Duration,
+) -> Vec<(String, f32)> {
+    let deadline = tokio::time::Instant::now() + window;
+    let mut loudest: Vec<(String, f32)> = Vec::new();
+    loop {
+        for (id, l) in vm.mixer_levels().await {
+            match loudest.iter_mut().find(|(o, _)| *o == id) {
+                Some((_, v)) => *v = v.max(l),
+                None => loudest.push((id, l)),
+            }
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return loudest;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
 }
