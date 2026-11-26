@@ -21,9 +21,6 @@ use totp_rs::{Algorithm, Builder, Secret};
 const PW: &str = "hunter2hunter2";
 const NEW_PW: &str = "correct horse battery";
 
-type Socket =
-    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
-
 async fn hello(app: &TestApp, token: &str) -> Socket {
     let mut ws = tokio_tungstenite::connect_async(app.ws_url("/gateway"))
         .await

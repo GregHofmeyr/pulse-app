@@ -4,46 +4,14 @@ mod common;
 use std::time::Duration;
 
 use common::*;
-use futures::{SinkExt, StreamExt};
-use pulse_protocol::gateway::{ClientFrame, ServerFrame};
+use futures::StreamExt;
 use pulse_protocol::ids::{ChannelId, MessageId, ServerId, UserId};
 use pulse_protocol::rest::{ApiError, Channel, Message, MessageKind, Poll};
 use serde_json::{Value, json};
 use tokio_tungstenite::tungstenite::Message as Ws;
 
-type Socket =
-    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
-
 async fn hello(app: &TestApp, token: &str) -> Socket {
-    let mut ws = tokio_tungstenite::connect_async(app.ws_url("/gateway"))
-        .await
-        .unwrap()
-        .0;
-    let f = serde_json::to_string(&ClientFrame::Hello {
-        token: token.into(),
-        client_version: pulse_protocol::PROTOCOL_VERSION,
-    })
-    .unwrap();
-    ws.send(Ws::text(f)).await.unwrap();
-    loop {
-        if let Some(ServerFrame::Ready(_)) = next_frame(&mut ws).await {
-            return ws;
-        }
-    }
-}
-
-async fn next_frame(ws: &mut Socket) -> Option<ServerFrame> {
-    loop {
-        let m = tokio::time::timeout(Duration::from_secs(3), ws.next())
-            .await
-            .ok()??
-            .ok()?;
-        match m {
-            Ws::Text(t) => return Some(serde_json::from_str(&t).unwrap()),
-            Ws::Close(_) => return None,
-            _ => continue,
-        }
-    }
+    common::hello(app, token).await.0
 }
 
 /// The raw JSON of the next event `pick` takes (skipping others); None when none comes within 3 s.

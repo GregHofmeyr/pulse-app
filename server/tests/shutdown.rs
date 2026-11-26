@@ -14,9 +14,6 @@ use serde_json::json;
 use tokio_tungstenite::tungstenite::Message as Ws;
 use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
 
-type Socket =
-    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
-
 async fn connected_socket(p: &ServerProcess) -> Socket {
     let s: SessionResponse = reqwest::Client::new()
         .post(p.url("/auth/register"))
