@@ -1,78 +1,66 @@
 <script lang="ts">
-  // A clips channel's header: its name, the filter chips (All, each game used here, By person ▾), the
-  // list/wall toggle, the pins (#257) and "Share a clip".
+  // A clips channel's header: its name, the list/wall toggle, the pins (#257), "Share a clip", search and, rightmost,
+  // the toggle of the filters panel (#663: games and people, as Builds). With the panel closed, a filter that is on
+  // still shows here, so a filtered list never looks like everything.
+  import { tick } from 'svelte'
   import Icon from './Icon.svelte'
   import PinsPopover from './PinsPopover.svelte'
   import SearchBox from './SearchBox.svelte'
   import type { Message } from '../lib/protocol/Message'
-  import { clickOutside, narrowerThan } from '../lib/actions'
-  import { clipFilter, type ClipFilter } from '../lib/clips'
-  import { clipFilters, setClipFiltersShown } from '../lib/clipFiltersShown.svelte'
+  import { narrowerThan } from '../lib/actions'
+  import type { ClipFilter } from '../lib/clips'
   import { displayName } from '../lib/selectors'
   import { app } from '../lib/store.svelte'
   import { api, errorText } from '../lib/tauri'
   import type { ClipView } from '../lib/protocol/ClipView'
 
-  let { channelId, serverId, filter, onFilter, view, onView = () => {}, onShare, onOpenPinned = () => {} }: {
+  let { channelId, serverId, filter, onFilter, view, onView = () => {}, onShare, onOpenPinned = () => {}, panel = true, onPanel, panelId }: {
     /** A pinned clip's Open, from the pins (#257): a clips channel has no history to jump in, so its panel opens. */
     onOpenPinned?: (clip: Message) => void
     channelId: string
     serverId: string
     filter: ClipFilter
+    /** "Clear filters" (shown with the panel closed). */
     onFilter: (f: ClipFilter) => void
     /** The view shown (the caller reads it from state; the toggle updates state itself). */
     view: ClipView
     /** Told after the toggle switched the view. */
     onView?: (v: ClipView) => void
     onShare: () => void
+    /** Whether the filters panel is on screen. */
+    panel?: boolean
+    onPanel?: () => void
+    /** The panel's id, for the toggle's `aria-controls`. */
+    panelId?: string
   } = $props()
 
   const channel = $derived(app.state.channels[channelId])
-  const facets = $derived(app.state.clipFacets[channelId])
   const games = $derived(app.state.games[serverId] ?? [])
-  // Each game used here, by name (a game the registry doesn't know yet has no chip until it arrives).
-  const gameChips = $derived(
-    (facets?.games ?? [])
-      .map((g) => ({ id: g.game_id, name: games.find((x) => x.id === g.game_id)?.name }))
-      .filter((g): g is { id: string; name: string } => !!g.name)
-      .sort((a, b) => a.name.localeCompare(b.name)),
+  const filtering = $derived(
+    [
+      filter.game ? (games.find((g) => g.id === filter.game)?.name ?? 'Game') : null,
+      filter.author ? displayName(app.state, serverId, filter.author) : null,
+    ].filter((x): x is string => !!x).join(' · '),
   )
-  const authors = $derived((facets?.authors ?? []).map((a) => ({ id: a.user_id, count: a.count, name: displayName(app.state, serverId, a.user_id) })))
-  const personLabel = $derived(filter.author ? `${displayName(app.state, serverId, filter.author)} ▾` : 'By person ▾')
 
-  // The channel's name hides and shows the chips (remembered on this device). Hidden, a filter
-  // that is on still shows, so a filtered list never looks like everything.
-  const shown = $derived(clipFilters.shown)
+  // "Clear filters" goes with the summary it sits in, so the focus moves to the panel toggle.
+  let panelBtn = $state<HTMLButtonElement>()
+  async function clear() {
+    onFilter({})
+    await tick()
+    panelBtn?.focus()
+  }
 
-  // A narrow header (small window, side panels open; #97): the search box folds to a magnifier, and only the
-  // first few games show as chips (plus the picked one), the rest behind "+N more".
+  // A narrow header (small window, side panels open; #97): the search box folds to a magnifier.
   const NARROW_HEAD = 720
-  const NARROW_GAMES = 3
   let narrow = $state(false)
-  const rowGames = $derived.by(() => {
-    if (!narrow || gameChips.length <= NARROW_GAMES + 1) return gameChips
-    const first = gameChips.slice(0, NARROW_GAMES)
-    const picked = gameChips.find((g) => g.id === filter.game)
-    return picked && !first.includes(picked) ? [...first.slice(0, NARROW_GAMES - 1), picked] : first
-  })
-  const moreGames = $derived(gameChips.filter((g) => !rowGames.includes(g)))
-  let more = $state(false)
 
-  let people = $state(false)
   let error = $state('')
   // the channel's pins (#257), the popover a chat's header opens
   let pinsOpen = $state(false)
   function openPinned(m: Message) {
     pinsOpen = false
     onOpenPinned(m)
-  }
-
-  function pickGame(id: string) {
-    onFilter(clipFilter(filter.game === id ? null : id, filter.author))
-  }
-  function pickAuthor(id: string | null) {
-    people = false
-    onFilter(clipFilter(filter.game, id))
   }
 
   // Optimistic: the view switches now, and goes back if the server refuses.
@@ -90,41 +78,16 @@
 </script>
 
 <div class="head" use:narrowerThan={{ px: NARROW_HEAD, set: (v) => (narrow = v) }}>
-  <span class="ico"><Icon name="film" size={18} /></span>
-  <button type="button" class="title" aria-expanded={shown} data-tip={shown ? 'Hide filters' : 'Show filters'} onclick={() => setClipFiltersShown(!shown)}>
-    <span class="title-text">{channel?.name ?? ''}</span><span class="caret" class:up={shown}><Icon name="chevron" size={14} /></span>
-  </button>
-  <div class="chips" role="group" aria-label="Filter clips">
-    {#if shown}<button type="button" class="chip toggle-chip" aria-pressed={!filter.game && !filter.author} onclick={() => onFilter({})}>All</button>{/if}
-    {#each shown ? rowGames : gameChips as g (g.id)}
-      {#if shown || filter.game === g.id}<button type="button" class="chip toggle-chip" aria-pressed={filter.game === g.id} onclick={() => pickGame(g.id)}>{g.name}</button>{/if}
-    {/each}
-    {#if shown && moreGames.length}<div class="more">
-      <button type="button" class="chip toggle-chip" aria-haspopup="menu" aria-expanded={more} data-menu-toggle onclick={() => (more = !more)}>+{moreGames.length} more</button>
-      {#if more}
-        <div class="menu menu-surface pop-in" role="menu" aria-label="More games" use:clickOutside={() => (more = false)}>
-          {#each moreGames as g (g.id)}
-            <button type="button" class="menu-item" role="menuitemradio" aria-checked={filter.game === g.id} onclick={() => { more = false; pickGame(g.id) }}>{g.name}</button>
-          {/each}
-        </div>
-      {/if}
-    </div>{/if}
-    {#if shown || filter.author}<div class="person">
-      <button type="button" class="chip toggle-chip" aria-pressed={!!filter.author} aria-haspopup="menu" aria-expanded={people} data-menu-toggle
-        onclick={() => (people = !people)}>{personLabel}</button>
-      {#if people}
-        <div class="menu menu-surface pop-in" role="menu" aria-label="By person" use:clickOutside={() => (people = false)}>
-          <button type="button" class="menu-item" role="menuitemradio" aria-checked={!filter.author} onclick={() => pickAuthor(null)}>Everyone</button>
-          {#each authors as a (a.id)}
-            <button type="button" class="menu-item" role="menuitemradio" aria-checked={filter.author === a.id} onclick={() => pickAuthor(a.id)}>
-              <span class="name">{a.name}</span> <span class="count">{a.count}</span>
-            </button>
-          {/each}
-        </div>
-      {/if}
-    </div>{/if}
+  <!-- the name and the filter summary: one line that truncates; a zero basis keeps it out of where the header's row
+       breaks, so opening or closing the panel never changes the header's height -->
+  <div class="name-group">
+    <span class="ico"><Icon name="film" size={18} /></span>
+    <h2>{channel?.name ?? ''}</h2>
+    {#if !panel && filtering}
+      <span class="filtering"><span class="what">{filtering}</span><button type="button" class="clear" aria-label="Clear filters" data-tip="Clear filters"
+        onclick={clear}><Icon name="x" size={12} /></button></span>
+    {/if}
   </div>
-  <span class="grow"></span>
   {#if error}<span class="err" role="alert">{error}</span>{/if}
   <div class="toggle" role="group" aria-label="View">
     <button type="button" class="tbtn" aria-label="List view" data-tip="List" aria-pressed={view === 'list'} onclick={() => setView('list')}><Icon name="list" size={16} /></button>
@@ -137,26 +100,24 @@
   {#if pinsOpen}
     <PinsPopover {channelId} {serverId} onJump={openPinned} onClose={() => (pinsOpen = false)} />
   {/if}
+  {#if onPanel}
+    <button type="button" class="icon-btn hbtn" class:on={panel} aria-label={panel ? 'Hide filters panel' : 'Show filters panel'} data-tip={panel ? 'Hide panel' : 'Show panel'}
+      aria-expanded={panel} aria-controls={panel ? panelId : undefined} onclick={onPanel} bind:this={panelBtn}><Icon name="panelRight" size={17} /></button>
+  {/if}
 </div>
 
 <style>
   .head { position: relative; min-height: 52px; flex-shrink: 0; padding: 8px 18px; box-sizing: border-box; display: flex; align-items: center; flex-wrap: wrap; gap: 10px; border-bottom: 1px solid var(--bg-3); color: var(--text-3); }
   /* the pins button, as a chat header's (TextChannel .hbtn) */
   .hbtn.on { background: var(--bg-3); color: var(--text); }
-  .ico { display: flex; }
-  .title { display: flex; align-items: center; gap: 4px; max-width: 240px; padding: 2px 6px; margin-left: -6px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text); font: inherit; font-size: 15px; font-weight: 600; }
-  .title:hover { background: var(--bg-3); }
-  .title-text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .caret { display: flex; flex-shrink: 0; color: var(--text-3); transition: transform var(--dur) var(--ease); }
-  .caret.up { transform: rotate(180deg); }
-  .chips { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-left: 6px; }
-  /* the filters are the shared .toggle-chip (app.css) */
-  .person, .more { position: relative; }
-  .menu { position: absolute; z-index: 6; left: 0; top: calc(100% + 4px); min-width: 180px; max-height: 300px; overflow-y: auto; --pop-origin: top left; }
-  .menu-item[aria-checked='true'] { color: var(--accent-text); }
-  .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .count { color: var(--text-3); font-size: 12px; font-variant-numeric: tabular-nums; }
-  .grow { flex: 1; }
+  .name-group { flex: 1 1 0; min-width: 0; display: flex; flex-wrap: nowrap; align-items: center; gap: 10px; }
+  .ico { display: flex; flex-shrink: 0; }
+  h2 { flex: 0 1 auto; margin: 0; min-width: 0; max-width: 240px; font-size: 15px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  /* the filter that is on, with the panel closed: one line that ellipsizes, never pushes the header around */
+  .filtering { flex: 0 2 auto; display: flex; align-items: center; gap: 2px; min-width: 0; max-width: 260px; padding: 2px 2px 2px 8px; border-radius: var(--radius-sm); background: var(--bg-3); color: var(--text-2); font-size: 13px; }
+  .what { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .clear { flex-shrink: 0; display: grid; place-items: center; width: 20px; height: 20px; padding: 0; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-3); }
+  .clear:hover { background: var(--bg-4); color: var(--text); }
   .err { color: var(--danger-text); font-size: 12px; }
   .toggle { display: flex; padding: 2px; border-radius: var(--radius-md); background: var(--bg-2); }
   .tbtn { width: 30px; height: 28px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-3); display: grid; place-items: center; }

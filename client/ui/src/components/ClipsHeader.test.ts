@@ -24,7 +24,7 @@ import ClipsChannel from './ClipsChannel.svelte'
 import { app, startListening } from '../lib/store.svelte'
 import { applyReady, emptyState } from '../lib/state'
 import { clipView } from '../lib/clips'
-import { setClipFiltersShown } from '../lib/clipFiltersShown.svelte'
+import { clipPanelOpen } from '../lib/clipPrefs'
 import { reactiveProps } from '../lib/testProps.svelte'
 import { testMe, testReady } from '../lib/testReady'
 
@@ -39,18 +39,23 @@ const ready = (over = {}) =>
     ],
     ...over,
   })
-const facets = { games: [{ game_id: 'G2', count: 4 }, { game_id: 'G1', count: 2 }], authors: [{ user_id: 'U2', count: 5 }, { user_id: 'U3', count: 1 }] }
+const facets = { games: [{ game_id: 'G2', count: 4 }, { game_id: 'G1', count: 2 }], authors: [{ user_id: 'U2', count: 5 }, { user_id: 'U3', count: 1 }], total: 7 }
 
 let cmp: ReturnType<typeof mount> | undefined
 const settle = () => new Promise((r) => setTimeout(r, 0))
 const calls = (cmd: string) => invoke.mock.calls.filter((c) => c[0] === cmd)
+/** A row of the clips panel's `games` or `people` list, by its name. */
+const row = (list: string, name: string) =>
+  [...document.querySelectorAll<HTMLButtonElement>(`.clips-panel .${list} button`)].find((b) => b.querySelector('.name')?.textContent === name)!
+const rows = (list: string) =>
+  [...document.querySelectorAll<HTMLButtonElement>(`.clips-panel .${list} button`)].map((b) => [b.querySelector('.name')?.textContent, b.querySelector('.n')?.textContent])
 const button = (text: string) => [...document.querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent?.trim() === text)!
 
 beforeEach(() => {
   invoke.mockReset()
   invoke.mockImplementation(async (cmd: string) => (cmd === 'list_clips' ? [] : cmd === 'clip_facets' ? facets : undefined))
   app.state = applyReady(emptyState(), ready())
-  setClipFiltersShown(true) // the per-device choice: each test starts with the chips shown
+  localStorage.clear() // the per-device panel choice: each test starts with it open
 })
 afterEach(() => {
   if (cmp) unmount(cmp)
@@ -62,118 +67,76 @@ afterEach(() => {
 function header(over: Record<string, unknown> = {}) {
   const p = reactiveProps({
     channelId: 'C1', serverId: 'S1', filter: {} as { game?: string; author?: string }, view: 'wall' as 'list' | 'wall',
-    onFilter: vi.fn(), onView: vi.fn(), onShare: vi.fn(), ...over,
+    onFilter: vi.fn(), onView: vi.fn(), onShare: vi.fn(), panel: true, onPanel: vi.fn(), panelId: 'clips-panel-C1', ...over,
   })
   cmp = mount(ClipsHeader, { target: document.body, props: p })
   flushSync()
   return p
 }
 
-describe('ClipsHeader in a narrow window (#97)', () => {
-  const many = { games: ['G1', 'G2', 'G3', 'G4', 'G5'].map((id, i) => ({ game_id: id, count: 9 - i })), authors: [] }
-  const fiveGames = ['G1', 'G2', 'G3', 'G4', 'G5'].map((id, i) => ({ id, server_id: 'S1', name: ['Apex', 'CS2', 'Dota', 'Rust', 'Valorant'][i], created_by: 'U1', created_at: '2026-10-01T00:00:00Z' }))
-  let fire: (w: number) => void = () => {}
-  beforeEach(() => {
-    vi.stubGlobal('ResizeObserver', class {
-      constructor(cb: (e: { contentRect: { width: number } }[]) => void) { fire = (w) => cb([{ contentRect: { width: w } }]) }
-      observe() {}
-      disconnect() {}
-    })
-  })
-  afterEach(() => vi.unstubAllGlobals())
-  const chipNames = () => [...document.querySelectorAll<HTMLButtonElement>('.chips > .chip, .chips > .more > .chip')].map((b) => b.textContent?.trim())
-
-  it('narrow: the first games, then "+N more" with the rest in a menu; picking one filters', () => {
-    app.state = { ...app.state, games: { S1: fiveGames }, clipFacets: { C1: many } }
-    const p = header()
-    fire(500)
-    flushSync()
-    expect(chipNames()).toEqual(['All', 'Apex', 'CS2', 'Dota', '+2 more'])
-    button('+2 more').click()
-    flushSync()
-    const items = [...document.querySelectorAll<HTMLElement>('[role="menuitemradio"]')].map((m) => m.textContent?.trim())
-    expect(items).toEqual(['Rust', 'Valorant'])
-    ;[...document.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')][1].click()
-    expect(p.onFilter).toHaveBeenLastCalledWith({ game: 'G5' })
-  })
-
-  it('narrow with a later game picked: it stays visible in the row', () => {
-    app.state = { ...app.state, games: { S1: fiveGames }, clipFacets: { C1: many } }
-    header({ filter: { game: 'G5' } })
-    fire(500)
-    flushSync()
-    expect(chipNames()).toEqual(['All', 'Apex', 'CS2', 'Valorant', '+2 more'])
-  })
-
-  it('wide: every game chip, no "+N more"', () => {
-    app.state = { ...app.state, games: { S1: fiveGames }, clipFacets: { C1: many } }
-    header()
-    fire(1200)
-    flushSync()
-    expect(chipNames()).toEqual(['All', 'Apex', 'CS2', 'Dota', 'Rust', 'Valorant'])
-  })
-})
-
 describe('ClipsHeader', () => {
-  it('the title hides and shows the filter chips, remembered on this device', () => {
-    localStorage.clear()
+  it('no filter pills in the header any more (#663): the title is the channel name, not a toggle', () => {
     app.state = { ...app.state, clipFacets: { C1: facets } }
     header()
-    const title = document.querySelector<HTMLButtonElement>('button.title')!
-    expect(title.getAttribute('aria-expanded')).toBe('true')
-    title.click()
-    flushSync()
-    expect(title.getAttribute('aria-expanded')).toBe('false')
-    expect(document.querySelectorAll('.chip').length).toBe(0)
-    // a new header (another visit) starts hidden
-    unmount(cmp!)
-    cmp = undefined
-    header()
-    expect(document.querySelectorAll('.chip').length).toBe(0)
-    document.querySelector<HTMLButtonElement>('button.title')!.click()
-    flushSync()
-    expect([...document.querySelectorAll('.chip')].map((c) => c.textContent?.trim())).toEqual(['All', 'Apex', 'Rocket League', 'By person ▾'])
-    localStorage.clear()
+    expect(document.querySelectorAll('.chip, .toggle-chip').length).toBe(0)
+    expect(document.querySelector('button.title')).toBeNull()
+    expect(document.querySelector('h2')?.textContent).toBe('highlights')
   })
 
-  it('hidden, a filter that is on still shows (so you know the list is filtered)', () => {
-    localStorage.clear()
-    app.state = { ...app.state, clipFacets: { C1: facets } }
-    header({ filter: { game: 'G2' } })
-    document.querySelector<HTMLButtonElement>('button.title')!.click()
-    flushSync()
-    expect([...document.querySelectorAll('.chip')].map((c) => c.textContent?.trim())).toEqual(['Rocket League'])
-    localStorage.clear()
-  })
-
-  it('chips filter by game and person', () => {
-    app.state = { ...app.state, clipFacets: { C1: facets } }
+  it('the panel toggle sits at the right end, says whether the panel is open and which one it opens', () => {
     const p = header()
-    const chips = [...document.querySelectorAll<HTMLButtonElement>('.chip')].map((b) => b.textContent?.trim())
-    expect(chips).toEqual(['All', 'Apex', 'Rocket League', 'By person ▾'])
-    expect(button('All').getAttribute('aria-pressed')).toBe('true')
-    button('Rocket League').click()
-    expect(p.onFilter).toHaveBeenLastCalledWith({ game: 'G2' })
-    // the filter comes back as a prop
-    p.filter = { game: 'G2' }
+    const t = document.querySelector<HTMLButtonElement>('button[aria-controls="clips-panel-C1"]')!
+    expect(t.getAttribute('aria-expanded')).toBe('true')
+    expect(t.getAttribute('aria-label')).toBe('Hide filters panel')
+    const head = document.querySelector('.head')!
+    expect(head.lastElementChild).toBe(t) // rightmost, as in Builds
+    t.click()
+    expect(p.onPanel).toHaveBeenCalledTimes(1)
+    p.panel = false
     flushSync()
-    expect(button('Rocket League').getAttribute('aria-pressed')).toBe('true')
-    expect(button('All').getAttribute('aria-pressed')).toBe('false')
-    // a person, with their clip counts
-    button('By person ▾').click()
+    expect(t.getAttribute('aria-expanded')).toBe('false')
+    expect(t.getAttribute('aria-label')).toBe('Show filters panel')
+  })
+
+  it('with the panel closed, a filter that is on still shows (so a filtered list never looks like everything)', async () => {
+    app.state = { ...app.state, clipFacets: { C1: facets } }
+    const p = header({ panel: false, filter: { game: 'G2', author: 'U3' } })
+    expect(document.querySelector('.filtering .what')?.textContent).toBe('Rocket League · Kimmy')
+    document.querySelector<HTMLButtonElement>('button[aria-label="Clear filters"]')!.click()
+    expect(p.onFilter).toHaveBeenLastCalledWith({})
+    // the clear button goes with the summary: the focus lands on the panel toggle, not on the page
+    p.filter = {}
     flushSync()
-    const people = [...document.querySelectorAll<HTMLElement>('[role="menuitemradio"]')]
-    expect(people.map((m) => m.textContent?.replace(/\s+/g, ' ').trim())).toEqual(['Everyone', 'sam 5', 'Kimmy 1'])
-    people[2].click()
-    flushSync()
-    expect(p.onFilter).toHaveBeenLastCalledWith({ game: 'G2', author: 'U3' })
-    expect(document.querySelector('[role="menu"]')).toBeNull()
+    await settle()
+    expect(document.activeElement).toBe(document.querySelector('button[aria-label="Show filters panel"]'))
     p.filter = { game: 'G2', author: 'U3' }
     flushSync()
-    expect(button('Kimmy ▾').getAttribute('aria-pressed')).toBe('true')
-    // All clears both
-    button('All').click()
-    expect(p.onFilter).toHaveBeenLastCalledWith({})
+    // open, the panel says it instead
+    p.panel = true
+    flushSync()
+    expect(document.querySelector('.filtering')).toBeNull()
+    // closed with no filter: nothing
+    p.panel = false
+    p.filter = {}
+    flushSync()
+    expect(document.querySelector('.filtering')).toBeNull()
+  })
+
+  it('the name and the summary truncate on one line and never make the header wrap (toggling the panel keeps its height)', () => {
+    app.state = { ...app.state, clipFacets: { C1: facets } }
+    header({ panel: false, filter: { game: 'G2' } })
+    const group = document.querySelector<HTMLElement>('.head > .name-group')!
+    expect(group.querySelector('h2')).not.toBeNull()
+    expect(group.querySelector('.filtering')).not.toBeNull()
+    const hash = [...group.classList].find((c) => c.startsWith('svelte-'))!
+    const css = compile(readFileSync(resolve(__dirname, 'ClipsHeader.svelte'), 'utf8'), { filename: 'ClipsHeader.svelte', css: 'external', cssHash: () => hash }).css!.code
+    const rule = (sel: string) => css.match(new RegExp(`(?:^|\\s)${sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\.${hash}\\s*\\{([^}]*)\\}`))?.[1] ?? ''
+    // a zero basis: the group never counts toward where the header's row breaks, so its contents can't make it wrap
+    expect(rule('.name-group')).toMatch(/flex:\s*1 1 0(px|%)?;/)
+    expect(rule('.name-group')).toMatch(/min-width:\s*0/)
+    expect(rule('.name-group')).toMatch(/flex-wrap:\s*nowrap|display:\s*flex/)
+    for (const sel of ['h2', '.what']) expect(rule(sel), sel).toMatch(/white-space:\s*nowrap[^]*text-overflow:\s*ellipsis|text-overflow:\s*ellipsis[^]*white-space:\s*nowrap/)
+    for (const sel of ['h2', '.filtering']) expect(rule(sel), sel).toMatch(/min-width:\s*0/)
   })
 
   it('the toggle is remembered via set_clip_view', async () => {
@@ -236,7 +199,7 @@ describe('ClipsChannel', () => {
     expect(document.querySelector('button[aria-label="Wall view"]')?.getAttribute('aria-pressed')).toBe('true')
     expect(document.querySelector('.grid')).not.toBeNull()
     expect(calls('clip_facets').map((c) => c[1])).toEqual([{ channelId: 'C1' }])
-    expect(button('Apex')).toBeTruthy() // chips from the loaded facets
+    expect(row('games', 'Apex')).toBeTruthy() // the panel, from the loaded facets
   })
 
   it('opens in the view you chose, and filtering swaps the feed', async () => {
@@ -247,7 +210,7 @@ describe('ClipsChannel', () => {
     flushSync()
     expect(document.querySelector('.grid')).toBeNull()
     expect(document.querySelector('.feed.list')).not.toBeNull()
-    button('Apex').click()
+    row('games', 'Apex').click()
     flushSync()
     await settle()
     expect(calls('list_clips').at(-1)![1]).toEqual({ channelId: 'C1', before: null, game: 'G1', author: null })
@@ -333,5 +296,165 @@ describe('ClipsChannel', () => {
     await askIn(document.querySelector('.feed [data-clip-id="M1"]')!)
     const panelCancel = await askIn(document.querySelector('.replies-panel [data-clip-id="M1"]')!)
     expect(document.activeElement).toBe(panelCancel)
+  })
+
+  async function openChannel(id = 'C1') {
+    cmp = mount(ClipsChannel, { target: document.body, props: { channelId: id, serverId: 'S1' } })
+    flushSync()
+    await settle()
+    flushSync()
+  }
+
+  it('the games panel replaces the pills (#663): All games with the total, each game with its count, then People', async () => {
+    await openChannel()
+    expect(document.querySelectorAll('.chip, .toggle-chip').length).toBe(0)
+    const panel = document.querySelector<HTMLElement>('aside.clips-panel')!
+    expect(panel).not.toBeNull()
+    expect(panel.id).toBe(document.querySelector('[aria-controls]')!.getAttribute('aria-controls'))
+    expect(rows('games')).toEqual([['All games', '7'], ['Rocket League', '4'], ['Apex', '2']])
+    expect([...panel.querySelectorAll('h3.menu-label')].map((h) => h.textContent)).toEqual(['Games', 'People'])
+    expect(panel.querySelectorAll(':scope > [role="separator"]').length).toBe(1)
+    expect(rows('people')).toEqual([['Everyone', '7'], ['sam', '5'], ['Kimmy', '1']])
+    expect(row('games', 'All games').getAttribute('aria-pressed')).toBe('true')
+    expect(row('people', 'Everyone').getAttribute('aria-pressed')).toBe('true')
+  })
+
+  it('a server without the total: "All games" and "Everyone" show no number rather than a guess', async () => {
+    const { total: _, ...old } = facets
+    invoke.mockImplementation(async (cmd: string) => (cmd === 'list_clips' ? [] : cmd === 'clip_facets' ? old : undefined))
+    await openChannel()
+    expect(row('games', 'All games').querySelector('.n')?.textContent).toBe('')
+    expect(row('people', 'Everyone').querySelector('.n')?.textContent).toBe('')
+  })
+
+  it('picking a game, then a person, filters the feed and highlights them; All games clears only the game', async () => {
+    await openChannel()
+    row('games', 'Rocket League').click()
+    flushSync()
+    await settle()
+    expect(calls('list_clips').at(-1)![1]).toEqual({ channelId: 'C1', before: null, game: 'G2', author: null })
+    expect(row('games', 'Rocket League').getAttribute('aria-pressed')).toBe('true')
+    expect(row('games', 'All games').getAttribute('aria-pressed')).toBe('false')
+    row('people', 'Kimmy').click()
+    flushSync()
+    await settle()
+    expect(calls('list_clips').at(-1)![1]).toEqual({ channelId: 'C1', before: null, game: 'G2', author: 'U3' })
+    expect(row('people', 'Kimmy').getAttribute('aria-pressed')).toBe('true')
+    row('games', 'All games').click()
+    flushSync()
+    await settle()
+    expect(calls('list_clips').at(-1)![1]).toEqual({ channelId: 'C1', before: null, game: null, author: 'U3' })
+  })
+
+  it('the header button collapses the panel, remembered for this channel on the next visit', async () => {
+    await openChannel()
+    const toggle = () => document.querySelector<HTMLButtonElement>('.head button[aria-label$="filters panel"]')!
+    expect(toggle().getAttribute('aria-expanded')).toBe('true')
+    toggle().click()
+    flushSync()
+    expect(document.querySelector('.clips-panel')).toBeNull()
+    expect(toggle().getAttribute('aria-expanded')).toBe('false')
+    expect(clipPanelOpen('C1')).toBe(false)
+    expect(clipPanelOpen('C2')).toBe(true) // per channel
+    unmount(cmp!)
+    cmp = undefined
+    await openChannel()
+    expect(document.querySelector('.clips-panel')).toBeNull()
+    toggle().click()
+    flushSync()
+    expect(document.querySelector('.clips-panel')).not.toBeNull()
+    expect(clipPanelOpen('C1')).toBe(true)
+  })
+
+  it('a clip\'s replies take the right side while open: the games panel steps aside and comes back', async () => {
+    Element.prototype.scrollTo = () => {} // jsdom has none
+    const replied = { ...clip('M1'), clip: { ...clip('M1').clip!, reply_count: 2 } }
+    invoke.mockImplementation(async (cmd: string) => (cmd === 'list_clips' ? [replied] : cmd === 'clip_facets' ? facets : cmd === 'list_replies' ? [] : undefined))
+    app.state = applyReady(emptyState(), ready({ clip_views: [{ channel_id: 'C1', view: 'list' }] }))
+    await openChannel()
+    expect(document.querySelector('.clips-panel')).not.toBeNull()
+    button('View 2 replies').click()
+    flushSync()
+    await settle()
+    expect(document.querySelector('.replies-panel')).not.toBeNull()
+    expect(document.querySelector('.clips-panel')).toBeNull()
+    expect(clipPanelOpen('C1')).toBe(true) // not a choice to close it
+    // the header tells what's on screen: closed, and pointing at nothing
+    const toggle = () => document.querySelector<HTMLButtonElement>('.head button[aria-label$="filters panel"]')!
+    expect(toggle().getAttribute('aria-expanded')).toBe('false')
+    expect(toggle().hasAttribute('aria-controls')).toBe(false)
+    document.querySelector<HTMLButtonElement>('.replies-panel button[aria-label="Close replies"]')!.click()
+    flushSync()
+    await settle()
+    flushSync()
+    expect(document.querySelector('.replies-panel')).toBeNull()
+    expect(document.querySelector('.clips-panel')).not.toBeNull()
+  })
+
+  it('replies open: the header shows a filter that is on, and the panel toggle closes the replies and shows the panel', async () => {
+    Element.prototype.scrollTo = () => {} // jsdom has none
+    const replied = { ...clip('M1'), clip: { ...clip('M1').clip!, reply_count: 2 } }
+    invoke.mockImplementation(async (cmd: string) => (cmd === 'list_clips' ? [replied] : cmd === 'clip_facets' ? facets : cmd === 'list_replies' ? [] : undefined))
+    app.state = applyReady(emptyState(), ready({ clip_views: [{ channel_id: 'C1', view: 'list' }] }))
+    await openChannel()
+    row('games', 'Apex').click()
+    flushSync()
+    await settle()
+    flushSync()
+    button('View 2 replies').click()
+    flushSync()
+    await settle()
+    flushSync()
+    expect(document.querySelector('.head .filtering .what')?.textContent).toBe('Apex')
+    const toggle = document.querySelector<HTMLButtonElement>('.head button[aria-label="Show filters panel"]')!
+    toggle.focus()
+    toggle.click()
+    flushSync()
+    await settle()
+    flushSync()
+    expect(document.querySelector('.replies-panel')).toBeNull()
+    const panel = document.querySelector<HTMLElement>('.clips-panel')!
+    expect(panel).not.toBeNull()
+    expect(toggle.getAttribute('aria-expanded')).toBe('true')
+    expect(document.getElementById(toggle.getAttribute('aria-controls')!)).toBe(panel)
+    expect(clipPanelOpen('C1')).toBe(true) // never saved as closed
+    expect(document.activeElement).toBe(toggle) // the focus stays on the button you pressed
+  })
+
+  it('replies open with the panel closed by choice: the toggle still shows the panel (and remembers it)', async () => {
+    Element.prototype.scrollTo = () => {} // jsdom has none
+    const replied = { ...clip('M1'), clip: { ...clip('M1').clip!, reply_count: 2 } }
+    invoke.mockImplementation(async (cmd: string) => (cmd === 'list_clips' ? [replied] : cmd === 'clip_facets' ? facets : cmd === 'list_replies' ? [] : undefined))
+    app.state = applyReady(emptyState(), ready({ clip_views: [{ channel_id: 'C1', view: 'list' }] }))
+    await openChannel()
+    document.querySelector<HTMLButtonElement>('.head button[aria-label="Hide filters panel"]')!.click()
+    flushSync()
+    button('View 2 replies').click()
+    flushSync()
+    await settle()
+    document.querySelector<HTMLButtonElement>('.head button[aria-label="Show filters panel"]')!.click()
+    flushSync()
+    await settle()
+    flushSync()
+    expect(document.querySelector('.replies-panel')).toBeNull()
+    expect(document.querySelector('.clips-panel')).not.toBeNull()
+    expect(clipPanelOpen('C1')).toBe(true)
+  })
+
+  it('a picked person whose clips are all gone keeps a row (count 0), still pressed', async () => {
+    await openChannel()
+    row('people', 'Kimmy').click()
+    flushSync()
+    await settle()
+    app.state = { ...app.state, clipFacets: { C1: { ...facets, authors: [{ user_id: 'U2', count: 5 }], total: 6 } } }
+    flushSync()
+    expect(rows('people')).toEqual([['Everyone', '6'], ['sam', '5'], ['Kimmy', '0']])
+    expect(row('people', 'Kimmy').getAttribute('aria-pressed')).toBe('true')
+  })
+
+  it('layout: the feed gives way to the panel (min-width 0), so nothing spills at any width', () => {
+    const src = readFileSync(resolve(__dirname, 'ClipsChannel.svelte'), 'utf8').split('<style>')[1]
+    expect(src).toMatch(/\.body\s*\{[^}]*display:\s*flex[^}]*min-height:\s*0/)
+    expect(src).toMatch(/\.main\s*\{[^}]*flex:\s*1[^}]*min-width:\s*0/)
   })
 })

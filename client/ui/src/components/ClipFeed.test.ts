@@ -126,7 +126,7 @@ describe('ClipFeed', () => {
     expect(thumb.getAttribute('src')).toContain('m004')
     expect(card('M004').querySelector('.duration')?.textContent).toBe('1:05')
     expect(card('M004').querySelector('button[aria-label="Play full screen"]')).not.toBeNull()
-    // the grid's own CSS: three columns, two under 900 px
+    // the grid's own CSS: three columns, fewer as the feed (not the window) narrows (#663: the filters panel sits beside it)
     const grid = document.querySelector<HTMLElement>('.grid')!
     const hash = [...grid.classList].find((c) => c.startsWith('svelte-'))!
     const src = readFileSync(resolve(__dirname, 'ClipFeed.svelte'), 'utf8')
@@ -135,7 +135,10 @@ describe('ClipFeed', () => {
     style.textContent = css
     document.head.append(style)
     expect(getComputedStyle(grid).gridTemplateColumns).toBe('repeat(3, minmax(0px, 1fr))') // computed: `0` → `0px`
-    expect(css).toMatch(/@media \(max-width: ?899\.98px\)\s*\{\s*\.grid\.[\w-]+\s*\{\s*grid-template-columns: ?repeat\(2, ?minmax\(0, ?1fr\)\)/)
+    expect(css).not.toMatch(/@media/)
+    expect(css).toMatch(/\.feed\.[\w-]+\s*\{[^}]*container:\s*clip-feed\s*\/\s*inline-size/)
+    expect(css).toMatch(/@container clip-feed \(max-width: ?679\.98px\)\s*\{\s*\.grid\.[\w-]+\s*\{\s*grid-template-columns: ?repeat\(2, ?minmax\(0, ?1fr\)\)/)
+    expect(css).toMatch(/@container clip-feed \(max-width: ?419\.98px\)\s*\{\s*\.grid\.[\w-]+\s*\{\s*grid-template-columns: ?minmax\(0, ?1fr\)/)
     style.remove()
   })
 

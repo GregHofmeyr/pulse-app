@@ -624,13 +624,21 @@ async fn feed(
     ))
 }
 
-/// Clip counts per game and per author, live clips only.
+/// Clip counts per game and per author, and in all (with no game too), live clips only.
 async fn facets(
     State(s): State<AppState>,
     AuthUser(me): AuthUser,
     Path(id): Path<ChannelId>,
 ) -> AppResult<Json<ClipFacets>> {
     channel_for(&s.db, me, id).await?;
+    let total: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM clips c
+         JOIN messages m ON m.id = c.message_id
+         WHERE m.channel_id = ? AND m.deleted_at IS NULL",
+    )
+    .bind(id.to_string())
+    .fetch_one(&s.db)
+    .await?;
     let games: Vec<(String, i64)> = sqlx::query_as(
         "SELECT c.game_id, COUNT(*) AS n FROM clips c
          JOIN messages m ON m.id = c.message_id
@@ -651,6 +659,7 @@ async fn facets(
     .fetch_all(&s.db)
     .await?;
     Ok(Json(ClipFacets {
+        total: Some(total as u32),
         games: games
             .into_iter()
             .map(|(g, n)| {

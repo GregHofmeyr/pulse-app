@@ -8,6 +8,7 @@
   import { attachmentLink } from '../lib/attachmentLinks'
   import { saveFile } from '../lib/clipDownload'
   import { downloads, fileKey, holdSaved } from '../lib/downloads.svelte'
+  import Loading from './Loading.svelte'
   import ProgressRing from './ProgressRing.svelte'
 
   let { images, messageId, start = 0, onClose, onError }: {
@@ -27,6 +28,8 @@
   let zoom = $state(1)
   let original = $state(false)
   let src = $state<string | null>(null)
+  /** The image on show has its bytes (until then the stage says it's loading, never sits empty). */
+  let loaded = $state(false)
   const img = $derived(images[index])
   // Save image (#205): a ring and Cancel while it saves, Saved for a moment
   const dl = $derived(downloads.view(fileKey(img.id)))
@@ -35,6 +38,7 @@
   $effect(() => {
     const a = img
     src = null
+    loaded = false
     zoom = 1
     original = false
     let gone = false
@@ -43,6 +47,28 @@
       (e) => !gone && onError?.(errorText(e)),
     )
     return () => (gone = true)
+  })
+
+  // The images either side of the one on show, fetched ahead (H796T1): a build's screenshots past its fourth tile (and
+  // a message's spoilered or off-screen ones) are never drawn before the viewer reaches them, so stepping onto one
+  // left the stage empty while its bytes came. Each is fetched once; the signed link is the one the stage then uses
+  // (attachmentLinks reuses it), so the stage's image comes from the HTTP cache.
+  const ahead = new Map<string, HTMLImageElement>()
+  $effect(() => {
+    const n = images.length
+    if (n < 2) return
+    const near = new Set([(index + 1) % n, (index - 1 + n) % n])
+    near.delete(index)
+    for (const i of near) {
+      const a = images[i]
+      attachmentLink(messageId, a.id, api.attachmentUrls).then((url) => {
+        if (ahead.has(url)) return
+        const im = new Image()
+        im.decoding = 'async'
+        im.src = url
+        ahead.set(url, im)
+      }, () => {})
+    }
   })
 
   const go = (step: number) => (index = (index + step + images.length) % images.length)
@@ -72,9 +98,10 @@
   <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
   <div class="stage" class:original onwheel={wheel} onclick={(e) => e.target === e.currentTarget && onClose()}>
     {#if src}
-      <img {src} alt={img.name} draggable="false" style:transform={original ? null : `scale(${zoom})`}
-        width={img.width ?? undefined} height={img.height ?? undefined} />
+      <img {src} alt={img.name} draggable="false" style:transform={original ? null : `scale(${zoom})`} class:pending={!loaded}
+        width={img.width ?? undefined} height={img.height ?? undefined} onload={() => (loaded = true)} onerror={() => (loaded = true)} />
     {/if}
+    {#if !loaded}<div class="wait"><Loading label="Loading image…" /></div>{/if}
   </div>
   {#if images.length > 1}
     <button type="button" class="nav prev icon-btn round" aria-label="Previous image" onclick={() => go(-1)}><Icon name="chevron" size={18} /></button>
@@ -105,9 +132,12 @@
 <style>
   /* the quote image lightbox's backdrop (QuoteItem .lightbox) */
   .viewer { position: fixed; inset: 0; z-index: 70; background: var(--scrim-strong); display: flex; flex-direction: column; outline: none; }
-  .stage { flex: 1; min-height: 0; display: grid; place-items: center; overflow: hidden; padding: 48px 72px 0; }
+  .stage { position: relative; flex: 1; min-height: 0; display: grid; place-items: center; overflow: hidden; padding: 48px 72px 0; }
   .stage img { max-width: 100%; max-height: 100%; width: auto; height: auto; object-fit: contain; transition: transform var(--dur) var(--ease); }
   /* 1:1: the image at its own size, scrolled when bigger than the window */
+  /* still loading: the image's box stays (no jump when it lands), the Loading line over it */
+  .stage img.pending { visibility: hidden; }
+  .wait { position: absolute; inset: 48px 72px 0; display: grid; place-items: center; pointer-events: none; }
   .stage.original { overflow: auto; place-items: start center; }
   .stage.original img { max-width: none; max-height: none; }
   .bar { display: flex; align-items: center; gap: 8px; padding: 12px 16px 16px; justify-content: center; flex-wrap: wrap; }

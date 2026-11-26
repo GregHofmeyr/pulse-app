@@ -110,6 +110,9 @@ cpal = { version = "0.18.2", features = ["pulseaudio"] }
 # pure-Rust client cpal's pulseaudio host uses; no new crate in the tree.
 pulseaudio = "0.3.2"
 webkit2gtk = "2.0"
+# The build pop-out's on-top switch (build_window.rs): which GDK display backend its window is on (Wayland has no
+# keep-above). The gtk Tauri itself uses on Linux; no new crate in the tree.
+gtk = "0.18"
 # Desktop notifications (notify/linux.rs) over D-Bus: zbus 5 on async-io, the same zbus the
 # single-instance plugin already brings. Pure Rust, no libdbus. Called directly rather than through
 # notify-rust, whose every notification opens its own connection (see notify/linux.rs).

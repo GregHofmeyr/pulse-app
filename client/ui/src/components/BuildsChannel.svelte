@@ -474,7 +474,7 @@
       <div class="head">
         <!-- under the selection bar: out of Tab's reach while it's up -->
         <div class="head-under" inert={selecting}>
-          <BuildsHeader {title} {count} {q} onQ={(v) => (q = v)} {view} onView={pickView} {panel} onPanel={togglePanel} onAdd={() => openQuick()} />
+          <BuildsHeader {title} {count} {q} onQ={(v) => (q = v)} {view} onView={pickView} {panel} onPanel={togglePanel} panelId="builds-panel-{channelId}" onAdd={() => openQuick()} />
         </div>
         {#if selecting}
           <BuildsSelectBar count={selected.length} {notYours} actions={barActions} {busy} onClear={() => { picked = []; anchor = null }} onCancel={stopSelecting} />
@@ -505,7 +505,7 @@
           {/if}
         </div>
         {#if panel}
-          <BuildsPanel {channelId} {serverId} {facets} {game} onGame={(g) => (game = g)} {archived} onArchived={pickArchived} />
+          <BuildsPanel {channelId} {serverId} id="builds-panel-{channelId}" {facets} {game} onGame={(g) => (game = g)} {archived} onArchived={pickArchived} />
         {/if}
       </div>
     </div>

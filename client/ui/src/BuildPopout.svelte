@@ -1,10 +1,11 @@
 <script lang="ts">
   // The build pop-out window's page (#620, spec §4.4): one build, read-only, in a small window of its own. A bar with
-  // its title and the always-on-top switch, then the build as BuildView reads it (title, media and notes, scrolling;
-  // never its comments). It never loads the app's store: everything comes from the core, which keeps the snapshot the
-  // main window handed it. This window may call only the three commands used here (ipc_gate.rs) and has no events, so
-  // it looks for a newer snapshot every couple of seconds. Screenshot links last an hour: asked for again every 50
-  // minutes. The video is its link card, opening in the browser (inline playback here is #627).
+  // its title and the always-on-top switch (labelled, and only where the window can be kept on top: QPMKJE), then the
+  // build as BuildView reads it (title, media and notes, scrolling; never its comments). It never loads the app's
+  // store: everything comes from the core, which keeps the snapshot the main window handed it. This window may call
+  // only the three commands used here (ipc_gate.rs) and has no events, so it looks for a newer snapshot every couple of
+  // seconds. Screenshot links last an hour: asked for again every 50 minutes. The video is its link card, opening in
+  // the browser (inline playback here is #627).
   import { onMount } from 'svelte'
   import BuildView from './components/BuildView.svelte'
   import Icon from './components/Icon.svelte'
@@ -14,13 +15,18 @@
   import { isMediaHash, mediaUrl } from './lib/emoji'
   import { safeHref } from './lib/safeHref'
   import { api } from './lib/tauri'
+  import { installTooltips } from './lib/tooltip'
 
   const LOOK_MS = 2000
   const IMAGES_MS = 50 * 60_000
 
   let snap = $state<BuildSnapshot | null>(null)
   let loaded = $state(false)
+  /** The window opens on top (open_build_window). */
   let onTop = $state(true)
+  /** The window can be kept on top here: unknown until the core says (Wayland can't), and no switch till then. */
+  let canOnTop = $state(false)
+  let onTopError = $state('')
   let urls = $state<Record<string, string>>({})
   let now = $state(Date.now())
 
@@ -53,7 +59,11 @@
     void fetchImages()
   })
 
+  onMount(() => installTooltips())
+
   onMount(() => {
+    // re-states the opening state; the answer says whether the switch can do anything in this window
+    api.setBuildWindowOnTop(true).then((ok) => (canOnTop = ok === true), () => {})
     void look()
     const looks = setInterval(() => void look(), LOOK_MS)
     const images = setInterval(() => void fetchImages(), IMAGES_MS)
@@ -67,11 +77,12 @@
 
   async function toggleOnTop() {
     const next = !onTop
+    onTopError = ''
     try {
-      await api.setBuildWindowOnTop(next)
-      onTop = next
+      if (await api.setBuildWindowOnTop(next)) onTop = next
+      else canOnTop = false
     } catch {
-      /* unchanged */
+      onTopError = "Couldn't change that. Try again."
     }
   }
 
@@ -90,9 +101,12 @@
 <div class="build-popout">
   <div class="bar">
     <span class="title">{snap?.title ?? 'Build'}</span>
-    <button type="button" class="on-top icon-btn icon-btn-xs" aria-pressed={onTop} aria-label="Keep on top" data-tip={onTop ? 'On top of other windows' : 'Keep on top'}
-      onclick={() => void toggleOnTop()}><Icon name="pin" size={14} /></button>
+    {#if canOnTop}
+      <button type="button" class="on-top btn btn-quiet" aria-pressed={onTop} data-tip={onTop ? 'Kept on top of other windows: click to stop' : 'Click to keep it on top of other windows'}
+        onclick={() => void toggleOnTop()}><Icon name="pin" size={14} /><span>On top</span></button>
+    {/if}
   </div>
+  {#if onTopError}<p class="on-top-error" role="alert">{onTopError}</p>{/if}
   {#if snap}
     <div class="scroll">
       <BuildView title={snap.title} gameName={snap.game_name} guessed={snap.game_guessed} authorName={snap.author_name}
@@ -121,8 +135,10 @@
   .build-popout { height: 100vh; display: flex; flex-direction: column; min-width: 0; background: var(--bg-1); color: var(--text); }
   .bar { flex-shrink: 0; display: flex; align-items: center; gap: 6px; min-width: 0; padding: 8px 8px 8px 12px; border-bottom: 1px solid var(--bg-3); }
   .bar .title { flex: 1; min-width: 0; font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .on-top { flex-shrink: 0; }
+  .on-top { flex-shrink: 0; height: 28px; padding: 0 10px; gap: 5px; font-size: 12px; }
   .on-top[aria-pressed='true'] { color: var(--accent-text); }
+  .on-top[aria-pressed='false'] { color: var(--text-3); }
+  .on-top-error { flex-shrink: 0; margin: 0; padding: 6px 12px; color: var(--danger-text); font-size: 12px; overflow-wrap: anywhere; border-bottom: 1px solid var(--bg-3); }
   .scroll { flex: 1; min-height: 0; min-width: 0; overflow-y: auto; overflow-x: hidden; padding: 12px 14px 18px; }
   .gone { margin: 0; padding: 18px 14px; color: var(--text-3); font-size: 13px; }
   /* a narrow window: nothing may spill sideways (wrap or ellipsis), one screenshot under another */

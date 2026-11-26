@@ -134,8 +134,8 @@
   .badge-new { position: absolute; left: 8px; top: 8px; padding: 1px 7px; border-radius: var(--radius-sm); background: var(--danger); color: var(--on-danger); font-size: 10px; font-weight: 700; text-transform: uppercase; pointer-events: none; }
   .info { padding: 8px 10px 10px; display: flex; flex-direction: column; gap: 5px; min-width: 0; }
   .meta { display: flex; align-items: center; gap: 6px; min-height: 28px; }
-  .who { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .game { padding: 1px 8px; border-radius: var(--radius-md); background: var(--bg-3); color: var(--text-2); font-size: 11px; font-weight: 600; white-space: nowrap; }
+  .who { min-width: 0; font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .game { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; padding: 1px 8px; border-radius: var(--radius-md); background: var(--bg-3); color: var(--text-2); font-size: 11px; font-weight: 600; white-space: nowrap; }
   .grow { flex: 1; }
   .time { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-3); }
   .pin-mark { display: inline-flex; }
