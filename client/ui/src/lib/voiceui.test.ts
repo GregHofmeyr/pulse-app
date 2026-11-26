@@ -159,13 +159,11 @@ describe('migrateAudioConfig', () => {
     expect(migrateAudioConfig({ noise_suppression: 'ultra' }).noise_suppression).toBe('strong')
     expect(defaultAudioConfig.noise_suppression).toBe('strong')
   })
-  it('ignores the pre-0.2.17 toggles left in storage: the defaults load and they never reach the core', () => {
-    const c = migrateAudioConfig({ noise_suppress: false, echo_cancel: false })
-    expect(c).toEqual(defaultAudioConfig)
-    expect('noise_suppress' in c).toBe(false)
-    expect('echo_cancel' in c).toBe(false)
-    expect(migrateAudioConfig({ noise_suppression: 'light', noise_suppress: true, echo_mode: 'on', echo_cancel: false }))
-      .toEqual({ ...defaultAudioConfig, noise_suppression: 'light', echo_mode: 'on' })
+  it('#703: the pre-0.2.17 toggles left in storage change nothing (the core ignores them)', () => {
+    expect(migrateAudioConfig({ noise_suppress: false, echo_cancel: false }))
+      .toMatchObject(defaultAudioConfig)
+    expect(migrateAudioConfig({ noise_suppression: 'light', noise_suppress: false, echo_mode: 'on', echo_cancel: false }))
+      .toMatchObject({ ...defaultAudioConfig, noise_suppression: 'light', echo_mode: 'on' })
   })
 })
 

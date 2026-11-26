@@ -54,30 +54,10 @@ pub struct AudioConfig {
     /// round trip, the leveller). Off by default; only the mic test reads it.
     #[serde(default)]
     pub mic_test_as_others_hear: bool,
-    /// Pre-2026-10 on/off noise toggle: only read, to migrate old settings (see `normalized`).
-    #[serde(default, skip_serializing)]
-    pub noise_suppress: Option<bool>,
-    /// Pre-#76 on/off echo toggle: only read, to migrate old settings (see `normalized`).
-    #[serde(default, skip_serializing)]
-    pub echo_cancel: Option<bool>,
 }
 
 fn default_true() -> bool {
     true
-}
-
-impl AudioConfig {
-    /// Fold legacy fields into the current ones.
-    pub fn normalized(mut self) -> Self {
-        if self.noise_suppress.take() == Some(false) {
-            self.noise_suppression = NsLevel::Off;
-        }
-        // switched off by hand stays off; the old default (on) becomes Auto
-        if self.echo_cancel.take() == Some(false) && self.echo_mode == EchoMode::Auto {
-            self.echo_mode = EchoMode::Off;
-        }
-        self
-    }
 }
 
 impl Default for AudioConfig {
@@ -94,8 +74,6 @@ impl Default for AudioConfig {
             even_out_voices: true,
             voice_clarity_eq: true,
             mic_test_as_others_hear: false,
-            noise_suppress: None,
-            echo_cancel: None,
         }
     }
 }
@@ -1812,34 +1790,26 @@ mod tests {
         assert_eq!(out.len(), 9600);
     }
 
+    /// #703: the pre-0.2.17 on/off toggles are no longer read; a stored config still holding them parses and they
+    /// change nothing (no `deny_unknown_fields` on `AudioConfig`).
     #[test]
-    fn legacy_noise_toggle_off_migrates_to_off() {
+    fn stale_pre_0_2_17_toggles_are_ignored() {
         let old = r#"{"input":null,"output":null,"input_gain_pct":100,"sensitivity":0.02,
-                      "echo_cancel":true,"noise_suppress":false,"auto_gain":false}"#;
-        let cfg: AudioConfig = serde_json::from_str::<AudioConfig>(old)
-            .unwrap()
-            .normalized();
-        assert_eq!(cfg.noise_suppression, NsLevel::Off);
-        assert!(cfg.auto_sensitivity, "new field defaults on");
-    }
-
-    #[test]
-    fn legacy_echo_toggle_off_stays_off_and_on_becomes_auto() {
-        let old = |on: bool| {
-            format!(
-                r#"{{"input":null,"output":null,"input_gain_pct":100,"sensitivity":0.02,
-                    "echo_cancel":{on},"noise_suppression":"strong","auto_gain":false}}"#
-            )
-        };
-        let read = |s: &str| serde_json::from_str::<AudioConfig>(s).unwrap().normalized();
-        assert_eq!(read(&old(false)).echo_mode, EchoMode::Off);
-        assert_eq!(read(&old(true)).echo_mode, EchoMode::Auto);
-        // a saved mode wins; the legacy field is never written back
-        let both = r#"{"input":null,"output":null,"input_gain_pct":100,"sensitivity":0.02,
-                       "echo_mode":"on","echo_cancel":false,"auto_gain":false}"#;
-        let cfg = read(both);
-        assert_eq!(cfg.echo_mode, EchoMode::On);
-        assert!(!serde_json::to_string(&cfg).unwrap().contains("echo_cancel"));
+                      "echo_cancel":false,"noise_suppress":false,"auto_gain":false}"#;
+        let cfg: AudioConfig = serde_json::from_str(old).unwrap();
+        assert_eq!(cfg.noise_suppression, NsLevel::default());
+        assert_eq!(cfg.echo_mode, EchoMode::Auto);
+        let saved = serde_json::to_string(&cfg).unwrap();
+        assert!(!saved.contains("noise_suppress\""), "{saved}");
+        assert!(!saved.contains("echo_cancel"), "{saved}");
+        // a saved level and mode win over the stale toggles
+        let both = r#"{"input":null,"output":null,"input_gain_pct":100,"sensitivity":0.02,"echo_mode":"on",
+                       "noise_suppression":"light","noise_suppress":false,"echo_cancel":false,"auto_gain":false}"#;
+        let cfg: AudioConfig = serde_json::from_str(both).unwrap();
+        assert_eq!(
+            (cfg.noise_suppression, cfg.echo_mode),
+            (NsLevel::Light, EchoMode::On)
+        );
         assert_eq!(AudioConfig::default().echo_mode, EchoMode::Auto);
     }
 
@@ -1931,9 +1901,7 @@ mod tests {
                 r#"{{"input":"Mic","output":null,"input_gain_pct":150,"sensitivity":0.05,"echo_mode":"on",
                     "noise_suppression":"{name}","auto_sensitivity":false,"auto_gain":true}}"#
             );
-            let cfg = serde_json::from_str::<AudioConfig>(&saved)
-                .unwrap()
-                .normalized();
+            let cfg = serde_json::from_str::<AudioConfig>(&saved).unwrap();
             assert_eq!(cfg.noise_suppression, level, "{name}");
             assert_eq!(
                 (
@@ -1949,16 +1917,6 @@ mod tests {
                 serde_json::from_str(&serde_json::to_string(&cfg).unwrap()).unwrap();
             assert_eq!(again.noise_suppression, level, "{name} round-trips");
         }
-    }
-
-    #[test]
-    fn legacy_noise_toggle_on_gets_the_default_level() {
-        let old = r#"{"input":null,"output":null,"input_gain_pct":100,"sensitivity":0.02,
-                      "echo_cancel":true,"noise_suppress":true,"auto_gain":false}"#;
-        let cfg: AudioConfig = serde_json::from_str::<AudioConfig>(old)
-            .unwrap()
-            .normalized();
-        assert_eq!(cfg.noise_suppression, NsLevel::default());
     }
 
     #[test]
