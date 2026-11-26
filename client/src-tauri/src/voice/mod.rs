@@ -960,6 +960,11 @@ pub enum VoiceEvent {
     MicSilent {
         silent: bool,
     },
+    /// The raw mic input keeps clipping (or has stopped: #591): Voice settings asks for a lower input level at the
+    /// source. Debounced (`miclevels::ClipHint`), sent on each change.
+    MicClipping {
+        clipping: bool,
+    },
     /// We've been talking into a muted mic (reported to the server for The Doos badge).
     MutedTalk,
     /// We're talking into our own muted mic: the UI plays the "you're muted" sound (#252). Its own,
@@ -2199,6 +2204,7 @@ impl VoiceManager {
                 let mut tick = tokio::time::interval(Duration::from_millis(100));
                 tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
                 let mut speaking = speaking::SpeakingTracker::default();
+                let mut clip = miclevels::ClipHint::default();
                 loop {
                     tick.tick().await;
                     if !alive.load(Ordering::SeqCst) {
@@ -2224,6 +2230,9 @@ impl VoiceManager {
                     }
                     if let Some(silent) = devices::relock(&shared.mic_silence).take_change() {
                         events(VoiceEvent::MicSilent { silent });
+                    }
+                    if let Some(clipping) = clip.update(shared.mic_levels.clipped_total()) {
+                        events(VoiceEvent::MicClipping { clipping });
                     }
                     if devices::relock(&shared.muted_talk).take_fired() {
                         events(VoiceEvent::MutedTalk);

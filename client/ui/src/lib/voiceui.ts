@@ -83,9 +83,11 @@ export function loadSoundPrefs(): SoundPrefs {
 export const saveSoundPrefs = (p: SoundPrefs) => save('pulse.sounds', p)
 
 export type Connection = 'connecting' | 'connected' | 'reconnecting' | 'disconnected'
-/** `strong_low_delay` (#77): DeepFilterNet3's low-delay model, downloaded on first use (Strong runs until it's there). */
-export type NsLevel = 'off' | 'standard' | 'strong' | 'strong_low_delay'
-export const NS_LEVELS: readonly NsLevel[] = ['off', 'standard', 'strong', 'strong_low_delay']
+/** `strong_low_delay` (#77): DeepFilterNet3's low-delay model, downloaded on first use (Strong runs until it's there).
+ *  `light` (#601): Strong's model held to a gentle 12 dB cut, for mics that already clean up their own sound; it costs
+ *  Strong's CPU and steps down to Standard like Strong, so it sits between the two. */
+export type NsLevel = 'off' | 'standard' | 'light' | 'strong' | 'strong_low_delay'
+export const NS_LEVELS: readonly NsLevel[] = ['off', 'standard', 'light', 'strong', 'strong_low_delay']
 
 /** Where Strong (low delay)'s model is, in a line for Settings; `null` once it's ready. */
 export function modelLine(s: ModelStatus): string | null {
@@ -134,6 +136,8 @@ export type VoiceEvent =
   /** The devices that aren't open, and why (#351): no mic = listen-only, no speakers = nothing plays. */
   | ({ kind: 'device_gaps' } & DeviceGaps)
   | { kind: 'mic_silent'; silent: boolean }
+  /** The raw mic input keeps clipping, or has stopped (#591): debounced by the core, sent on each change. */
+  | { kind: 'mic_clipping'; clipping: boolean }
   /** `retrying`: the core keeps trying to get the mic back by itself (false once only a rejoin helps). */
   | { kind: 'mic'; live: boolean; error: string | null; retrying?: boolean }
   /** You've been talking into a muted mic (reported for The Doos badge). */
@@ -338,12 +342,13 @@ export function migrateAudioConfig(raw: Record<string, unknown>): AudioConfig {
 export type AudioDevice = { name: string; is_default: boolean; processed_by?: string }
 
 /** #588: the one-line hint under noise suppression when the mic in use already cleans up its sound and Strong would
- *  suppress on top of that. Only a suggestion: the level is never changed for them. */
+ *  suppress on top of that; it suggests Light (#601), made for such mics. Only a suggestion: the level is never
+ *  changed for them. */
 export function processedMicHint(inputs: AudioDevice[], input: string | null, level: NsLevel): string | null {
   if (level !== 'strong' && level !== 'strong_low_delay') return null
   const dev = input === null ? inputs.find((d) => d.is_default) : inputs.find((d) => d.name === input)
   if (!dev?.processed_by) return null
-  return `Your mic already cleans up its sound (${dev.processed_by}). Standard noise suppression may sound more natural.`
+  return `Your mic already cleans up its sound (${dev.processed_by}). Light noise suppression may sound more natural.`
 }
 
 export const loadAudioConfig = () => migrateAudioConfig(load<Record<string, unknown>>('pulse.audio', {}))

@@ -248,6 +248,31 @@ mod tests {
         }
     }
 
+    /// #601: Light reads as itself in a report, chosen and running, as does its step-down to Standard.
+    #[test]
+    fn light_shows_in_the_report() {
+        let mut view = in_call();
+        view.cfg.as_mut().unwrap().noise_suppression = NsLevel::Light;
+        view.ns = Some(NsStatus {
+            active: NsLevel::Light,
+            note: None,
+        });
+        let v = serde_json::to_value(voice_report(&view)).unwrap();
+        assert_eq!(v["settings"]["noise_suppression"], "light");
+        assert_eq!(v["settings"]["noise_suppression_active"], "light");
+        assert!(v["settings"].get("noise_suppression_note").is_none());
+        view.ns = Some(NsStatus {
+            active: NsLevel::Standard,
+            note: Some("Light was too heavy for this PC, using Standard".into()),
+        });
+        let v = serde_json::to_value(voice_report(&view)).unwrap();
+        assert_eq!(v["settings"]["noise_suppression_active"], "standard");
+        assert_eq!(
+            v["settings"]["noise_suppression_note"],
+            "Light was too heavy for this PC, using Standard"
+        );
+    }
+
     #[test]
     fn voice_settings_shape() {
         let v = serde_json::to_value(voice_report(&in_call())).unwrap();

@@ -30,6 +30,8 @@ export const voice = $state({
   stalled: false,
   /** Unmuted, yet the mic delivers only digital silence (privacy switch, hardware mute, dead mic). */
   micSilent: false,
+  /** The raw mic input keeps clipping (#591): Voice settings asks for a lower level at the source. */
+  micClipping: false,
   /** Devices that didn't open, and why (#351): the call goes on without them (No mic / No sound chips). */
   deviceGaps: { input: null, output: null } as DeviceGaps,
   /** Why the mic couldn't be sent to the call (#351): listen-only while the core tries again. */
@@ -220,6 +222,8 @@ export async function startVoiceListening() {
         }
         // a report belongs to one call: the next one starts empty
         if (prev.channelId !== e.channel_id) voice.link = null
+        // clipping (#591) is judged afresh for each call; the core's new hint starts from off too
+        if (prev.channelId !== e.channel_id) voice.micClipping = false
         voice.channelId = e.channel_id
         voice.connection = e.connection
         voice.controls = e.controls
@@ -227,6 +231,7 @@ export async function startVoiceListening() {
         if (prev.channelId !== e.channel_id) void streamApi.onVoiceChanged(e.channel_id)
         if (!e.channel_id) voice.speaking = new Set()
         if (!e.channel_id) voice.micSilent = false
+        if (!e.channel_id) voice.micClipping = false
         if (!e.channel_id) voice.deviceGaps = { input: null, output: null }
         if (!e.channel_id) voice.micError = null
         if (!e.channel_id) voice.micRetrying = true
@@ -268,6 +273,9 @@ export async function startVoiceListening() {
         break
       case 'mic_silent':
         voice.micSilent = e.silent
+        break
+      case 'mic_clipping':
+        voice.micClipping = e.clipping
         break
       case 'mic':
         // a failure keeps the call listen-only (#351): the No mic chip says why until the mic goes out
