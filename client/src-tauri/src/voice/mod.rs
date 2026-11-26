@@ -2657,7 +2657,7 @@ pub fn mic_bps(kbps: u32) -> u64 {
 /// How the mic is sent, at its channel's bitrate (`kbps`, 0 = Default, #75).
 /// DTX makes silence ~free and RED (redundant audio) hides packet loss. Mono comes from the
 /// track's 1-channel source (vendor/livekit offers no `stereo=1` for it, #587), not from here.
-/// Also used by tests/neteq_probe.rs, so the probe sends exactly like the app.
+/// Also used by tests/voice_bitrate_it.rs, so that test sends exactly like the app.
 pub fn mic_publish_options(kbps: u32) -> TrackPublishOptions {
     TrackPublishOptions {
         source: TrackSource::Microphone,
