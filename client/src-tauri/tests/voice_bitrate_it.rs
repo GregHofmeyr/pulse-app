@@ -1,5 +1,5 @@
 //! What the mic really sends at each voice-channel bitrate (#75), and that it goes out as mono Opus
-//! while stream audio stays stereo (#587), measured against the dev LiveKit (`just dev-livekit`, or
+//! while stream audio stays stereo at its own cap (#587, #598), measured against the dev LiveKit (`just dev-livekit`, or
 //! the alternate ports `just voice-it-alt` uses). Run:
 //! `cargo test -p pulse-client --test voice_bitrate_it -- --ignored --nocapture`.
 //!
@@ -25,6 +25,7 @@ use livekit::webrtc::audio_source::native::NativeAudioSource;
 use livekit::webrtc::audio_source::{AudioSourceOptions, RtcAudioSource};
 use livekit::webrtc::stats::RtcStats;
 use pulse_client::api::Api;
+use pulse_client::stream::audio::{STREAM_AUDIO_BPS, stream_audio_publish_options};
 use pulse_client::voice::{MAX_MIC_BPS, mic_publish_options, set_mic_bitrate};
 use pulse_protocol::rest::CHANNEL_BITRATES_KBPS;
 use pulse_server::testing;
@@ -274,9 +275,7 @@ async fn the_mic_is_mono_and_stream_audio_stereo() {
             LocalTrack::Audio(game.clone()),
             TrackPublishOptions {
                 source: TrackSource::Microphone,
-                dtx: false,
-                red: false,
-                ..Default::default()
+                ..stream_audio_publish_options()
             },
         )
         .await
@@ -307,8 +306,8 @@ async fn the_mic_is_mono_and_stream_audio_stereo() {
         game_fmtp = send_fmtp(&game).await;
     }
     println!("mic sends with: {mic_fmtp}\nstream audio sends with: {game_fmtp}");
-    // the server marks a stereo track's codec maxaveragebitrate=510000; the encoder still keeps to
-    // the publish's own cap (the SDK's default 48 kbps for stream audio)
+    // the server marks a stereo track's codec maxaveragebitrate=510000; the encoder keeps to the
+    // publish's own cap (STREAM_AUDIO_BPS, #598; was the SDK's default 48 kbps)
     let (_, game_target) = measure(&game).await;
     println!("stream audio encoder target: {game_target:.1} kbps");
     run.store(false, Ordering::SeqCst);
@@ -328,8 +327,13 @@ async fn the_mic_is_mono_and_stream_audio_stereo() {
         game_fmtp.contains("stereo=1"),
         "stream audio isn't stereo: {game_fmtp}"
     );
+    let cap = STREAM_AUDIO_BPS as f64 / 1000.0;
     assert!(
-        game_target <= 48.0 * 1.15,
+        game_target <= cap * 1.15,
         "stream audio past its cap: {game_target}"
+    );
+    assert!(
+        game_target > 48.0 * 1.15,
+        "stream audio still at the SDK's 48 kbps: {game_target}"
     );
 }
