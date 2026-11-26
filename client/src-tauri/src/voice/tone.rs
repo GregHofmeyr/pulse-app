@@ -3,11 +3,18 @@
 //!
 //! - **High-pass, 65 Hz, 2nd order (Butterworth, Q 0.707).** Rumble, desk thumps and plosive pops carry a lot of
 //!   energy and little speech. Left in, they set the peak the limiter reacts to, so the whole voice gets turned
-//!   down for a "p". WebRTC's APM already runs its own 2nd-order high-pass (~100 Hz upstream; the corner isn't
-//!   verified for this build) *before* the denoiser; this one sits after it, so whatever reaches the gain is
-//!   guaranteed rumble-free whichever suppression runs, and together they roll off at ~24 dB/octave lower down.
-//!   It was 80 Hz; stacked on the APM's it thinned deep voices, whose fundamental (~85–110 Hz) sat on the slope,
-//!   so it is 65 Hz now (the APM's own corner is still to be measured). Above 150 Hz it costs < 0.2 dB.
+//!   down for a "p". WebRTC's APM runs its own high-pass *before* the denoiser; this one sits after it, so whatever
+//!   reaches the gain is rumble-free whichever suppression runs. It was 80 Hz; it is 65 Hz now (#589's PR) so a
+//!   deep voice's fundamental (~85–110 Hz) isn't on its slope. Above 150 Hz it costs < 0.2 dB.
+//!
+//!   **The APM's high-pass, measured (#660)** on the libwebrtc we link, 48 kHz, 10 ms frames (`measured_low_cut`
+//!   below): −3 dB at **58 Hz**, and steep: −21 dB at 50 Hz, −44 dB at 40 Hz, ~−80 dB at 30 Hz. From 60 Hz up it is
+//!   flat to within the ±0.5 dB ripple of the APM's 3-band split (−0.2 dB at 90, −0.5 at 110, −0.2 at 150). Not the
+//!   ~100 Hz 2nd-order slope once assumed: it sits below a deep voice, so the two stack to only −1.6 dB at 90–150 Hz
+//!   (this stage −1.1…−1.4, the APM ≤ −0.5). Both stay on: the APM's takes out what's below 50 Hz before the echo
+//!   canceller and the denoiser, this one adds the gentle 50–80 Hz slope for plosives. Echo cancellation keeps the
+//!   APM's high-pass running whatever flag it's built with (AEC3 enforces it), and with the clarity EQ off the
+//!   APM's alone still cuts 30 Hz rumble by ~80 dB.
 //! - **Low-mid cut, −2 dB at 220 Hz (peaking, Q 1.0).** The "boom" of a deep voice, or a mic close up (proximity
 //!   effect), piles up around 150–300 Hz. A bell there, not a low shelf, leaves the fundamental under it and the
 //!   warmth above it mostly alone: the whole stage is −1.1 dB at 110 Hz, −2.1 dB at 220 Hz, −0.4 dB at 500 Hz. −2 dB is about the smallest broad cut that's
@@ -234,5 +241,155 @@ mod tests {
         let mut zero = [0.0f32; 480];
         t.process(&mut zero);
         assert!(zero.iter().all(|v| *v == 0.0), "no ring left from before");
+    }
+}
+
+/// #660: the low cut the mic actually gets, measured: WebRTC's APM high-pass on its own (the build we link),
+/// then APM → `MicChain` (denoiser off, so the tone stage is the only other filter) with the clarity EQ on and off.
+#[cfg(test)]
+mod measured_low_cut {
+    use super::super::denoise::{FRAME, NsLevel};
+    use super::super::processor::MicChain;
+    use livekit::webrtc::native::apm::AudioProcessingModule;
+    use std::time::Instant;
+
+    const RATE: usize = 48_000;
+    /// 10 ms, what the APM takes and what the processor feeds it.
+    const APM_FRAME: usize = RATE / 100;
+
+    fn sine(hz: f64, secs: usize) -> Vec<f32> {
+        (0..secs * RATE)
+            .map(|i| (0.25 * (std::f64::consts::TAU * hz * i as f64 / RATE as f64).sin()) as f32)
+            .collect()
+    }
+
+    fn rms(b: &[f32]) -> f64 {
+        (b.iter().map(|v| (*v as f64).powi(2)).sum::<f64>() / b.len() as f64).sqrt()
+    }
+
+    /// Through the APM the way the processor runs it: i16, 10 ms at a time, the reverse (speaker) stream fed
+    /// silence first when echo cancellation is on.
+    fn through_apm(x: &mut [f32], echo: bool, high_pass: bool) {
+        let mut apm = AudioProcessingModule::new(echo, false, high_pass, false);
+        let mut far = [0i16; APM_FRAME];
+        let mut buf = [0i16; APM_FRAME];
+        for block in x.chunks_mut(APM_FRAME) {
+            for (d, v) in buf.iter_mut().zip(block.iter()) {
+                *d = (*v * 32767.0).round() as i16;
+            }
+            if echo {
+                far.fill(0);
+                apm.process_reverse_stream(&mut far, RATE as i32, 1)
+                    .unwrap();
+            }
+            apm.process_stream(&mut buf, RATE as i32, 1).unwrap();
+            for (d, v) in block.iter_mut().zip(buf.iter()) {
+                *d = *v as f32 / 32767.0;
+            }
+        }
+    }
+
+    /// Gain (dB) on a steady sine, the first second (the filters settling) left out.
+    fn gain_db(hz: f64, shape: impl FnOnce(&mut [f32])) -> f64 {
+        let x = sine(hz, 3);
+        let mut y = x.clone();
+        shape(&mut y);
+        20.0 * (rms(&y[RATE..]) / rms(&x[RATE..])).log10()
+    }
+
+    fn apm_alone(hz: f64) -> f64 {
+        gain_db(hz, |y| through_apm(y, false, true))
+    }
+
+    /// APM (high-pass on, echo off) → denoiser off → tone stage (clarity EQ `eq`) → gain 1 → limiter → gate.
+    fn whole_chain(hz: f64, eq: bool) -> f64 {
+        gain_db(hz, |y| {
+            through_apm(y, false, true);
+            let mut chain = MicChain::new(NsLevel::Off, false, 0.0, 1.0);
+            chain.set_tone(eq);
+            let t0 = Instant::now();
+            for block in y.chunks_mut(FRAME) {
+                chain.process(block, true, t0);
+            }
+        })
+    }
+
+    #[test]
+    #[ignore = "prints the table for #660; run with --ignored --nocapture"]
+    fn print_the_response() {
+        println!("   Hz | APM alone | tone EQ | chain, EQ on | chain, EQ off");
+        for hz in [
+            30.0, 40.0, 50.0, 55.0, 58.0, 60.0, 65.0, 80.0, 90.0, 100.0, 110.0, 120.0, 150.0,
+            200.0, 1_000.0,
+        ] {
+            println!(
+                "{hz:>5} | {:>9.2} | {:>7.2} | {:>12.2} | {:>13.2}",
+                apm_alone(hz),
+                gain_db(hz, |y| super::ToneStage::new(RATE as u32, true).process(y)),
+                whole_chain(hz, true),
+                whole_chain(hz, false),
+            );
+        }
+    }
+
+    /// Measured on libwebrtc as linked (webrtc-sys 0.3.52): −3 dB at 58 Hz, and steep, not the ~100 Hz
+    /// 2nd-order slope we'd assumed. It is −21 dB at 50 Hz and −44 dB at 40 Hz, yet flat to within the ±0.5 dB ripple
+    /// of the APM's 3-band split from 60 Hz up, so a deep voice's 85–110 Hz fundamental isn't touched by it.
+    #[test]
+    fn the_apm_high_pass_corner_is_58_hz_and_steep() {
+        let near = |hz: f64, want: f64, tol: f64| {
+            let got = apm_alone(hz);
+            assert!(
+                (got - want).abs() <= tol,
+                "{hz} Hz: {got:.2} dB, wanted {want} ± {tol}"
+            );
+        };
+        assert!(apm_alone(30.0) < -60.0, "{}", apm_alone(30.0));
+        assert!(apm_alone(40.0) < -40.0, "{}", apm_alone(40.0));
+        near(50.0, -21.2, 1.5);
+        near(58.0, -3.0, 0.7);
+        near(60.0, -0.5, 0.5);
+        for hz in [80.0, 100.0, 120.0, 150.0, 200.0] {
+            near(hz, 0.0, 0.7);
+        }
+    }
+
+    /// The echo canceller keeps the high-pass whatever we pass for it (AEC3 enforces it), so the flag only
+    /// matters with echo cancellation off: turning it off could never change what the AEC sees.
+    #[test]
+    fn echo_cancellation_runs_the_high_pass_even_with_the_flag_off() {
+        let echo_only = gain_db(50.0, |y| through_apm(y, true, false));
+        let echo_hpf = gain_db(50.0, |y| through_apm(y, true, true));
+        assert!(echo_only < -15.0, "{echo_only}");
+        assert!(
+            (echo_only - echo_hpf).abs() < 0.1,
+            "{echo_only} vs {echo_hpf}"
+        );
+        // off and no echo cancellation: the APM passes the audio through untouched
+        let bypass = gain_db(50.0, |y| through_apm(y, false, false));
+        assert!(bypass.abs() < 0.01, "{bypass}");
+    }
+
+    /// A deep voice's fundamental through everything that filters it: the APM costs it ≤ 0.5 dB on top of the
+    /// tone stage, so the two together stay well under the 3 dB the issue worried about.
+    #[test]
+    fn the_whole_chain_keeps_a_deep_voice_fundamental() {
+        let near = |hz: f64, want: f64, tol: f64| {
+            let got = whole_chain(hz, true);
+            assert!(
+                (got - want).abs() <= tol,
+                "{hz} Hz: {got:.2} dB, wanted {want} ± {tol}"
+            );
+        };
+        near(90.0, -1.6, 0.4);
+        near(110.0, -1.6, 0.4);
+        near(150.0, -1.6, 0.4);
+    }
+
+    /// The clarity EQ off: the APM's high-pass alone still takes rumble out.
+    #[test]
+    fn with_the_eq_off_rumble_is_still_cut() {
+        let got = whole_chain(30.0, false);
+        assert!(got <= -12.0, "30 Hz: {got:.2} dB");
     }
 }

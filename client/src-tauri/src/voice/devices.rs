@@ -433,7 +433,8 @@ impl Shared {
             mix_in: Arc::new(mix_in),
             playout_on: std::sync::atomic::AtomicBool::new(playout_on),
             mix_busy: AtomicU64::new(0),
-            // no output is open yet: Auto starts on, and the output's opening decides
+            // no output is open yet: Auto starts on, and the output's opening decides. The high-pass (`true`) is
+            // −3 dB at 58 Hz, measured (#660, `tone.rs`): below a deep voice, so it stays on.
             apm: Mutex::new(AudioProcessingModule::new(
                 echo_on(cfg.echo_mode, Output::Unknown),
                 cfg.auto_gain,
