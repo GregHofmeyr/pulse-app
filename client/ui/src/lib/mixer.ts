@@ -1,6 +1,6 @@
 // The volume mixer's per-device record and its gain maths (tested in mixer.test.ts). Every notch is a percent on the
 // core's `percent_to_gain` curve (voice/mixer.rs): 0 = off, 100 = as recorded, 200 = +12 dB.
-import { normalizeSoundPrefs, type SoundName } from './voiceui'
+import type { SoundName } from './voiceui'
 
 export const MIXER_KEY = 'pulse.mixer'
 
@@ -64,14 +64,6 @@ export function percentToGain(pct: number): number {
   return 10 ** (db / 20)
 }
 
-/** Linear gain → the percent that sounds the same (for migrating linear volumes). Anything audible stays ≥ 1. */
-export function gainToPercent(gain: number): number {
-  if (!(gain > 0)) return 0
-  const db = 20 * Math.log10(gain)
-  const p = db >= 0 ? 100 + (db / 12) * 100 : 100 + (db / 40) * 100
-  return Math.round(Math.min(200, Math.max(1, p)))
-}
-
 /** The safe maximum for any final gain: one slider at 200 % (+12 dB). The core caps the same way. */
 export const MAX_GAIN = percentToGain(200)
 
@@ -100,7 +92,7 @@ const pct = (v: unknown, fallback: number, max = 200) =>
   typeof v === 'number' && Number.isFinite(v) ? Math.round(Math.min(max, Math.max(0, v))) : fallback
 const obj = (v: unknown): Record<string, unknown> => (typeof v === 'object' && v !== null && !Array.isArray(v) ? (v as Record<string, unknown>) : {})
 
-/** A stored v1 record cleaned field by field; null when it isn't one (then it's rebuilt from the old keys). */
+/** A stored v1 record cleaned field by field; null when it isn't one (then the defaults are used). */
 export function normalizeMixer(raw: unknown): MixerPrefs | null {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw) || (raw as { v?: unknown }).v !== 1) return null
   const r = raw as Record<string, unknown>
@@ -120,26 +112,6 @@ export function normalizeMixer(raw: unknown): MixerPrefs | null {
   }
 }
 
-/** Today's separate settings, as stored before the mixer. */
-export type LegacyPrefs = { sounds: unknown; soundboard: unknown; clipVolume: unknown }
-
-/** The mixer as today's settings had it: an "off" sound → 0, the old (linear) sound volume → the three sound masters
- * at the same loudness, the soundboard volume (already on the curve) as is, the clip volume (linear) by loudness. */
-export function migrateMixer(legacy: LegacyPrefs): MixerPrefs {
-  const p = defaultMixer()
-  if (legacy.sounds !== null && legacy.sounds !== undefined) {
-    const s = normalizeSoundPrefs(legacy.sounds)
-    const master = gainToPercent(s.volume_pct / 100)
-    p.callSounds.master = p.streamSounds.master = p.notifications.master = master
-    for (const name of s.off) (p[SOUND_SECTION[name]] as Record<string, number>)[name] = 0
-  }
-  p.calls.soundboard = pct(obj(legacy.soundboard).volume_pct, 100)
-  const clip = obj(legacy.clipVolume)
-  if (typeof clip.volume === 'number' && Number.isFinite(clip.volume)) p.media.clips = Math.min(100, gainToPercent(Math.min(1, clip.volume)))
-  p.media.clipsMuted = clip.muted === true
-  return p
-}
-
 function read(key: string): unknown {
   try {
     const raw = localStorage.getItem(key)
@@ -157,25 +129,11 @@ export function saveMixer(p: MixerPrefs) {
   }
 }
 
-/** The stored mixer. The first time, built from the pre-mixer keys and saved. A newer version's record (after a
- * downgrade) is left alone and read as the pre-mixer keys say; an unreadable one gives the defaults. */
+/** The stored mixer; the defaults when there's none, it's unreadable or it's a newer version's (after a downgrade,
+ * left in place until a change is saved). Pre-mixer keys (`pulse.soundboard`, `pulse.clipVolume`, the old fields of
+ * `pulse.sounds`, before 0.2.17) are ignored. */
 export function loadMixer(): MixerPrefs {
-  let present = false
-  try {
-    present = localStorage.getItem(MIXER_KEY) !== null
-  } catch {
-    // storage unavailable: as if nothing were saved
-  }
-  const raw = read(MIXER_KEY)
-  const stored = normalizeMixer(raw)
-  if (stored) return stored
-  const migrated = () => migrateMixer({ sounds: read('pulse.sounds'), soundboard: read('pulse.soundboard'), clipVolume: read('pulse.clipVolume') })
-  const v = (obj(raw) as { v?: unknown }).v
-  if (typeof v === 'number' && v > 1) return migrated()
-  if (present) return defaultMixer()
-  const p = migrated()
-  saveMixer(p)
-  return p
+  return normalizeMixer(read(MIXER_KEY)) ?? defaultMixer()
 }
 
 /** `p` with one section back at its defaults. */

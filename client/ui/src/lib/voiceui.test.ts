@@ -153,34 +153,19 @@ describe('migrateAudioConfig', () => {
     expect(migrateAudioConfig({ sensitivity: 0.05 }).mic_test_as_others_hear).toBe(false)
     expect(migrateAudioConfig({ mic_test_as_others_hear: true }).mic_test_as_others_hear).toBe(true)
   })
-  it('maps the old noise toggle off to level off', () => {
-    const c = migrateAudioConfig({ noise_suppress: false, sensitivity: 0.05 })
-    expect(c.noise_suppression).toBe('off')
-    expect(c.sensitivity).toBe(0.05)
-    expect('noise_suppress' in c).toBe(false)
-  })
-  it('gives old toggle-on users the default level and auto sensitivity', () => {
-    const c = migrateAudioConfig({ noise_suppress: true })
-    expect(c.noise_suppression).toBe(defaultAudioConfig.noise_suppression)
-    expect(c.auto_sensitivity).toBe(true)
-  })
-  it('keeps an explicit new level', () => {
-    expect(migrateAudioConfig({ noise_suppression: 'standard', noise_suppress: false }).noise_suppression).toBe('standard')
-  })
   it('#77, #601: every saved level reads back unchanged, Strong (low delay) and Light included; an unknown one gets the default', () => {
     for (const level of ['off', 'standard', 'light', 'strong', 'strong_low_delay'])
       expect(migrateAudioConfig({ noise_suppression: level, sensitivity: 0.05 })).toEqual({ ...defaultAudioConfig, noise_suppression: level, sensitivity: 0.05 })
     expect(migrateAudioConfig({ noise_suppression: 'ultra' }).noise_suppression).toBe('strong')
     expect(defaultAudioConfig.noise_suppression).toBe('strong')
   })
-  it('echo cancellation (#76): the old toggle off stays Off, on becomes Auto (the default); a saved mode wins', () => {
-    const off = migrateAudioConfig({ echo_cancel: false })
-    expect(off.echo_mode).toBe('off')
-    expect('echo_cancel' in off).toBe(false)
-    expect(migrateAudioConfig({ echo_cancel: true }).echo_mode).toBe('auto')
-    expect(migrateAudioConfig({}).echo_mode).toBe('auto')
-    expect(defaultAudioConfig.echo_mode).toBe('auto')
-    expect(migrateAudioConfig({ echo_mode: 'on', echo_cancel: false }).echo_mode).toBe('on')
+  it('ignores the pre-0.2.17 toggles left in storage: the defaults load and they never reach the core', () => {
+    const c = migrateAudioConfig({ noise_suppress: false, echo_cancel: false })
+    expect(c).toEqual(defaultAudioConfig)
+    expect('noise_suppress' in c).toBe(false)
+    expect('echo_cancel' in c).toBe(false)
+    expect(migrateAudioConfig({ noise_suppression: 'light', noise_suppress: true, echo_mode: 'on', echo_cancel: false }))
+      .toEqual({ ...defaultAudioConfig, noise_suppression: 'light', echo_mode: 'on' })
   })
 })
 
@@ -246,20 +231,6 @@ describe('playSound', () => {
     expect(calls).toEqual([])
   })
 
-  it('a switched-off sound from before the mixer stays silent (migrated to 0 %)', async () => {
-    const calls = await captureInvokes()
-    stubStorage({ 'pulse.sounds': JSON.stringify({ set: 'classic', volume_pct: 100, off: ['message'] }) })
-    playSound('message')
-    expect(calls).toEqual([])
-  })
-
-  it('the old overall volume keeps its loudness', async () => {
-    const calls = await captureInvokes()
-    stubStorage({ 'pulse.sounds': JSON.stringify({ set: 'classic', volume_pct: 50, off: [] }) })
-    playSound('join')
-    expect((calls[0] as [string, { volume: number }])[1].volume).toBeCloseTo(0.5, 2)
-  })
-
   it('playSoundAt plays at the given gain, even for a sound at 0 % elsewhere', async () => {
     const calls = await captureInvokes()
     stubStorage({ 'pulse.mixer': mixerWith((p) => { p.callSounds.join = 0 }) })
@@ -273,7 +244,7 @@ describe('sound prefs', () => {
   afterEach(() => vi.unstubAllGlobals())
 
   it('defaults', () => {
-    expect(defaultSoundPrefs).toEqual({ set: 'classic', volume_pct: 100, off: [], ringtone: 'classic' })
+    expect(defaultSoundPrefs).toEqual({ set: 'classic', ringtone: 'classic' })
     expect(normalizeSoundPrefs(undefined)).toEqual(defaultSoundPrefs)
     expect(normalizeSoundPrefs(null)).toEqual(defaultSoundPrefs)
     expect(normalizeSoundPrefs('goofy')).toEqual(defaultSoundPrefs)
@@ -287,27 +258,15 @@ describe('sound prefs', () => {
     expect(normalizeSoundPrefs({ set: 'minimal-wood' }).set).toBe('minimal-wood')
   })
 
-  it('volume is rounded and clamped to 0-100', () => {
-    const v = (volume_pct: unknown) => normalizeSoundPrefs({ volume_pct }).volume_pct
-    expect(v(55.6)).toBe(56)
-    expect(v(-4)).toBe(0)
-    expect(v(250)).toBe(100)
-    expect(v(0)).toBe(0)
-    expect(v(NaN)).toBe(100)
-    expect(v(Infinity)).toBe(100)
-    expect(v('50')).toBe(100)
-    expect(v(undefined)).toBe(100)
-  })
-
-  it('off keeps only known names, deduped', () => {
-    expect(normalizeSoundPrefs({ off: ['mute', 'bogus', 'mute', 3, null, 'live_end'] }).off).toEqual(['mute', 'live_end'])
-    expect(normalizeSoundPrefs({ off: 'mute' }).off).toEqual([])
-    expect(normalizeSoundPrefs({ off: { 0: 'mute' } }).off).toEqual([])
+  it('ignores the pre-mixer volume_pct/off left in storage (#688): the defaults load', () => {
+    stubStorage({ 'pulse.sounds': JSON.stringify({ volume_pct: 0, off: ['join', 'message'] }) })
+    expect(loadSoundPrefs()).toEqual(defaultSoundPrefs)
+    expect(normalizeSoundPrefs({ set: 'goofy', volume_pct: 30, off: ['join'] })).toEqual({ set: 'goofy', ringtone: 'classic' })
   })
 
   it('round-trips through localStorage', () => {
     stubStorage()
-    const p = { set: 'twostep-warm' as const, volume_pct: 30, off: ['message' as const], ringtone: 'chiptune' as const }
+    const p = { set: 'twostep-warm' as const, ringtone: 'chiptune' as const }
     saveSoundPrefs(p)
     expect(loadSoundPrefs()).toEqual(p)
   })
@@ -316,7 +275,7 @@ describe('sound prefs', () => {
     stubStorage({ 'pulse.sounds': '{not json' })
     expect(loadSoundPrefs()).toEqual(defaultSoundPrefs)
     stubStorage({ 'pulse.sounds': JSON.stringify({ set: 'goofy', off: ['x', 'join'], extra: 1 }) })
-    expect(loadSoundPrefs()).toEqual({ set: 'goofy', volume_pct: 100, off: ['join'], ringtone: 'classic' })
+    expect(loadSoundPrefs()).toEqual({ set: 'goofy', ringtone: 'classic' })
   })
 
   it('an unknown ringtone falls back to classic (#174)', () => {
@@ -412,7 +371,7 @@ describe('set preview', () => {
 
   it('sections at 0 % play nothing', async () => {
     const calls = await captureInvokes()
-    stubStorage({ 'pulse.sounds': JSON.stringify({ volume_pct: 0 }) })
+    stubStorage({ 'pulse.mixer': mixerWith((p) => { p.callSounds.master = 0; p.streamSounds.master = 0; p.notifications.master = 0 }) })
     previewSet('classic')
     vi.advanceTimersByTime(10_000)
     expect(calls).toEqual([])

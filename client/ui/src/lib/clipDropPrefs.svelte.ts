@@ -1,14 +1,10 @@
 // Settings › Chat › Clip drop (#382): the switch and the folders it watches, per device, on by default. Its own feature:
 // it doesn't need Game activity (Settings › Privacy) and never turns game detection on. The core is told at boot and on
 // every change (`set_clip_drop`), and offers new recordings (`pulse://clip-drop`, lib/clipDrop.svelte.ts).
-//
-// It used to live in Game activity's save (`pulse.games`: `clips` and `clip_folders`, under the master switch). A device
-// with no Clip drop save yet takes what it had there: on only if both Game activity and its clips switch were on, so
-// nobody's clip drop changes by itself.
+// Old `clips`/`clip_folders` keys left in Game activity's save (`pulse.games`, before 0.2.17) are ignored.
 import { api, type ClipDropSettings } from './tauri'
 
 const KEY = 'pulse.clipDrop'
-const GAMES_KEY = 'pulse.games'
 
 export function defaults(): ClipDropSettings {
   return { on: true, folders: null }
@@ -17,22 +13,13 @@ export function defaults(): ClipDropSettings {
 const folderList = (v: unknown): string[] | null =>
   Array.isArray(v) ? v.filter((f): f is string => typeof f === 'string' && !!f.trim()) : null
 
-/** What's saved, filled in with the defaults (junk is the defaults); with no save, what Game activity's save had. */
-export function parseSaved(raw: string | null, gamesRaw: string | null): ClipDropSettings {
+/** What's saved, filled in with the defaults (no save or junk is the defaults). */
+export function parseSaved(raw: string | null): ClipDropSettings {
   const d = defaults()
-  if (raw) {
-    try {
-      const v = JSON.parse(raw) as Partial<Record<keyof ClipDropSettings, unknown>>
-      return { on: typeof v.on === 'boolean' ? v.on : d.on, folders: folderList(v.folders) }
-    } catch {
-      return d
-    }
-  }
-  if (!gamesRaw) return d
+  if (!raw) return d
   try {
-    const g = JSON.parse(gamesRaw) as { enabled?: unknown; clips?: unknown; clip_folders?: unknown }
-    // each defaulted on, as Game activity's save did
-    return { on: g.enabled !== false && g.clips !== false, folders: folderList(g.clip_folders) }
+    const v = JSON.parse(raw) as Partial<Record<keyof ClipDropSettings, unknown>>
+    return { on: typeof v.on === 'boolean' ? v.on : d.on, folders: folderList(v.folders) }
   } catch {
     return d
   }
@@ -54,15 +41,7 @@ function save(s: ClipDropSettings): void {
   }
 }
 
-function load(): ClipDropSettings {
-  const raw = read(KEY)
-  const s = parseSaved(raw, read(GAMES_KEY))
-  // taken over from Game activity's save: kept as our own from now on, whatever Game activity does next
-  if (!raw && read(GAMES_KEY)) save(s)
-  return s
-}
-
-export const clipDropPrefs = $state<ClipDropSettings>(load())
+export const clipDropPrefs = $state<ClipDropSettings>(parseSaved(read(KEY)))
 
 function snapshot(): ClipDropSettings {
   return { on: clipDropPrefs.on, folders: clipDropPrefs.folders ? [...clipDropPrefs.folders] : null }
