@@ -410,6 +410,7 @@ async fn people_and_their_profiles_reach_only_who_shares_something() {
             avatar_hash: None,
             avatar_still: None,
             style: Default::default(),
+            typing_text: None,
         },
     };
     assert_eq!(

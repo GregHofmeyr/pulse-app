@@ -16,4 +16,10 @@ display_name: string, avatar_hash: string | null,
 /**
  * The first-frame still of an animated avatar (`None` for a still one).
  */
-avatar_still: string | null, style: NameStyle, };
+avatar_still: string | null, style: NameStyle, 
+/**
+ * What shows after "<name> is" while they type (#652), e.g. "cooking": at most 32
+ * characters, one line, no links. Absent: the plain "is typing" (and from older servers;
+ * older clients ignore it).
+ */
+typing_text?: string, };

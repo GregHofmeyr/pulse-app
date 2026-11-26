@@ -5451,6 +5451,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "unicode-normalization",
+ "unicode-properties",
  "unicode-segmentation",
  "webp-animation",
  "yaml-rust2",

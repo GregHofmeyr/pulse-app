@@ -111,6 +111,17 @@ describe('TextChannel: rendered messages', () => {
     expect(h.renders).toBe(0)
   })
 
+  it("one person typing shows their typing text (#652), from the member already held; two show the plain line", () => {
+    app.state = applyEvent(app.state, { t: 'ProfileUpdated', d: { user: { ...sam, typing_text: 'cooking' }, card } }, 0)
+    app.state = applyEvent(app.state, { t: 'MemberJoined', d: { server_id: 'S1', member: { user: user('U3', 'jo'), nickname: null } } }, 0)
+    app.state = applyEvent(app.state, { t: 'Typing', d: { channel_id: 'C1', user_id: 'U2' } }, Date.now())
+    flushSync()
+    expect(document.querySelector('.typing')?.textContent?.trim()).toBe('sam is cooking')
+    app.state = applyEvent(app.state, { t: 'Typing', d: { channel_id: 'C1', user_id: 'U3' } }, Date.now())
+    flushSync()
+    expect(document.querySelector('.typing')?.textContent?.trim()).toBe('sam, jo are typing…')
+  })
+
   it('a rename and a new person together: the pills follow both', () => {
     expect(pills()).toEqual(['@sam'])
     app.state = applyEvent(app.state, { t: 'ProfileUpdated', d: { user: user('U2', 'kim'), card } }, 0)

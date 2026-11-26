@@ -93,7 +93,8 @@ async fn save(
     sqlx::query(
         "UPDATE users SET avatar_hash = ?, banner_hash = ?, theme_top = ?, theme_bottom = ?, \
          name_font = ?, name_color = ?, name_effect = ?, pronouns = ?, bio = ?, \
-         display_name = COALESCE(?, display_name), card_glow = COALESCE(?, card_glow) WHERE id = ?",
+         display_name = COALESCE(?, display_name), card_glow = COALESCE(?, card_glow), \
+         typing_text = CASE WHEN ? THEN ? ELSE typing_text END WHERE id = ?",
     )
     .bind(&v.avatar_hash)
     .bind(&v.banner_hash)
@@ -106,6 +107,9 @@ async fn save(
     .bind(&v.bio)
     .bind(&v.display_name)
     .bind(v.glow)
+    // absent keeps it; blank clears it (#652)
+    .bind(v.typing_text.is_some())
+    .bind(v.typing_text.flatten())
     .bind(me.to_string())
     .execute(&mut *tx)
     .await?;

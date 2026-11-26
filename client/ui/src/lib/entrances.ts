@@ -5,7 +5,7 @@
 // dialog flashed (#156 follow-up). An entrance that has run to its end is marked `entered`, and the off switch leaves
 // marked ones alone (app.css), so focus coming and going never replays them.
 
-const ENTRANCES = new Set(['pop-in', 'fade-in', 'slide-in'])
+const ENTRANCES = new Set(['pop-in', 'fade-in', 'slide-in', 'typing-rise'])
 
 /** Marks each element whose entrance finished; returns the way to stop. */
 export function markFinishedEntrances(doc: Document = document): () => void {

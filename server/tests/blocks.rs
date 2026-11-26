@@ -10,7 +10,8 @@ use futures::{SinkExt, StreamExt};
 use pulse_protocol::gateway::{ClientFrame, Event, Ready, ServerFrame};
 use pulse_protocol::ids::{ChannelId, UserId};
 use pulse_protocol::rest::{
-    Block, BlockMode, Member, Message, PresenceStatus, Profile, ServerInvite,
+    Block, BlockMode, Member, Message, NameStyle, PresenceStatus, Profile, ServerInvite,
+    UpdateProfileRequest,
 };
 use serde_json::json;
 use tokio_tungstenite::tungstenite::Message as Ws;
@@ -321,6 +322,86 @@ async fn they_see_you_offline_with_an_emptied_profile() {
     let a = ready.people.iter().find(|p| p.user.id == alex_id).unwrap();
     assert_eq!(a.status, PresenceStatus::Online);
     assert!(a.user.avatar_hash.is_some());
+}
+
+/// #652: a blocked viewer never gets the blocker's typing text (they see the plain "is typing"): not in Ready's
+/// members or people, the members list, a ProfileUpdated, or the profile. Someone else does, everywhere.
+#[tokio::test]
+async fn a_blocked_viewer_never_gets_your_typing_text() {
+    let app = spawn().await;
+    let (alex_id, alex) = register(&app, "alex").await;
+    let (sam_id, sam) = register(&app, "sam").await;
+    let (_, kim) = register(&app, "kim").await;
+    let common = acquaint(&app, &alex, &[&sam, &kim]).await;
+    let save = |text: &str| UpdateProfileRequest {
+        avatar_hash: None,
+        banner_hash: None,
+        theme_top: "#8a3cff".into(),
+        theme_bottom: "#ff8a2a".into(),
+        style: NameStyle::default(),
+        pronouns: None,
+        bio: None,
+        display_name: None,
+        glow: None,
+        typing_text: Some(text.into()),
+    };
+    let put = |body: UpdateProfileRequest| {
+        app.http
+            .put(app.url("/me/profile"))
+            .bearer_auth(&alex)
+            .json(&body)
+            .send()
+    };
+    assert_eq!(put(save("cooking")).await.unwrap().status(), 200);
+    assert_eq!(block(&app, &alex, sam_id, "line").await.status(), 200);
+    let text_of = |m: &[Member]| member_user(m, alex_id).typing_text.clone();
+
+    // Ready: members and people
+    let (mut sam_ws, ready) = hello(&app, &sam).await;
+    let m = &ready
+        .members
+        .iter()
+        .find(|m| m.server_id == common)
+        .unwrap()
+        .members;
+    assert_eq!(text_of(m), None);
+    let p = ready.people.iter().find(|p| p.user.id == alex_id).unwrap();
+    assert_eq!(p.user.typing_text, None);
+    let (mut kim_ws, ready) = hello(&app, &kim).await;
+    let m = &ready
+        .members
+        .iter()
+        .find(|m| m.server_id == common)
+        .unwrap()
+        .members;
+    assert_eq!(text_of(m).as_deref(), Some("cooking"));
+
+    // the members list
+    let list: Vec<Member> = get_json(&app, &sam, &format!("/servers/{common}/members")).await;
+    assert_eq!(text_of(&list), None);
+    let list: Vec<Member> = get_json(&app, &kim, &format!("/servers/{common}/members")).await;
+    assert_eq!(text_of(&list).as_deref(), Some("cooking"));
+
+    // the profile
+    let p: Profile = get_json(&app, &sam, &format!("/users/{alex_id}/profile")).await;
+    assert_eq!(p.user.typing_text, None);
+    let p: Profile = get_json(&app, &kim, &format!("/users/{alex_id}/profile")).await;
+    assert_eq!(p.user.typing_text.as_deref(), Some("cooking"));
+
+    // a ProfileUpdated as alex changes it
+    drain(&mut sam_ws, 200).await;
+    drain(&mut kim_ws, 200).await;
+    assert_eq!(put(save("yapping")).await.unwrap().status(), 200);
+    let updated = |events: Vec<Event>| {
+        events.into_iter().find_map(|e| match e {
+            Event::ProfileUpdated { user, .. } if user.id == alex_id => Some(user),
+            _ => None,
+        })
+    };
+    let to_sam = updated(drain(&mut sam_ws, 500).await).expect("sam hears of the change");
+    assert_eq!(to_sam.typing_text, None);
+    let to_kim = updated(drain(&mut kim_ws, 500).await).expect("kim hears of the change");
+    assert_eq!(to_kim.typing_text.as_deref(), Some("yapping"));
 }
 
 /// The `User` of `who` among `members`.

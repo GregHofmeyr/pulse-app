@@ -51,6 +51,8 @@ webp-animation = { version = "0.10", features = ["static"] }
 emojis = "0.9"
 unicode-segmentation = "1"
 unicode-normalization = "0.1"
+# general categories for the typing-text rules (#652); already in the tree (via idna)
+unicode-properties = "0.1"
 totp-rs = { version = "6", default-features = false, features = ["std"] }
 chacha20poly1305 = { version = "0.11", default-features = false, features = ["alloc"] }
 hmac = { version = "0.13", optional = true }

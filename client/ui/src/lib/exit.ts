@@ -12,7 +12,9 @@ export const DUR_EXIT = 100
 /** cubic-bezier(.4, 0, 1, 1) (--ease-exit), near enough: an ease-in. */
 const easeIn = (t: number) => t * t
 
-export function exitFade(node: Element): TransitionConfig {
-  if (typeof (node as HTMLElement).animate !== 'function' || motion.reducedMotion || motion.streaming || !windowFocus.focused) return { duration: 0 }
+/** `fadeWhenReduced`: still fade under reduced motion (a fade moves nothing), for a line that would otherwise blink
+ *  (the typing line, #652). */
+export function exitFade(node: Element, opts: { fadeWhenReduced?: boolean } = {}): TransitionConfig {
+  if (typeof (node as HTMLElement).animate !== 'function' || (motion.reducedMotion && !opts.fadeWhenReduced) || motion.streaming || !windowFocus.focused) return { duration: 0 }
   return { duration: DUR_EXIT, easing: easeIn, css: (t) => `opacity: ${t}` }
 }

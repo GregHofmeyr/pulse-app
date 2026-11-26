@@ -218,6 +218,7 @@ async fn finish_register(
         avatar_hash: None,
         avatar_still: None,
         style: Default::default(),
+        typing_text: None,
     };
     s.hub
         .publish(&s.db, Event::UserCreated { user: user.clone() })

@@ -15,6 +15,7 @@
   import { app, loadProfile } from '../lib/store.svelte'
   import { setProfile } from '../lib/state'
   import { api, errorText } from '../lib/tauri'
+  import { TYPING_SUGGESTIONS, typingTextProblem } from '../lib/typingLine'
   import { BIO_LINE_BREAKS_MAX, BIO_MAX, charCount, draftFrom, editsSince, isDirty, isZalgo, nameProblem, normalBio, previewCard, previewUser, PRONOUNS_MAX, toRequest, type Draft } from '../lib/profileDraft'
   import { clickOutside, radioKeys } from '../lib/actions'
   import { cardVars, presetFor, THEME_PRESETS } from '../lib/cardTheme'
@@ -112,7 +113,10 @@
   const bioBreaksOver = $derived((bio.match(/\n/g)?.length ?? 0) > BIO_LINE_BREAKS_MAX)
   const pronounsOver = $derived(!!draft && charCount(draft.pronouns.trim()) > PRONOUNS_MAX)
   const nameError = $derived(draft ? nameProblem(draft.displayName) : null)
-  const invalid = $derived(bioOver || bioBreaksOver || pronounsOver || !!nameError)
+  const typingError = $derived(draft ? typingTextProblem(draft.typingText) : null)
+  /** Your name as the draft has it, for "<name> is …" (#652). */
+  const typingName = $derived(draft && me ? draft.displayName.trim() || me.username : '')
+  const invalid = $derived(bioOver || bioBreaksOver || pronounsOver || !!nameError || !!typingError)
   // Accounts from before display names have their username as one: nudge once (#47), until dismissed.
   const NUDGE_KEY = (id: string) => `pulse.nameNudgeDismissed.${id}`
   let nudgeGone = $state(false)
@@ -437,6 +441,22 @@
               {#if pronounsOver}<p class="error" role="alert">Pronouns can be up to 40 characters.</p>{/if}
             </div>
           </div>
+          <div class="settings-field typing-field">
+            <span class="settings-label">Typing text</span>
+            <!-- "<name> is [ … ]": only what follows "is" is yours to write (#652); counted as the server counts -->
+            <div class="typing-row">
+              <span class="typing-who name-clip">{typingName}</span><span class="typing-is">is</span>
+              <input class="input text" type="text" aria-label="Typing text" aria-invalid={!!typingError} placeholder="typing…" bind:value={draft.typingText}
+                data-tip="What shows while you type, in every server and DM. Blank is the plain “is typing…”." />
+            </div>
+            <div class="chips typing-suggestions" role="group" aria-label="Suggestions">
+              {#each TYPING_SUGGESTIONS as t (t)}
+                <button type="button" class="toggle-chip" aria-pressed={draft.typingText.trim() === t} onclick={() => (draft!.typingText = t)}>{t}</button>
+              {/each}
+            </div>
+            <p class="typing-preview"><strong class="name-clip">{typingName}</strong> is {draft.typingText.trim() || 'typing…'}</p>
+            {#if typingError}<p class="error" role="alert">{typingError}</p>{/if}
+          </div>
           <div class="settings-field">
             <span class="settings-label">Bio</span>
             <EmojiBox bind:this={bioBox} bind:text={draft.bio} label="Bio" class="bio" />
@@ -691,4 +711,12 @@
   .muted { color: var(--text-3); font-size: 13px; }
   .error { margin: 0; color: var(--danger-text); font-size: 13px; }
   .retry { height: 28px; margin-left: 8px; }
+  /* typing text (#652): "<name> is [ … ]" on one row that shrinks to any width, the box first, then a long name */
+  .typing-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .typing-who { flex: 0 1 auto; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+  .typing-is { flex: none; color: var(--text-2); }
+  .typing-row .input { flex: 1 1 0; min-width: 0; }
+  .typing-suggestions { flex-wrap: wrap; }
+  .typing-preview { margin: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--text-3); }
+  .typing-preview strong { color: var(--text); }
 </style>
