@@ -154,6 +154,48 @@ describe('BuildPage', () => {
     expect(document.querySelector('.viewer[role=dialog]')?.getAttribute('aria-label')).toBe('shot2.webp')
   })
 
+  it('from the +N tile the viewer reaches every screenshot in order, both ways, none skipped (H796T1)', async () => {
+    // the screenshots past the fourth tile are never drawn on the page, so the viewer fetches them ahead: the one
+    // after and the one before the image on show, before you step onto them (not a blank stage for a second)
+    const warmed: string[] = []
+    const RealImage = globalThis.Image
+    vi.stubGlobal('Image', class {
+      decoding = ''
+      set src(v: string) { warmed.push(v) }
+    })
+    try {
+      await page(build('M001', {}, { attachments: [1, 2, 3, 4, 5, 6].map(shot) }))
+      document.querySelectorAll<HTMLButtonElement>('.build-view .tile')[3].click()
+      await flush()
+      expect(warmed).toEqual(expect.arrayContaining(['https://files/5.webp', 'https://files/3.webp']))
+      // an image still loading says so (after the shared delay), never an empty stage
+      expect(document.querySelector('.viewer .stage img')?.classList.contains('pending')).toBe(true)
+      document.querySelector('.viewer .stage img')!.dispatchEvent(new Event('load'))
+      flushSync()
+      expect(document.querySelector('.viewer .stage img')?.classList.contains('pending')).toBe(false)
+    } finally {
+      vi.stubGlobal('Image', RealImage)
+    }
+    const viewer = () => document.querySelector<HTMLElement>('.viewer[role=dialog]')!
+    const seen = () => ({ name: viewer().getAttribute('aria-label'), count: viewer().querySelector('.count')?.textContent?.trim(), src: viewer().querySelector('img')?.getAttribute('src') })
+    expect(seen()).toEqual({ name: 'shot4.webp', count: '· 4 of 6', src: 'https://files/4.webp' })
+    const forward: (string | null)[] = []
+    for (let i = 0; i < 6; i++) {
+      viewer().querySelector<HTMLButtonElement>('.nav.next')!.click()
+      await flush()
+      forward.push(seen().name)
+      expect(seen().src).toBe(`https://files/${seen().name!.match(/\d+/)![0]}.webp`)
+    }
+    expect(forward).toEqual(['shot5.webp', 'shot6.webp', 'shot1.webp', 'shot2.webp', 'shot3.webp', 'shot4.webp'])
+    const back: (string | null)[] = []
+    for (let i = 0; i < 6; i++) {
+      viewer().dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }))
+      await flush()
+      back.push(seen().name)
+    }
+    expect(back).toEqual(['shot3.webp', 'shot2.webp', 'shot1.webp', 'shot6.webp', 'shot5.webp', 'shot4.webp'])
+  })
+
   it('the author sees Edit, Archive and Delete; sam only Pin to side and Pop out; the owner Archive and Delete', async () => {
     // alex's own build
     await page(build('M001', {}, { author_id: 'U1' }))
