@@ -344,6 +344,8 @@ async fn a_blocked_viewer_never_gets_your_typing_text() {
         display_name: None,
         glow: None,
         typing_text: Some(text.into()),
+        ring_style: None,
+        ring_color: None,
     };
     let put = |body: UpdateProfileRequest| {
         app.http

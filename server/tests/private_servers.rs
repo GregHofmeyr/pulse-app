@@ -411,6 +411,8 @@ async fn people_and_their_profiles_reach_only_who_shares_something() {
             avatar_still: None,
             style: Default::default(),
             typing_text: None,
+            ring_style: None,
+            ring_color: None,
         },
     };
     assert_eq!(

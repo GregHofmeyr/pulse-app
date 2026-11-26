@@ -6462,6 +6462,8 @@ mod tests {
                     display_name: None,
                     glow: None,
                     typing_text: None,
+                    ring_style: None,
+                    ring_color: None,
                 },
             )
             .await

@@ -361,13 +361,15 @@ pub fn emptied(
     (user, card)
 }
 
-/// Just the [`pulse_protocol::rest::User`] part of [`emptied`]: the default avatar, no name style
-/// and the plain "is typing" (#652).
+/// Just the [`pulse_protocol::rest::User`] part of [`emptied`]: the default avatar, no name style,
+/// the plain "is typing" (#652) and the plain green ring (#651).
 pub fn emptied_user(mut user: pulse_protocol::rest::User) -> pulse_protocol::rest::User {
     user.avatar_hash = None;
     user.avatar_still = None;
     user.style = Default::default();
     user.typing_text = None;
+    user.ring_style = None;
+    user.ring_color = None;
     user
 }
 
