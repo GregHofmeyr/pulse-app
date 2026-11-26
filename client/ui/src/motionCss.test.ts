@@ -80,6 +80,8 @@ describe('motion', () => {
     'components/Name.svelte': /^fx-/,
     // the invite pack's tear, rip and card rise (#511): the design's own timings
     'components/ServerInviteCard.svelte': /^(pack-|transform \d|opacity \d|clip-path \d)/,
+    // the speaking rings (#651): each style's own loop, its level smoothing and its fade, timed in the ring design (§4)
+    'components/SpeakingRing.svelte': /^(ring-|opacity \.\d+s|scale \.1s linear$)/,
     // reduced motion: everything finishes at once
     'app.css': /^\.01ms !important$/,
   }
