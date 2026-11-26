@@ -572,14 +572,16 @@ async fn an_invite_whose_sender_is_no_longer_a_member_hands_out_nothing() {
     gone().await;
     play(&app, &mut alex_ws, alex, false).await;
     play(&app, &mut alex_ws, alex, true).await;
-    tokio::time::sleep(Duration::from_millis(200)).await;
-    let ended: Option<String> =
-        sqlx::query_scalar("SELECT ended_at FROM game_invites WHERE message_id = ?")
-            .bind(msg.id.to_string())
-            .fetch_one(&app.db)
-            .await
-            .unwrap();
-    assert!(ended.is_some());
+    let ended = || async {
+        sqlx::query_scalar::<_, Option<String>>(
+            "SELECT ended_at FROM game_invites WHERE message_id = ?",
+        )
+        .bind(msg.id.to_string())
+        .fetch_one(&app.db)
+        .await
+        .unwrap()
+    };
+    assert!(eventually_async(|| async { ended().await.is_some() }).await);
 }
 
 #[tokio::test]

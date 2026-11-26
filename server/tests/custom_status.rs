@@ -190,8 +190,7 @@ async fn custom_status_reaches_only_those_who_see_you_online() {
 
     // offline: none
     drop((alex_ws, _a2, _a3));
-    tokio::time::sleep(Duration::from_millis(300)).await;
-    let (_s4, r) = hello(&app, &s).await;
+    let (_s4, r) = hello_until(&app, &s, "alex offline", |r| seen_in(r, a_id).is_none()).await;
     assert_eq!(seen_in(&r, a_id), None);
 
     // cleared: alex's recent ones stay

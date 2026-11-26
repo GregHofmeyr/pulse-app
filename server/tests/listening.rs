@@ -362,7 +362,13 @@ async fn a_jam_on_the_stage_shows_what_its_sharer_plays() {
     let ch = lounge(&app, &(a, at.clone()), &(s, st.clone())).await;
     // reading, but not showing it: the Jam still gets it, nobody gets an activity
     say(&mut alex_ws, Some(update("Before")), false).await;
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    // held once the server has read it (its art is fetched on a task)
+    assert!(
+        eventually(|| {
+            app.hub.listening_of(a, false).map(|l| l.title).as_deref() == Some("Before")
+        })
+        .await
+    );
     let jam = share(&app, &at, &ch, SPOTIFY_JAM_URL).await;
     assert_eq!(jam.now_playing.map(|l| l.title), Some("Before".into()));
     drain(&mut sam_ws, 300).await;

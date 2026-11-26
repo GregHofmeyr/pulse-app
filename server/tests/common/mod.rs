@@ -310,3 +310,26 @@ where
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
 }
+
+/// Says Hello afresh until the Ready satisfies `pred` (something the server settles in the
+/// background), for up to `EVENTUALLY`; panics naming `what` if it never does.
+pub async fn hello_until(
+    app: &TestApp,
+    token: &str,
+    what: &str,
+    pred: impl Fn(&pulse_protocol::gateway::Ready) -> bool,
+) -> (Socket, pulse_protocol::gateway::Ready) {
+    let deadline = Instant::now() + EVENTUALLY;
+    loop {
+        let (ws, r) = hello(app, token).await;
+        if pred(&r) {
+            return (ws, r);
+        }
+        assert!(
+            Instant::now() < deadline,
+            "no Ready with {what} in {EVENTUALLY:?}"
+        );
+        drop(ws);
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
