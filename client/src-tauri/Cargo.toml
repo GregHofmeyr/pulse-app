@@ -13,6 +13,11 @@ path = "src/main.rs"
 name = "pulse_client"
 path = "src/lib.rs"
 
+[package.metadata.cargo-machete]
+# Used, but not visible to cargo-machete: deep_filter is imported as `df` (its lib name); tract-core and
+# livekit-signaling are version pins only (see their comments below).
+ignored = ["deep_filter", "tract-core", "livekit-signaling"]
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
@@ -52,10 +57,9 @@ deep_filter = { git ="https://github.com/Rikorose/DeepFilterNet", rev = "d375b2d
 ndarray = "0.15"
 # libDF needs tract on ndarray 0.15; tract 0.21.7+ moved to ndarray 0.16 (semver-compatible bump
 # that breaks libDF's types). Pinned to 0.21.4, the version libDF's own Cargo.lock uses (0.21.6 already renamed a field it needs).
+# Every tract crate pins its siblings exactly (tract-onnx 0.21.4 wants tract-hir =0.21.4, which wants tract-core
+# =0.21.4), so this one pin holds libDF's tract-onnx/-pulse/-hir at 0.21.4 too. Not used directly.
 tract-core = "=0.21.4"
-tract-onnx = "=0.23.9"
-tract-pulse = "=0.23.9"
-tract-hir = "=0.23.9"
 # Its `deep-link` feature hands a second launch's `pulse://` link to the running app (#476).
 tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 # `pulse://invite/<code>` links (#476): registered for the user at startup (Windows), handled in Rust only (no webview
@@ -92,8 +96,6 @@ pulse-server = { path = "../../server", features = ["testing"] }
 livekit-api = { version = "0.9.1", default-features = false, features = ["access-token", "services"] }
 # tests compute the codes a phone would show (same version/features as the server)
 totp-rs = { version = "6", default-features = false, features = ["std"] }
-# tests/emoji_e2e.rs builds the PNG and GIF it uploads
-image = { version = "0.25", default-features = false, features = ["png", "gif"] }
 # tests/voice_it.rs counts the PeerConnections alive in the process (the vendored copy's
 # live_peer_connections, #227); the one livekit already builds
 webrtc-sys = "0.3.52"

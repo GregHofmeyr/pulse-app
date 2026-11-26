@@ -28,6 +28,10 @@ repository = "https://github.com/livekit/rust-sdks"
 [package.metadata.feature-combinations]
 mode = "powerset"
 
+# Pulse: upstream declares `log` but never uses it; metadata only, the build is unchanged.
+[package.metadata.cargo-machete]
+ignored = ["log"]
+
 [features]
 default = []
 
