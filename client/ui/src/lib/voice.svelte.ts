@@ -13,6 +13,7 @@ import { isJoining, reduceStage, type StageState } from './voicestage'
 import { holdOwnCue, ownJoin, peerJoin } from './joinSounds'
 import { joinSounds, playJoin } from './joinSounds.svelte'
 import { isBlocked } from './blocks'
+import { apply as applyRingLevels } from './ringLevels.svelte'
 
 export const voice = $state({
   channelId: null as string | null,
@@ -210,6 +211,11 @@ export async function startVoiceListening() {
   })
   const offBlocksReady = onAppReady(() => (blockedBefore = new Set(app.state.blocks.map((b) => b.user_id))))
   const offVoice = await listen<VoiceEvent>('voice://event', ({ payload: e }) => {
+    // ring levels (#651) go straight onto the ring elements: never through $state, 14 times a second
+    if (e.kind === 'speaking_levels') {
+      applyRingLevels(e.levels)
+      return
+    }
     voice.stage = reduceStage(voice.stage, e)
     switch (e.kind) {
       case 'state': {

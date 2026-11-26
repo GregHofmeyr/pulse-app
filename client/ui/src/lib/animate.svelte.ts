@@ -61,7 +61,8 @@ export function watchMotion(): void {
 let io: IntersectionObserver | null | undefined
 const onSeen = new Map<Element, (visible: boolean) => void>()
 
-function observe(el: Element, cb: (visible: boolean) => void): () => void {
+/** One shared IntersectionObserver: `cb` hears whether `el` is on screen (true at once where it can't tell). */
+export function observe(el: Element, cb: (visible: boolean) => void): () => void {
   if (io === undefined) {
     io = typeof IntersectionObserver === 'function'
       ? new IntersectionObserver((entries) => {

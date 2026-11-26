@@ -106,6 +106,9 @@ export type VoiceEvent =
   | { kind: 'stage'; stage: StageName; attempt: number | null }
   | ({ kind: 'link' } & LinkReport)
   | { kind: 'speaking'; user_ids: string[] }
+  /** Per-speaker loudness 0..1 for the reactive rings (#651), ~14 Hz: only people speaking, only while a ring watches;
+   * one `{}` when the last one stops. Emitted after the tick's `speaking`. */
+  | { kind: 'speaking_levels'; levels: Record<string, number> }
   | { kind: 'quality'; user_id: string; quality: string }
   | { kind: 'levels'; mic: number; speaker: number; gate_open: boolean }
   | { kind: 'noise_suppression'; active: NsLevel; note: string | null }
