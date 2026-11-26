@@ -145,7 +145,7 @@
     clearing = true
     try {
       await api.updateBuild(m.id, channelId, {
-        title: m.build.title, game_id: null, link_url: m.build.link?.url ?? null, notes: m.build.notes, attachments: [], mark_sorted: false,
+        title: m.build.title, game_id: null, game: 'clear', link_url: m.build.link?.url ?? null, notes: m.build.notes, attachments: [], mark_sorted: false,
       }, buildShots(m).map((a) => `id:${a.id}`))
     } catch (e) {
       error = errorText(e)
