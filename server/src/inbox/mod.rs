@@ -264,7 +264,8 @@ pub enum Job {
     /// Likewise for every channel of a server.
     Server { server: ServerId },
     /// A reply landed in (or left) a quote's or clip's thread: [`Job::Recount`] whoever is part of it and connected
-    /// (its Threads count is in theirs, #419).
+    /// (its Threads count is in theirs, #419). Done by the first worker (who is part of it is read there), but each
+    /// recount is queued on that person's own worker, behind their items: see [`run`].
     Thread { root: MessageId },
 }
 
@@ -467,13 +468,18 @@ pub async fn run(db: &SqlitePool, hub: &Hub, jobs: Vec<Job>) {
             Job::Thread { root } => push_new(&mut roots, root),
         }
     }
+    // A thread's people are recounted on their own workers, not here (#650): this is the first worker, and a recount
+    // run here could beat their worker to an item of the same publish. Deleting a quote with replies that mention
+    // you queues your `Removed` on yours and the thread on this one; a count read here first would reach you as a
+    // bare count before the items it took. Queued now, the recount lands behind it (and finds nothing new to tell).
     if !roots.is_empty() {
         let online = hub.online_users();
+        let mut theirs: Vec<UserId> = Vec::new();
         for &root in &roots {
             match threads::part_of(db, root).await {
                 Ok(users) => {
                     for user in users.into_iter().filter(|u| online.contains(u)) {
-                        push_new(&mut recount, user);
+                        push_new(&mut theirs, user);
                     }
                 }
                 Err(e) => {
@@ -481,6 +487,7 @@ pub async fn run(db: &SqlitePool, hub: &Hub, jobs: Vec<Job>) {
                 }
             }
         }
+        hub.queue_inbox(db, theirs.into_iter().map(|user| Job::Recount { user }).collect());
     }
     match with_items_in(db, &gone_channels, &gone_servers).await {
         Ok(users) => {

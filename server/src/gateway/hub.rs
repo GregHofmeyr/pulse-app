@@ -674,7 +674,7 @@ impl Hub {
 
     /// Hand `jobs` to the inbox workers, each person's to theirs, starting a worker the first time (or again,
     /// logged, if it has ended). Never waits: a full queue collapses the work into that worker's overflow.
-    fn queue_inbox(&self, db: &SqlitePool, jobs: Vec<crate::inbox::Job>) {
+    pub(crate) fn queue_inbox(&self, db: &SqlitePool, jobs: Vec<crate::inbox::Job>) {
         let mut by_shard: [Vec<crate::inbox::Job>; INBOX_SHARDS] = Default::default();
         for job in jobs {
             by_shard[job.shard(INBOX_SHARDS)].push(job);
