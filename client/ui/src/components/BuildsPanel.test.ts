@@ -409,6 +409,50 @@ describe('BuildsChannel counts', () => {
     }
   })
 
+  it('counts follow the search (#664): asked with its words, the last ones held meanwhile, thrown away after', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      let release: (() => void) | null = null
+      const raven: BuildFacets = { total: 1, games: [{ game_id: 'G2', count: 1 }] }
+      invoke.mockImplementation(async (cmd: string, args?: unknown) => {
+        const a = (args ?? {}) as Record<string, unknown>
+        if (cmd === 'list_builds') return a.q ? [live[1]] : live
+        if (cmd === 'build_facets') return a.q ? new Promise((r) => (release = () => r(raven))) : facets[String(a.archived)]
+        return undefined
+      })
+      cmp = mount(BuildsChannel, { target: document.body, props: { channelId: 'B1', serverId: 'S1' } })
+      flushSync()
+      await vi.advanceTimersByTimeAsync(0)
+      flushSync()
+      expect(total()).toBe('3')
+      const box = document.querySelector<HTMLInputElement>('.builds-head input[type=search]')!
+      box.value = ' raven '
+      box.dispatchEvent(new Event('input', { bubbles: true }))
+      await vi.advanceTimersByTimeAsync(300)
+      flushSync()
+      expect(calls('build_facets').at(-1)![1]).toEqual({ channelId: 'B1', archived: false, q: 'raven' })
+      // the whole channel's counts stay on screen until the search's land
+      expect(total()).toBe('3')
+      release!()
+      await vi.advanceTimersByTimeAsync(0)
+      flushSync()
+      const rows = [...panel()!.querySelectorAll<HTMLButtonElement>('.games button')].map((b) => [b.querySelector('.name')?.textContent, b.querySelector('.n')?.textContent])
+      expect(rows).toEqual([['All games', '1'], ['Warframe', '1']])
+      expect(Object.keys(app.state.buildFacets)).toContain('B1|0|raven')
+      // words cleared: the whole channel's counts again (still held, not asked for), the search's thrown away
+      const asked = calls('build_facets').length
+      box.value = ''
+      box.dispatchEvent(new Event('input', { bubbles: true }))
+      await vi.advanceTimersByTimeAsync(300)
+      flushSync()
+      expect(total()).toBe('3')
+      expect(calls('build_facets')).toHaveLength(asked)
+      expect(Object.keys(app.state.buildFacets)).toEqual(['B1|0'])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('a failed count fetch does not stop the other variant loading', async () => {
     facetsFail = (archived) => !archived
     await show()

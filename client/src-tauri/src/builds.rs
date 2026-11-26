@@ -100,12 +100,13 @@ impl Api {
         .await
     }
 
-    /// The channel's builds counted per game (archived ones too with `archived`).
+    /// The channel's builds counted per game (archived ones too with `archived`; only those matching `q`, #664).
     pub async fn build_facets(
         &self,
         token: &str,
         channel: ChannelId,
         archived: bool,
+        q: Option<&str>,
     ) -> Result<BuildFacets, ApiError> {
         let mut req = self
             .http
@@ -113,6 +114,9 @@ impl Api {
             .bearer_auth(token);
         if archived {
             req = req.query(&[("archived", "true")]);
+        }
+        if let Some(q) = q.map(str::trim).filter(|q| !q.is_empty()) {
+            req = req.query(&[("q", q)]);
         }
         Self::clip_parse(req.send().await).await
     }
@@ -539,9 +543,14 @@ pub async fn build_facets(
     core: State<'_, Core>,
     channel_id: ChannelId,
     archived: bool,
+    q: Option<String>,
 ) -> Result<BuildFacets, ApiError> {
     let (api, token) = core.current()?;
-    core.check(&app, api.build_facets(&token, channel_id, archived).await)
+    core.check(
+        &app,
+        api.build_facets(&token, channel_id, archived, q.as_deref())
+            .await,
+    )
 }
 
 #[tauri::command]
@@ -885,10 +894,28 @@ mod tests {
     async fn the_other_calls_reach_their_routes() {
         let (api, seen) = capture(r#"{"total":0,"games":[]}"#).await;
         let ch = ChannelId::new();
-        api.build_facets("t", ch, true).await.unwrap();
+        api.build_facets("t", ch, true, None).await.unwrap();
         let req = first(&seen);
         assert!(
             req.starts_with(&format!("GET /channels/{ch}/builds/facets?archived=true ")),
+            "{req}"
+        );
+
+        let (api, seen) = capture(r#"{"total":0,"games":[]}"#).await;
+        api.build_facets("t", ch, false, Some(" raven gley "))
+            .await
+            .unwrap();
+        let req = first(&seen);
+        assert!(
+            req.starts_with(&format!("GET /channels/{ch}/builds/facets?q=raven+gley ")),
+            "{req}"
+        );
+        // blank words: no search sent
+        let (api, seen) = capture(r#"{"total":0,"games":[]}"#).await;
+        api.build_facets("t", ch, false, Some("  ")).await.unwrap();
+        let req = first(&seen);
+        assert!(
+            req.starts_with(&format!("GET /channels/{ch}/builds/facets ")),
             "{req}"
         );
 

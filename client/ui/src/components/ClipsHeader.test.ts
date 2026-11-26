@@ -452,6 +452,74 @@ describe('ClipsChannel', () => {
     expect(row('people', 'Kimmy').getAttribute('aria-pressed')).toBe('true')
   })
 
+  it('counts follow the other filter (#664): a person narrows Games, a game narrows People, never their own side', async () => {
+    // the server's answer for each ask: Sam's clips per game, then Apex's clips per person
+    const bySam = { games: [{ game_id: 'G1', count: 2 }], authors: facets.authors, total: 3, authors_total: 7 }
+    const samApex = { games: bySam.games, authors: [{ user_id: 'U2', count: 2 }], total: 3, authors_total: 2 }
+    let release: (() => void) | null = null
+    invoke.mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd === 'list_clips') return []
+      if (cmd !== 'clip_facets') return undefined
+      const a = args as { game?: string; author?: string }
+      if (a.author && a.game) return new Promise((r) => (release = () => r(samApex)))
+      return a.author ? bySam : facets
+    })
+    await openChannel()
+    expect(calls('clip_facets').at(-1)![1]).toEqual({ channelId: 'C1' })
+    row('people', 'sam').click()
+    flushSync()
+    await settle()
+    flushSync()
+    expect(calls('clip_facets').at(-1)![1]).toEqual({ channelId: 'C1', author: 'U2' })
+    // Games are Sam's: Rocket League has none of his, but "All games" is his three; People keeps the whole channel
+    expect(rows('games')).toEqual([['All games', '3'], ['Apex', '2']])
+    expect(rows('people')).toEqual([['Everyone', '7'], ['sam', '5'], ['Kimmy', '1']])
+    row('games', 'Apex').click()
+    flushSync()
+    await settle()
+    flushSync()
+    expect(calls('clip_facets').at(-1)![1]).toEqual({ channelId: 'C1', game: 'G1', author: 'U2' })
+    // while the new counts are on their way the last ones stay on screen, never blank
+    expect(rows('games')).toEqual([['All games', '3'], ['Apex', '2']])
+    expect(rows('people')).toEqual([['Everyone', '7'], ['sam', '5'], ['Kimmy', '1']])
+    release!()
+    await settle()
+    flushSync()
+    // People are Apex's: "Everyone" is Apex's two, Kimmy has none (gone), Sam still picked
+    expect(rows('people')).toEqual([['Everyone', '2'], ['sam', '2']])
+    expect(row('people', 'sam').getAttribute('aria-pressed')).toBe('true')
+    // back to all games: People go back to the whole channel's (asked again for that filter)
+    row('games', 'All games').click()
+    flushSync()
+    await settle()
+    flushSync()
+    expect(calls('clip_facets').at(-1)![1]).toEqual({ channelId: 'C1', author: 'U2' })
+    expect(rows('people')).toEqual([['Everyone', '7'], ['sam', '5'], ['Kimmy', '1']])
+  })
+
+  it('a server older than #664 (no "Everyone" count of its own): Everyone shows the total', async () => {
+    await openChannel()
+    expect(rows('people')[0]).toEqual(['Everyone', '7'])
+  })
+
+  it('a failed narrowed fetch keeps the last counts and is not retried in a loop', async () => {
+    invoke.mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd === 'list_clips') return []
+      if (cmd !== 'clip_facets') return undefined
+      if ((args as { author?: string }).author) throw new Error('nope')
+      return facets
+    })
+    await openChannel()
+    row('people', 'sam').click()
+    flushSync()
+    await settle()
+    flushSync()
+    await settle()
+    flushSync()
+    expect(calls('clip_facets')).toHaveLength(2)
+    expect(rows('games')).toEqual([['All games', '7'], ['Rocket League', '4'], ['Apex', '2']])
+  })
+
   it('layout: the feed gives way to the panel (min-width 0), so nothing spills at any width', () => {
     const src = readFileSync(resolve(__dirname, 'ClipsChannel.svelte'), 'utf8').split('<style>')[1]
     expect(src).toMatch(/\.body\s*\{[^}]*display:\s*flex[^}]*min-height:\s*0/)

@@ -11,7 +11,7 @@
   import ClipsPanel from './ClipsPanel.svelte'
   import { clipPanelOpen, setClipPanelOpen } from '../lib/clipPrefs'
   import RepliesPanel from './RepliesPanel.svelte'
-  import { clipView, type ClipFilter } from '../lib/clips'
+  import { clipView, feedKey, type ClipFilter } from '../lib/clips'
   import { InlineError } from '../lib/inlineError.svelte'
   import { app, onAppEvent, ui } from '../lib/store.svelte'
   import { pendingFresh, rememberClipsChannel } from '../lib/clipDrop.svelte'
@@ -32,26 +32,37 @@
   let panel = $state(untrack(() => clipPanelOpen(channelId)))
   const panelId = $derived(`clips-panel-${channelId}`)
 
-  // --- the panel's counts: loaded on open (and after a reconnect clears them), then a second after clip changes ---
-  let facetsLoading = false
-  let facetsFailed = false
+  // --- the panel's counts: loaded on open (and after a reconnect clears them), when the filter changes (each side is
+  // counted under the other side's pick, #664), then a second after clip changes. The last counts stay on screen
+  // while fresh ones are fetched. ---
+  let facetsFor = $state<string | null>(null) // the filter (as its feed key) the stored counts were asked for
+  let facetsLoading: string | null = null
+  let facetsFailed = $state<string | null>(null) // not asked again for that filter until a clip changes
   let facetsSeq = 0 // only the newest request's answer counts (an on-open load and a debounced one can overlap)
-  async function loadFacets() {
+  async function loadFacets(f: ClipFilter) {
     const seq = ++facetsSeq
-    facetsLoading = true
+    const k = feedKey(channelId, f)
+    facetsLoading = k
     try {
-      const f = await api.clipFacets(channelId)
+      const got = await api.clipFacets(channelId, f.game, f.author)
       if (seq !== facetsSeq) return
-      facetsFailed = false
-      app.state = { ...app.state, clipFacets: { ...app.state.clipFacets, [channelId]: f } }
+      facetsFailed = null
+      facetsFor = k
+      app.state = { ...app.state, clipFacets: { ...app.state.clipFacets, [channelId]: got } }
     } catch {
-      if (seq === facetsSeq) facetsFailed = true // the chips stay as they were; the next clip change asks again
+      if (seq === facetsSeq) facetsFailed = k // the counts stay as they were; the next clip change asks again
     } finally {
-      if (seq === facetsSeq) facetsLoading = false
+      if (seq === facetsSeq) facetsLoading = null
     }
   }
   $effect(() => {
-    if (!app.state.clipFacets[channelId] && !facetsLoading && !facetsFailed) void loadFacets()
+    const f = filter
+    const k = feedKey(channelId, f)
+    const have = !!app.state.clipFacets[channelId] && facetsFor === k
+    if (have || facetsFailed === k) return
+    untrack(() => {
+      if (facetsLoading !== k) void loadFacets(f)
+    })
   })
   let facetsTimer: ReturnType<typeof setTimeout> | undefined
   $effect(() =>
@@ -62,7 +73,10 @@
         : false
       if (!ours) return
       clearTimeout(facetsTimer)
-      facetsTimer = setTimeout(() => void loadFacets(), FACETS_DEBOUNCE_MS)
+      facetsTimer = setTimeout(() => {
+        facetsFailed = null
+        void loadFacets(filter)
+      }, FACETS_DEBOUNCE_MS)
     }),
   )
   $effect(() => () => clearTimeout(facetsTimer))

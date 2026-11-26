@@ -50,6 +50,10 @@ pub struct AudioConfig {
     /// "Voice clarity EQ" (#590): the mic's tone stage (`tone`) after noise suppression.
     #[serde(default = "default_true")]
     pub voice_clarity_eq: bool,
+    /// The mic test's "Hear yourself as others do" (#659): its loopback through the receive side first (Opus
+    /// round trip, the leveller). Off by default; only the mic test reads it.
+    #[serde(default)]
+    pub mic_test_as_others_hear: bool,
     /// Pre-2026-10 on/off noise toggle: only read, to migrate old settings (see `normalized`).
     #[serde(default, skip_serializing)]
     pub noise_suppress: Option<bool>,
@@ -89,6 +93,7 @@ impl Default for AudioConfig {
             auto_gain: false,
             even_out_voices: true,
             voice_clarity_eq: true,
+            mic_test_as_others_hear: false,
             noise_suppress: None,
             echo_cancel: None,
         }

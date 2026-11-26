@@ -2377,6 +2377,63 @@ async fn facets_count_live_clips() {
     assert_eq!(authors, vec![(w.sam.0, 4), (w.alex.0, 3)]);
     // "All games" (#663): every live clip, the two with no game too (not the deleted one or the reply).
     assert_eq!(f.total, Some(7));
+    // No filter asked for: today's answer exactly, "Everyone" left to `total` (#664).
+    assert_eq!(f.authors_total, None);
+    let raw: serde_json::Value = get_json(
+        &w.app,
+        &w.alex.1,
+        &format!("/channels/{}/clips/facets", w.channel.id),
+    )
+    .await;
+    assert!(raw.get("authors_total").is_none(), "{raw}");
+
+    // A person picked (#664): the games and "All games" are that person's; the people side isn't narrowed by them.
+    let f: pulse_protocol::rest::ClipFacets = get_json(
+        &w.app,
+        &w.alex.1,
+        &format!("/channels/{}/clips/facets?author={}", w.channel.id, w.sam.0),
+    )
+    .await;
+    let games: Vec<_> = f.games.iter().map(|g| (g.game_id, g.count)).collect();
+    assert_eq!(games, vec![(apex.id, 2), (halo.id, 1)]);
+    assert_eq!(f.total, Some(4));
+    let authors: Vec<_> = f.authors.iter().map(|a| (a.user_id, a.count)).collect();
+    assert_eq!(authors, vec![(w.sam.0, 4), (w.alex.0, 3)]);
+    assert_eq!(f.authors_total, Some(7));
+
+    // A game picked: the people and "Everyone" are that game's; the games side and "All games" aren't narrowed.
+    let f: pulse_protocol::rest::ClipFacets = get_json(
+        &w.app,
+        &w.alex.1,
+        &format!("/channels/{}/clips/facets?game={}", w.channel.id, halo.id),
+    )
+    .await;
+    // a tie: in id order, whichever of the two that is
+    let mut want = vec![(w.alex.0, 1), (w.sam.0, 1)];
+    want.sort();
+    let authors: Vec<_> = f.authors.iter().map(|a| (a.user_id, a.count)).collect();
+    assert_eq!(authors, want);
+    assert_eq!(f.authors_total, Some(2));
+    let games: Vec<_> = f.games.iter().map(|g| (g.game_id, g.count)).collect();
+    assert_eq!(games, vec![(apex.id, 2), (halo.id, 2), (doom.id, 1)]);
+    assert_eq!(f.total, Some(7));
+
+    // Both: each side under the other's pick (Doom has none of Sam's, so it drops; Apex has none of Alex's).
+    let f: pulse_protocol::rest::ClipFacets = get_json(
+        &w.app,
+        &w.alex.1,
+        &format!(
+            "/channels/{}/clips/facets?game={}&author={}",
+            w.channel.id, apex.id, w.alex.0
+        ),
+    )
+    .await;
+    let games: Vec<_> = f.games.iter().map(|g| (g.game_id, g.count)).collect();
+    assert_eq!(games, vec![(doom.id, 1), (halo.id, 1)]);
+    assert_eq!(f.total, Some(3));
+    let authors: Vec<_> = f.authors.iter().map(|a| (a.user_id, a.count)).collect();
+    assert_eq!(authors, vec![(w.sam.0, 2)]);
+    assert_eq!(f.authors_total, Some(2));
 }
 
 #[tokio::test]
@@ -2386,10 +2443,16 @@ async fn facets_total_of_an_empty_channel_is_zero_and_outsiders_are_refused() {
     let f: pulse_protocol::rest::ClipFacets = get_json(&w.app, &w.alex.1, &path).await;
     assert_eq!(f.total, Some(0));
     assert!(f.games.is_empty() && f.authors.is_empty());
-    // Members only: someone outside the server learns nothing.
+    // Members only: someone outside the server learns nothing, a filter or not.
     let kim = register(&w.app, "kim").await;
     let r = get_status(&w.app, &kim.1, &path).await;
     assert!(r.status().is_client_error(), "{}", r.status());
+    let narrowed = format!("{path}?author={}", w.alex.0);
+    let r = get_status(&w.app, &kim.1, &narrowed).await;
+    assert!(r.status().is_client_error(), "{}", r.status());
+    // A filter on an empty channel: zeros, and "Everyone" counted too.
+    let f: pulse_protocol::rest::ClipFacets = get_json(&w.app, &w.alex.1, &narrowed).await;
+    assert_eq!((f.total, f.authors_total), (Some(0), Some(0)));
 }
 
 #[tokio::test]

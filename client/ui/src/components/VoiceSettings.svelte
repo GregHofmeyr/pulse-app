@@ -200,6 +200,15 @@
   <button class="btn btn-lg btn-primary" onclick={toggleTest} disabled={inCall && !testing}>{testing ? 'Stop' : "Let's check"}</button>
   <small data-mic-test-hint>{testing ? 'You should hear yourself after a moment. Headphones recommended.' : inCall ? 'Leave the call to test your mic.' : 'Hear your mic the way others will.'}</small>
 </div>
+<div class="row as-others">
+  <div>
+    <strong>Hear yourself as others do</strong>
+    <small>Plays your mic back through what a friend's Pulse does to it: the voice codec, then their volume levelling and limiter.</small>
+    {#if cfg.mic_test_as_others_hear}<small data-as-others-delay>Adds about 25 ms of delay, as the codec does in a call.</small>{/if}
+  </div>
+  <button class="switch" aria-label="Hear yourself as others do" aria-pressed={cfg.mic_test_as_others_hear} class:on={cfg.mic_test_as_others_hear}
+    onclick={() => { cfg.mic_test_as_others_hear = !cfg.mic_test_as_others_hear; apply() }}><span></span></button>
+</div>
 <div class="sample">
   <button class="btn btn-secondary" onclick={() => void recordSample()} disabled={recording || (!inCall && !testing)}>{recording ? 'Recording…' : 'Record a mic sample'}</button>
   <small data-mic-sample-hint>{recording ? 'Speak normally for 15 seconds.' : inCall || testing ? 'Saves 15 seconds of your mic, before and after processing, for a bug report.' : 'Join a call or start “Let\'s check” first.'}</small>
@@ -248,7 +257,10 @@
   .error { margin: 0; color: var(--danger-text); font-size: 13px; }
   .toggles { display: flex; flex-direction: column; }
   .row { display: flex; align-items: center; gap: 16px; padding: 12px 0; border-bottom: 1px solid var(--line-soft); }
-  .row > div { flex: 1; display: flex; flex-direction: column; gap: 2px; }
+  .row > div { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+  .row small { overflow-wrap: anywhere; }
+  .row .switch { flex-shrink: 0; }
+  .row.as-others { margin-top: -8px; padding: 12px 16px; border: 0; border-radius: 14px; background: var(--bg-2); }
   .row.auto { padding: 0; border: 0; }
   .sample { display: flex; align-items: center; gap: 12px; margin-top: -8px; }
   .sample code { word-break: break-all; }

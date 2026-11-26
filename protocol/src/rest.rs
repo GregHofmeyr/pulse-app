@@ -3174,16 +3174,23 @@ pub struct ClipUrl {
 }
 redacting_debug!(ClipUrl { expires_at ; url });
 
-/// `GET /channels/{id}/clips/facets`: a clips channel's filter panel, clip counts per game and per author.
+/// `GET /channels/{id}/clips/facets`: a clips channel's filter panel, clip counts per game and per author. Each side
+/// is counted under the other side's filter (#664): `?author=` narrows `games` and `total`, `?game=` narrows
+/// `authors` and `authors_total`. With neither, every count is the whole channel's.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 pub struct ClipFacets {
     pub games: Vec<GameCount>,
     pub authors: Vec<AuthorCount>,
-    /// Every live clip here, those with no game too: the panel's "All games" (#663). Missing from a server older
-    /// than that, which the app shows as no count rather than a guess.
+    /// Every live clip here (by `author` if asked), those with no game too: the panel's "All games" (#663). Missing
+    /// from a server older than that, which the app shows as no count rather than a guess.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub total: Option<u32>,
+    /// Every live clip here of `game`, whoever shared it: the panel's "Everyone" (#664). Only sent when a filter was
+    /// asked for; missing, it's `total` (no filter, or a server older than #664 that counts the whole channel).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub authors_total: Option<u32>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
