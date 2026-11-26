@@ -2081,6 +2081,12 @@ pub fn watch_voice_meters(voice: State<'_, VoiceManager>, on: bool) {
     voice.watch_meters(on);
 }
 
+/// A reactive ring appeared (`on`) or the last one went: levels are sent only while one is shown (#651).
+#[tauri::command]
+pub fn watch_voice_rings(voice: State<'_, VoiceManager>, on: bool) {
+    voice.watch_rings(on);
+}
+
 /// The status panel opened (`on`) or closed: ping, jitter and loss are sent only while it is open.
 #[tauri::command]
 pub fn watch_voice_link(voice: State<'_, VoiceManager>, on: bool) {
