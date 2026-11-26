@@ -24,6 +24,37 @@ export type PatchNotes = {
 }
 
 export const patchNotes: PatchNotes = {
+  id: '0.2.21',
+  version: '0.2.21',
+  date: '27 November 2026',
+  new: [
+    'Set your own typing text in Profile settings: instead of "is typing…", everyone sees "<you> is cooking", "is plotting" or whatever you like (pick a suggestion or write your own)',
+    'Clips channels get a games panel on the right, like Builds: filter clips by game, with counts that follow your other filters',
+    '"Hear yourself as others do" in the mic test: plays your voice back after the same compression everyone else hears, so you know exactly how you sound',
+    'A "Light" noise suppression level, for mics that already clean up their own sound (Sonar, NVIDIA Broadcast and others)',
+    'Voice settings warn you when your mic is clipping, and tell you where to turn it down',
+  ],
+  fixes: [
+    'Voice: deep voices keep their low end (the mic no longer cuts bass twice)',
+    'Voice: the start and end of words are no longer clipped when your mic opens and closes',
+    'Streams: game and video audio is sent in proper stereo quality',
+    'Builds: popping a build out twice no longer leaves the window saying the build is gone',
+    'Builds: the pop-out\'s "On top" button is labelled, and hidden where your system can\'t keep windows on top',
+    'Builds: big images show a loading state, and the next and previous ones load ahead',
+    'Typing: someone typing straight after sending a message shows up again, and switching chats no longer leaves the old typing line behind',
+  ],
+  qol: [
+    'One date picker everywhere: plans, scheduled messages and reminders, and it won\'t let you pick a day in the past',
+    'Filter counts in Clips and Builds stay on screen while they update, instead of blinking',
+  ],
+  soon: [
+    'Speaking rings: pick your own style and colour, some that move with your voice',
+  ],
+  message: 'Typing text and a clearer mic 🎙️\nSpeaking rings next 💫',
+}
+
+/** The release before `patchNotes` (#235), shown collapsed below them; `null` = none. */
+export const previousPatchNotes: PatchNotes | null = {
   id: '0.2.20',
   version: '0.2.20',
   date: '25 November 2026',
@@ -62,23 +93,4 @@ export const patchNotes: PatchNotes = {
     'Pulse uses less memory over long sessions',
   ],
   message: 'Builds are here 🛠️\nAnd a clearer mic 🎙️',
-}
-
-/** The release before `patchNotes` (#235), shown collapsed below them; `null` = none. */
-export const previousPatchNotes: PatchNotes | null = {
-  id: '0.2.19',
-  version: '0.2.19',
-  date: '20 November 2026',
-  new: [],
-  fixes: [
-    'Updates: if an update doesn\'t install while Pulse is left alone, it waits a while before trying again instead of downloading it every few minutes',
-    'Updates: waking your computer from sleep no longer counts as having left Pulse alone, so an update doesn\'t start the moment you\'re back',
-    'Updates: if an update doesn\'t install, your clips carry on as before without a restart',
-    'Very old versions of Pulse are only asked to update when there\'s an update for them to install',
-  ],
-  qol: [
-    'Updates never install by themselves while you\'re playing a game or something is full screen, or over a message edit you haven\'t saved',
-    'A message that failed to send no longer holds updates back (it\'s still there after the update)',
-  ],
-  message: 'Update fixes 🔧',
 }
