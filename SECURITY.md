@@ -802,12 +802,12 @@ and the app frames it, so the player gets an HTTPS parent with a real origin.
     deployed through an explicitly confirmed, loudly marked unverified path.
 - **Pinned build inputs.**
   - **Actions.** Every GitHub Action is pinned to a full commit SHA.
-  - **Base images.** The server image's base images are pinned to an exact version and digest (`rust:1.99.1-bookworm`,
-    `debian:bookworm-20261027-slim`). A pull request that changes the Dockerfile (a Dependabot bump included) gets a
+  - **Base images.** The server image's base images are pinned to an exact version and digest (`rust:1.100.0-bookworm`,
+    `debian:bookworm-20261104-slim`). A pull request that changes the Dockerfile (a Dependabot bump included) gets a
     CI build of the image (amd64, not published) on the pull request.
-  - **Rust.** The toolchain is pinned to 1.99.1 in `rust-toolchain.toml`. CI and the release builds install exactly
+  - **Rust.** The toolchain is pinned to 1.100.0 in `rust-toolchain.toml`. CI and the release builds install exactly
     that version.
-  - **Tauri CLI.** The Windows build uses the Tauri CLI at an exact version (2.12.4), installed from the UI's lockfile.
+  - **Tauri CLI.** The Windows build uses the Tauri CLI at an exact version (2.12.6), installed from the UI's lockfile.
   - **Node.js and pnpm.** CI and the Windows build use exact versions (Node.js 22.23.4, pnpm 11.28.8). Dependabot
     doesn't update these; `deploy/README.md` says how to bump them.
   - **LLVM (CI only).** LLVM comes from apt.llvm.org's signed package repository. Before adding it, CI checks the
