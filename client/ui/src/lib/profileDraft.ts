@@ -1,5 +1,6 @@
 // The profile editor's working copy (spec §4.1): everything is staged here until Save sends it whole.
 import { lightenForName } from './nameStyle'
+import { ringColorOf, ringStyleOf, type RingColor, type RingStyle } from './speakingRing'
 import type { CardProfile } from './protocol/CardProfile'
 import type { Profile } from './protocol/Profile'
 import type { UpdateProfileRequest } from './protocol/UpdateProfileRequest'
@@ -25,6 +26,9 @@ export type Draft = {
   glow: boolean
   /** What follows "<your name> is" while you type (#652), as typed: trimmed on Save, blank for "is typing". */
   typingText: string
+  /** The speaking ring others see (#651): Classic and green by default. */
+  ringStyle: RingStyle
+  ringColor: RingColor
 }
 
 export function draftFrom(p: Profile): Draft {
@@ -46,6 +50,9 @@ export function draftFrom(p: Profile): Draft {
     glow: p.card.glow !== false,
     // none (or an older server): the plain "is typing"
     typingText: p.user.typing_text ?? '',
+    // none, unknown (a newer server's key) or an older server: Classic green
+    ringStyle: ringStyleOf(p.user),
+    ringColor: ringColorOf(p.user),
   }
 }
 
@@ -69,14 +76,27 @@ export function toRequest(d: Draft): UpdateProfileRequest {
     glow: d.glow,
     // always sent: blank clears it (absent would keep it)
     typing_text: d.typingText.trim(),
+    // always sent: "classic"/"green" store the default (absent would keep it)
+    ring_style: d.ringStyle,
+    ring_color: d.ringColor,
   }
 }
 
-/** You as the draft would make you, name colours lightened as Save will store them. */
+/** You as the draft would make you, name colours lightened as Save will store them. The ring fields are left out
+ * when they're the default, as the server sends them. */
 export function previewUser(me: User, d: Draft): User {
   const typing = d.typingText.trim()
-  const { typing_text: _saved, ...rest } = me
-  return { ...rest, display_name: d.displayName.trim() || me.username, avatar_hash: d.avatarHash, avatar_still: d.avatarStill, style: { font: d.font, colors: d.colors.map(lightenForName), effect: d.effect }, ...(typing ? { typing_text: typing } : {}) }
+  const { typing_text: _saved, ring_style: _style, ring_color: _color, ...rest } = me
+  return {
+    ...rest,
+    display_name: d.displayName.trim() || me.username,
+    avatar_hash: d.avatarHash,
+    avatar_still: d.avatarStill,
+    style: { font: d.font, colors: d.colors.map(lightenForName), effect: d.effect },
+    ...(typing ? { typing_text: typing } : {}),
+    ...(d.ringStyle !== 'classic' ? { ring_style: d.ringStyle } : {}),
+    ...(d.ringColor !== 'green' ? { ring_color: d.ringColor } : {}),
+  }
 }
 
 /** The card as the draft would make it. A custom theme pair is kept as picked (spec §4.3). */

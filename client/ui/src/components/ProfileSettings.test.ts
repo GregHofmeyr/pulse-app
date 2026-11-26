@@ -451,6 +451,7 @@ describe('ProfileSettings', () => {
     expect(req).toEqual({
       avatar_hash: null, banner_hash: null, theme_top: '#1f7a5a', theme_bottom: '#0f2b3a',
       style: { font: 'fredoka', colors: ['#000000'], effect: null }, pronouns: null, bio: 'hello', display_name: 'alex', glow: true, typing_text: '',
+      ring_style: 'classic', ring_color: 'green',
     })
     const stored = saved({
       user: { ...alex, style: { font: 'fredoka', colors: ['#a8a8a8'] } },
