@@ -146,6 +146,12 @@ describe('migrateAudioConfig', () => {
     expect(migrateAudioConfig({ sensitivity: 0.05 }).even_out_voices).toBe(true)
     expect(migrateAudioConfig({ even_out_voices: false }).even_out_voices).toBe(false)
   })
+
+  it('"Hear yourself as others do" (#659) is off by default and kept once set', () => {
+    expect(defaultAudioConfig.mic_test_as_others_hear).toBe(false)
+    expect(migrateAudioConfig({ sensitivity: 0.05 }).mic_test_as_others_hear).toBe(false)
+    expect(migrateAudioConfig({ mic_test_as_others_hear: true }).mic_test_as_others_hear).toBe(true)
+  })
   it('maps the old noise toggle off to level off', () => {
     const c = migrateAudioConfig({ noise_suppress: false, sensitivity: 0.05 })
     expect(c.noise_suppression).toBe('off')
