@@ -89,12 +89,13 @@ function speed(el: HTMLElement, lvl: number, now: number): void {
 let lastIds = new Set<string>()
 
 /** One `speaking_levels` frame. Someone missing from it (they stopped) eases to 0 rather than snapping; `{}` (the last
- * speaker stopped) zeroes every ring. A ring that goes off removes its `--lvl` itself once it has faded. */
+ * speaker stopped) zeroes every ring that has a level. A ring that goes off removes its `--lvl` itself once it has faded. */
 export function apply(levels: Record<string, number>): void {
   const now = Date.now()
   const ids = Object.keys(levels)
   if (!ids.length) {
-    for (const set of byUser.values()) for (const el of set) el.style.setProperty('--lvl', '0')
+    // every ring that has a level eases to 0; one that never had one (soundboard-lit) keeps its .5 fallback
+    for (const set of byUser.values()) for (const el of set) if (el.style.getPropertyValue('--lvl')) el.style.setProperty('--lvl', '0')
     lastIds = new Set()
     return
   }

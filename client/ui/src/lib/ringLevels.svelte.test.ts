@@ -140,6 +140,18 @@ describe('applying levels (#651 §5.4)', () => {
     expect(b.style.getPropertyValue('--lvl')).toBe('0')
   })
 
+  it('an_empty_frame_leaves_rings_that_never_had_a_level_at_the_fallback', () => {
+    // a soundboard-lit ring (no voice level) keeps its calm .5 loop when the last voice speaker stops
+    const voiced = el()
+    const sound = el()
+    reg('U1', voiced)
+    reg('U2', sound)
+    apply({ U1: 0.8 })
+    apply({})
+    expect(voiced.style.getPropertyValue('--lvl')).toBe('0')
+    expect(sound.style.getPropertyValue('--lvl')).toBe('')
+  })
+
   // Phase 2 review: someone who drops out of a frame eases down (the scale transition does it), never snaps
   it('a_speaker_missing_from_the_next_frame_eases_to_zero', () => {
     const a = el()
