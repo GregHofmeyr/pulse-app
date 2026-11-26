@@ -442,7 +442,7 @@ impl Shared {
             apm: Mutex::new(AudioProcessingModule::new(
                 echo_on(cfg.echo_mode, Output::Unknown),
                 cfg.auto_gain,
-                true,
+                APM_HIGH_PASS,
                 false,
             )),
             apm_cfg: Mutex::new(ApmCfg {
@@ -743,11 +743,17 @@ impl Shared {
         let wanted = (echo, a.agc);
         if a.built != wanted {
             // WebRTC's own noise suppression stays off: Off means none, and suppressors never stack.
-            *relock(&self.apm) = AudioProcessingModule::new(echo, a.agc, true, false);
+            *relock(&self.apm) = AudioProcessingModule::new(echo, a.agc, APM_HIGH_PASS, false);
             a.built = wanted;
         }
     }
 }
+
+/// The APM's high-pass: the mic chain's only low cut (#660). Measured at −3 dB at 58 Hz and steep (−44 dB at
+/// 40 Hz), so it sits below a deep voice. `tone.rs` has no high-pass of its own any more, so turning this off
+/// would let rumble and plosives through to the gain and limiter whenever echo cancellation is off.
+/// `tone::measured_low_cut` fails if it is.
+pub(crate) const APM_HIGH_PASS: bool = true;
 
 /// What the echo canceller and AGC are built from (see [`Shared::apm_cfg`]).
 struct ApmCfg {

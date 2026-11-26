@@ -496,6 +496,7 @@ fn request() -> UpdateProfileRequest {
         bio: None,
         display_name: None,
         glow: None,
+        typing_text: None,
     }
 }
 
@@ -552,6 +553,7 @@ async fn saves_a_whole_profile_and_tells_who_knows_them() {
         bio: Some("one\ntwo\nthree".into()),
         display_name: None,
         glow: None,
+        typing_text: None,
     };
     let r = put_profile(&app, &alex, &req).await;
     assert_eq!(r.status(), 200);
@@ -603,6 +605,92 @@ async fn a_name_effect_is_saved_and_cleared() {
     req.style.effect = None;
     let p: Profile = put_profile(&app, &alex, &req).await.json().await.unwrap();
     assert_eq!(p.user.style.effect, None);
+}
+
+/// #652: typing text is saved, read back everywhere a user is (the profile, `/me`, Ready's
+/// people, the ProfileUpdated event), kept when a save leaves it out, and cleared by a blank.
+#[tokio::test]
+async fn typing_text_is_saved_kept_and_cleared() {
+    let app = spawn().await;
+    let (alex_id, alex) = register(&app, "alex").await;
+    let (_, sam) = register(&app, "sam").await;
+    acquaint(&app, &alex, &[&sam]).await;
+    let mut sam_ws = connected(&app, &sam).await;
+
+    let mut req = request();
+    req.typing_text = Some("  cooking ".into());
+    let p: Profile = put_profile(&app, &alex, &req).await.json().await.unwrap();
+    assert_eq!(p.user.typing_text.as_deref(), Some("cooking"));
+    match profile_event(&mut sam_ws).await {
+        Event::ProfileUpdated { user, .. } => {
+            assert_eq!(user.typing_text.as_deref(), Some("cooking"))
+        }
+        _ => unreachable!(),
+    }
+    let me: User = get_json(&app, &alex, "/me").await;
+    assert_eq!(me.typing_text.as_deref(), Some("cooking"));
+    let ready = ready_of(&app, &sam).await;
+    let seen = &ready
+        .people
+        .iter()
+        .find(|p| p.user.id == alex_id)
+        .unwrap()
+        .user;
+    assert_eq!(seen.typing_text.as_deref(), Some("cooking"));
+
+    // an older client's save (no field) keeps it
+    req.typing_text = None;
+    let p: Profile = put_profile(&app, &alex, &req).await.json().await.unwrap();
+    assert_eq!(p.user.typing_text.as_deref(), Some("cooking"));
+
+    // blank is the plain "is typing", and goes out as absent
+    req.typing_text = Some("   ".into());
+    let r = put_profile(&app, &alex, &req).await;
+    let body: serde_json::Value = r.json().await.unwrap();
+    assert!(body["user"].get("typing_text").is_none(), "{body}");
+    assert_eq!(
+        profile_of(&app, &alex, alex_id).await.user.typing_text,
+        None
+    );
+}
+
+/// #652: the name rules, and no zero-width characters or links; a refused save changes nothing.
+#[tokio::test]
+async fn bad_typing_text_is_refused() {
+    let app = spawn().await;
+    let (alex_id, alex) = register(&app, "alex").await;
+    let mut req = request();
+    req.typing_text = Some("yapping".into());
+    assert_eq!(put_profile(&app, &alex, &req).await.status(), 200);
+
+    for (text, msg) in [
+        (&*"x".repeat(33), "Typing text can be up to 32 characters."),
+        (
+            "a\nb",
+            "Typing text can't contain line breaks or control characters.",
+        ),
+        (
+            "\u{202e}gnippay",
+            "Typing text can't contain line breaks or control characters.",
+        ),
+        (
+            "yap\u{200b}ping",
+            "Typing text can't contain invisible characters.",
+        ),
+        ("at https://example.com", "Typing text can't contain links."),
+        ("on pulse.app", "Typing text can't contain links."),
+    ] {
+        req.typing_text = Some(text.into());
+        refused(&app, &alex, &req, msg).await;
+    }
+    assert_eq!(
+        profile_of(&app, &alex, alex_id)
+            .await
+            .user
+            .typing_text
+            .as_deref(),
+        Some("yapping")
+    );
 }
 
 #[tokio::test]

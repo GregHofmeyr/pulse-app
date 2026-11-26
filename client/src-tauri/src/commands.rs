@@ -859,6 +859,8 @@ async fn forward(
 }
 
 /// What `login` and `login_mfa` tell the UI.
+// One per sign-in, serialized straight to the UI: not worth a box for the size of a `User`.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, serde::Serialize, PartialEq)]
 #[serde(tag = "status", content = "user", rename_all = "snake_case")]
 pub enum LoginResult {
@@ -946,6 +948,8 @@ pub async fn register(
 const BOOT_WAIT: std::time::Duration = std::time::Duration::from_secs(25);
 
 /// What `restore_session` found.
+// One per sign-in, serialized straight to the UI: not worth a box for the size of a `User`.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, serde::Serialize, PartialEq)]
 #[serde(tag = "status", content = "user", rename_all = "snake_case")]
 pub enum Restored {
@@ -4282,6 +4286,7 @@ mod tests {
             avatar_hash: None,
             avatar_still: None,
             style: Default::default(),
+            typing_text: None,
         };
         assert!(j(Restored::Ready(u)).starts_with(r#"{"status":"ready","user":{"#));
     }

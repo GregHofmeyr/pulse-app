@@ -175,7 +175,7 @@ pub struct MicChain {
     level: NsLevel,
     denoiser: Box<dyn Denoiser>,
     gate: VoiceGate,
-    /// "Voice clarity EQ" (#590): low-cut, low-mid trim, presence. Starts off; `run` sets it from the settings.
+    /// "Voice clarity EQ" (#590): low-mid trim, presence (the low cut is the APM's, #660). Starts off; `run` sets it from the settings.
     tone: ToneStage,
     gain: f32,
     /// Keeps the gained-up voice under −1 dBFS without the tanh's distortion (#586).
@@ -287,7 +287,7 @@ impl MicChain {
         let in_level = (ns_in / block.len().max(1) as f32).sqrt();
         let prob = self.denoiser.process(block);
         let ns_out = energy(block);
-        // shaped before the gain, so rumble and plosives don't set the limiter's peak (#590)
+        // shaped before the gain (#590); rumble is already gone, the APM's high-pass took it (#660)
         self.tone.process(block);
         let newest = self.denoiser.decision_level().unwrap_or(in_level) * self.gain;
         let (mut ns_peak, mut limited, mut min_gain) = (0.0f32, 0u32, 1.0f32);
@@ -1293,36 +1293,6 @@ mod tests {
 
     /// #590: the tone stage runs after the denoiser and before the gain, so low rumble no longer reaches the limiter.
     /// (Off it's a bit-for-bit bypass: `tone`'s own tests.)
-    #[test]
-    fn the_tone_stage_cuts_rumble_before_the_limiter() {
-        // 30 Hz rumble at 0.3, ×4 = 1.2: without the stage the limiter has to pull it down
-        let rumble = |k: usize| -> Vec<f32> {
-            (0..FRAME)
-                .map(|i| {
-                    0.3 * (std::f32::consts::TAU * 30.0 * (k * FRAME + i) as f32 / 48_000.0).sin()
-                })
-                .collect()
-        };
-        let t0 = Instant::now();
-        let mut on = MicChain::new(NsLevel::Off, false, 0.0, 4.0);
-        on.set_tone(true);
-        let mut off = MicChain::new(NsLevel::Off, false, 0.0, 4.0);
-        let (mut limited_on, mut limited_off) = (0, 0);
-        for k in 0..100 {
-            let (mut a, mut b) = (rumble(k), rumble(k));
-            let (oa, ob) = (on.process(&mut a, true, t0), off.process(&mut b, true, t0));
-            if k >= 50 {
-                limited_on += oa.limited;
-                limited_off += ob.limited;
-            }
-        }
-        assert!(
-            limited_off > 0,
-            "rumble drives the limiter without the stage"
-        );
-        assert_eq!(limited_on, 0, "the high-pass took it out first");
-    }
-
     #[test]
     fn the_clarity_eq_is_on_by_default_and_follows_the_settings() {
         use super::super::devices::AudioConfig;

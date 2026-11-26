@@ -23,6 +23,8 @@ export type Draft = {
   displayName: string
   /** Your card glows in its colours (#156). */
   glow: boolean
+  /** What follows "<your name> is" while you type (#652), as typed: trimmed on Save, blank for "is typing". */
+  typingText: string
 }
 
 export function draftFrom(p: Profile): Draft {
@@ -42,6 +44,8 @@ export function draftFrom(p: Profile): Draft {
     displayName: p.user.display_name || p.user.username,
     // an older server sends none: on, as every card was
     glow: p.card.glow !== false,
+    // none (or an older server): the plain "is typing"
+    typingText: p.user.typing_text ?? '',
   }
 }
 
@@ -63,12 +67,16 @@ export function toRequest(d: Draft): UpdateProfileRequest {
     bio: orNull(d.bio),
     display_name: d.displayName.trim(),
     glow: d.glow,
+    // always sent: blank clears it (absent would keep it)
+    typing_text: d.typingText.trim(),
   }
 }
 
 /** You as the draft would make you, name colours lightened as Save will store them. */
 export function previewUser(me: User, d: Draft): User {
-  return { ...me, display_name: d.displayName.trim() || me.username, avatar_hash: d.avatarHash, avatar_still: d.avatarStill, style: { font: d.font, colors: d.colors.map(lightenForName), effect: d.effect } }
+  const typing = d.typingText.trim()
+  const { typing_text: _saved, ...rest } = me
+  return { ...rest, display_name: d.displayName.trim() || me.username, avatar_hash: d.avatarHash, avatar_still: d.avatarStill, style: { font: d.font, colors: d.colors.map(lightenForName), effect: d.effect }, ...(typing ? { typing_text: typing } : {}) }
 }
 
 /** The card as the draft would make it. A custom theme pair is kept as picked (spec §4.3). */
@@ -93,8 +101,9 @@ export function nameProblem(name: string): string | null {
   if (!n || charCount(n) > NAME_MAX) return 'Names can be 1 to 32 characters.'
   // control characters, Unicode line/paragraph separators, direction embeddings/overrides/isolates
   if (/[\p{Cc}\u2028\u2029\u202a-\u202e\u2066-\u2069]/u.test(n)) return "Names can't contain line breaks or control characters."
-  // something must draw: not only zero-width characters, joiners, marks, the BOM or Hangul fillers
-  if (/^[\s\u034f\u115f\u1160\u180e\u200b-\u200f\u2060-\u2064\u3164\ufeff\uffa0]*$/u.test(n)) return 'Names need at least one character you can see.'
+  // something must draw: not only zero-width characters, joiners, marks, the BOM, Hangul fillers, the soft hyphen,
+  // the braille blank or the Mongolian variation selectors (names.rs `invisible`)
+  if (/^[\s\u00ad\u034f\u115f\u1160\u180b-\u180f\u200b-\u200f\u2060-\u2064\u2800\u3164\ufeff\uffa0]*$/u.test(n)) return 'Names need at least one character you can see.'
   return null
 }
 

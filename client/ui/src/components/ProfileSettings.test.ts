@@ -450,7 +450,7 @@ describe('ProfileSettings', () => {
     const req = (calls('update_profile')[0][1] as { request: UpdateProfileRequest }).request
     expect(req).toEqual({
       avatar_hash: null, banner_hash: null, theme_top: '#1f7a5a', theme_bottom: '#0f2b3a',
-      style: { font: 'fredoka', colors: ['#000000'], effect: null }, pronouns: null, bio: 'hello', display_name: 'alex', glow: true,
+      style: { font: 'fredoka', colors: ['#000000'], effect: null }, pronouns: null, bio: 'hello', display_name: 'alex', glow: true, typing_text: '',
     })
     const stored = saved({
       user: { ...alex, style: { font: 'fredoka', colors: ['#a8a8a8'] } },
@@ -523,6 +523,85 @@ describe('ProfileSettings', () => {
       } finally {
         spy.mockRestore()
       }
+    })
+  })
+
+  describe('typing text (#652)', () => {
+    const box = () => document.querySelector<HTMLInputElement>('input[aria-label="Typing text"]')!
+    const field = () => document.querySelector<HTMLElement>('.typing-field')!
+    const preview = () => field().querySelector<HTMLElement>('.typing-preview')!.textContent!.replace(/\s+/g, ' ').trim()
+    const suggestions = () => [...field().querySelectorAll<HTMLButtonElement>('.typing-suggestions button')]
+
+    it('reads "<your name> is [ … ]": the name and a fixed "is" before the box, which holds only what follows', async () => {
+      await open()
+      const row = field().querySelector<HTMLElement>('.typing-row')!
+      expect(row.querySelector('.typing-who')!.textContent).toBe('alex')
+      expect(row.querySelector('.typing-is')!.textContent).toBe('is')
+      expect(row.lastElementChild).toBe(box())
+      expect(box().value).toBe('')
+      expect(box().placeholder).toBe('typing…')
+      // your name as the draft has it
+      type(document.querySelector<HTMLInputElement>('input[aria-label="Display name"]')!, 'Alex 🎸')
+      expect(row.querySelector('.typing-who')!.textContent).toBe('Alex 🎸')
+    })
+
+    it('a live preview: blank is the plain "is typing…", anything else is your words', async () => {
+      await open()
+      expect(preview()).toBe('alex is typing…')
+      type(box(), 'plotting')
+      expect(preview()).toBe('alex is plotting')
+      type(box(), '   ')
+      expect(preview()).toBe('alex is typing…')
+    })
+
+    it('six suggestions under the box: a tap fills it, and the picked one shows as pressed', async () => {
+      await open()
+      expect(suggestions().map((b) => b.textContent!.trim())).toEqual(['cooking', 'yapping', 'plotting', 'barking', 'typing a novel', 'scheming'])
+      click(suggestions()[3])
+      expect(box().value).toBe('barking')
+      expect(preview()).toBe('alex is barking')
+      expect(suggestions()[3].getAttribute('aria-pressed')).toBe('true')
+      expect(suggestions()[0].getAttribute('aria-pressed')).toBe('false')
+    })
+
+    it('over 32 characters, a link or a line-break trick: says so and Save is off', async () => {
+      await open()
+      type(box(), 'x'.repeat(33))
+      expect(field().querySelector('[role=alert]')!.textContent).toBe('Typing text can be up to 32 characters.')
+      expect(button('Save').disabled).toBe(true)
+      type(box(), 'at pulse.app')
+      expect(field().querySelector('[role=alert]')!.textContent).toBe("Typing text can't contain links.")
+      type(box(), 'x'.repeat(32))
+      expect(field().querySelector('[role=alert]')).toBeNull()
+      expect(button('Save').disabled).toBe(false)
+    })
+
+    it('saves with the profile, and a saved one is what the editor shows', async () => {
+      handlers.update_profile = () => saved({ user: { ...alex, typing_text: 'typing a novel' } })
+      await open(saved({ user: { ...alex, typing_text: 'cooking' } }))
+      expect(box().value).toBe('cooking')
+      expect(preview()).toBe('alex is cooking')
+      type(box(), ' typing a novel ')
+      click(button('Save'))
+      expect((calls('update_profile')[0][1] as { request: UpdateProfileRequest }).request.typing_text).toBe('typing a novel')
+    })
+
+    it('fits a narrow window: the row shrinks (the box first), a long name and the preview end in an ellipsis', async () => {
+      const { compile } = await import('svelte/compiler')
+      const { readFileSync } = await import('node:fs')
+      const { resolve } = await import('node:path')
+      const css = compile(readFileSync(resolve(__dirname, 'ProfileSettings.svelte'), 'utf8'), { filename: 'ProfileSettings.svelte', css: 'external', cssHash: () => 's' }).css!.code
+      const rule = (sel: string) => css.match(new RegExp(`(?:^|\\n|\\})\\s*${sel.split(' ').map((p) => `${p.replace(/\./g, '\\.')}\\.s`).join(' ')}\\s*\\{([^}]*)\\}`))?.[1] ?? ''
+      expect(rule('.typing-row')).toMatch(/display:\s*flex/)
+      expect(rule('.typing-row')).toMatch(/min-width:\s*0/)
+      expect(css.match(/\.typing-row\.s \.input:where\(\.s\) \{([^}]*)\}/)?.[1]).toMatch(/flex:\s*1 1 0/)
+      expect(css.match(/\.typing-row\.s \.input:where\(\.s\) \{([^}]*)\}/)?.[1]).toMatch(/min-width:\s*0/)
+      for (const sel of ['.typing-who', '.typing-preview']) {
+        expect(rule(sel), sel).toMatch(/overflow:\s*hidden/)
+        expect(rule(sel), sel).toMatch(/text-overflow:\s*ellipsis/)
+        expect(rule(sel), sel).toMatch(/white-space:\s*nowrap/)
+      }
+      expect(rule('.typing-suggestions')).toMatch(/flex-wrap:\s*wrap/)
     })
   })
 

@@ -6,6 +6,7 @@ import { isMediaHash, isMediaUrl, mediaUrl, standard, TOKEN_RE, twemojiUrl } fro
 import type { CustomEmoji } from './protocol/CustomEmoji'
 import type { Message } from './protocol/Message'
 import { setMentionLabel } from './mentionLabel'
+import { TYPING_STOP_GUARD_MS } from './typingLine'
 
 const escapeHtml = (s: string) =>
   s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;')
@@ -308,6 +309,13 @@ function textOutsideChips(root: Node): string {
 }
 
 export const TYPING_EVERY_MS = 3000
+
+/** What to remember as the last Typing sent when a message goes (#652): others drop a Typing from you for
+ *  TYPING_STOP_GUARD_MS after your message lands, so the next one is held until just past that (the margin covers the
+ *  message's own trip), never 3 s later. */
+export function typingSentAfterSend(now: number): number {
+  return now - TYPING_EVERY_MS + TYPING_STOP_GUARD_MS + 250
+}
 
 /** Send a typing signal at most once per 3 s. */
 export function typingThrottle(lastSentAt: number | null, now: number): boolean {

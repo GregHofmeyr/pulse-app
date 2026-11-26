@@ -3,6 +3,8 @@
   import { SvelteSet } from 'svelte/reactivity'
   import { provideTrimHold } from '../lib/trimHold'
   import Icon from './Icon.svelte'
+  import TypingIndicator from './TypingIndicator.svelte'
+  import { typingLine } from '../lib/typingLine'
   import { blockedCountText, isBlocked, listRows } from '../lib/blocks'
   import PersonMenu from './PersonMenu.svelte'
   import { personMenuAt, type PersonMenuAt } from '../lib/participantMenu'
@@ -42,7 +44,7 @@
   import { pinsTitle, takesPins } from '../lib/pins'
   import { historySync, refreshHistory } from '../lib/historySync.svelte'
   import { liveQoty } from '../lib/quotes'
-  import { displayName, groupedPending, groupedWith, keepStable, mentionablesFor, nameOfIn, pillNamesFor, nextTypingExpiry, typingNames } from '../lib/selectors'
+  import { displayName, groupedPending, groupedWith, keepStable, mentionablesFor, nameOfIn, pillNamesFor, nextTypingExpiry, typingPeople } from '../lib/selectors'
   import { api, errorText, type StagedFile } from '../lib/tauri'
   import { getCurrentWebview } from '@tauri-apps/api/webview'
   import type { Message } from '../lib/protocol/Message'
@@ -77,7 +79,8 @@
   const pendingMessages = $derived(pending.map((p) => pendingMessage(p, channelId, app.state.me?.id ?? '')))
   const byId = $derived(new Map(messages.map((m) => [m.id, m])))
   let now = $state(Date.now())
-  const typers = $derived(typingNames(app.state, serverId, channelId, now))
+  // one typer's own words (#652) or the plain line, worked out from who is typing now
+  const typing = $derived(typingLine(typingPeople(app.state, serverId, channelId, now)))
   let replyTo = $state<Message | null>(null)
   let error = $state('')
   let list: HTMLDivElement
@@ -991,9 +994,7 @@
   {:else if farUp}<button class="jump" onclick={jump}>Jump to present</button>{/if}
   {#if jumpNotice}<p class="jump-notice" role="status">{jumpNotice}</p>{/if}
   {#if dragging}<div class="drop-zone" aria-hidden="true"><span>Drop files to send them</span></div>{/if}
-  <div class="typing" aria-live="polite">
-    {#if typers.length}<strong class="name-clip">{typers.join(', ')}</strong> {typers.length > 1 ? 'are' : 'is'} typing…{/if}
-  </div>
+  <TypingIndicator line={typing} />
   {#if error}<p class="error" role="alert">{error}</p>{/if}
   {#if isQuotes}
     <!-- the new-quote composer stays mounted (hidden) while one is edited, so its draft survives -->
@@ -1077,8 +1078,6 @@
   .sched-btn { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 8px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-3); font: inherit; font-size: 12px; }
   .sched-btn:hover, .sched-btn[aria-expanded='true'] { background: var(--bg-3); color: var(--text); }
   .sched-failed { color: var(--danger-text); }
-  .typing { height: 22px; padding: 0 18px; font-size: 12px; color: var(--text-3); }
-  .typing strong { color: var(--text); }
   .error { margin: 0 18px 4px; color: var(--danger-text); font-size: 13px; }
   /* a jumped-to message: a fading highlight, or a static outline under reduced motion */
   .list :global(.jump-flash) { animation: jump-flash 3s ease-out; }

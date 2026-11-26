@@ -8,7 +8,7 @@ use crate::profiles::colors;
 
 /// What [`UserRow`] reads, for a query that selects from `users u` with [`USER_JOIN`].
 pub const USER_COLS: &str = "u.id, u.username, u.display_name, u.avatar_hash, av.still_hash, u.name_font, u.name_color, \
-     u.name_effect";
+     u.name_effect, u.typing_text";
 /// Brings in the avatar's still (`av.still_hash`).
 pub const USER_JOIN: &str = "LEFT JOIN media av ON av.hash = u.avatar_hash";
 
@@ -22,6 +22,7 @@ pub struct UserRow {
     pub name_font: Option<String>,
     pub name_color: Option<String>,
     pub name_effect: Option<String>,
+    pub typing_text: Option<String>,
 }
 
 impl UserRow {
@@ -49,6 +50,10 @@ impl UserRow {
                     .name_effect
                     .filter(|e| super::NAME_EFFECTS.contains(&e.as_str())),
             },
+            // Stored clean (#652); the name rules again in case a row predates them.
+            typing_text: self
+                .typing_text
+                .and_then(|t| super::names::clean_typing_text(&t).ok().flatten()),
         })
     }
 }
@@ -67,6 +72,7 @@ mod tests {
             name_font: None,
             name_color: name_color.map(str::to_owned),
             name_effect: None,
+            typing_text: None,
         }
     }
 
@@ -90,5 +96,18 @@ mod tests {
         assert_eq!(effect(None), None);
         assert_eq!(effect(Some("ember")).as_deref(), Some("ember"));
         assert_eq!(effect(Some("sparkle")), None);
+    }
+
+    #[test]
+    fn typing_text_is_read_back_and_a_bad_row_is_the_default() {
+        let text = |t: Option<&str>| {
+            let mut r = row(None);
+            r.typing_text = t.map(str::to_owned);
+            r.into_user().unwrap().typing_text
+        };
+        assert_eq!(text(None), None);
+        assert_eq!(text(Some("cooking")).as_deref(), Some("cooking"));
+        assert_eq!(text(Some("")), None);
+        assert_eq!(text(Some("go to pulse.app")), None);
     }
 }

@@ -70,6 +70,12 @@ pub struct User {
     pub avatar_still: Option<String>,
     #[serde(default)]
     pub style: NameStyle,
+    /// What shows after "<name> is" while they type (#652), e.g. "cooking": at most 32
+    /// characters, one line, no links. Absent: the plain "is typing" (and from older servers;
+    /// older clients ignore it).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub typing_text: Option<String>,
 }
 
 /// How a name is drawn: a bundled font and 0 (default), 1 (solid) or 2 (gradient, first to
@@ -318,6 +324,11 @@ pub struct UpdateProfileRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub glow: Option<bool>,
+    /// The new typing text (#652): blank clears it back to "is typing"; absent keeps the current
+    /// one (older clients don't send it).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub typing_text: Option<String>,
 }
 
 /// `PUT /servers/{id}/members/{user}/nickname` and `PUT /me/private-nicknames/{user}`: `None`
@@ -4193,6 +4204,7 @@ mod tests {
                         avatar_hash: None,
                         avatar_still: None,
                         style: Default::default(),
+                        typing_text: None,
                     },
                 }
             ),

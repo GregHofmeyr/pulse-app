@@ -42,12 +42,12 @@ describe('profileDraft', () => {
     expect(d).toEqual({
       avatarHash: 'a1', avatarStill: 'a1s', bannerHash: 'b1', bannerStill: null,
       themeTop: '#c2457a', themeBottom: '#3a1f5e', font: 'fredoka', colors: ['#ffbe7a', '#ff7fae'], effect: null,
-      pronouns: 'they/them', bio: 'hi\nthere', displayName: profile.user.display_name, glow: true,
+      pronouns: 'they/them', bio: 'hi\nthere', displayName: profile.user.display_name, glow: true, typingText: '',
     })
     expect(toRequest(d)).toEqual({
       avatar_hash: 'a1', banner_hash: 'b1', theme_top: '#c2457a', theme_bottom: '#3a1f5e',
       style: { font: 'fredoka', colors: ['#ffbe7a', '#ff7fae'], effect: null }, pronouns: 'they/them', bio: 'hi\nthere',
-      display_name: profile.user.display_name, glow: true,
+      display_name: profile.user.display_name, glow: true, typing_text: '',
     })
     // the draft holds its own colours: editing it never touches the profile
     d.colors.push('#000000')
@@ -87,13 +87,24 @@ describe('profileDraft', () => {
     expect(draftFrom({ ...profile, user: { ...profile.user, display_name: '' } }).displayName).toBe(profile.user.username)
   })
 
+  it('typing text (#652): read from the user (none: blank), sent trimmed (blank clears it), previewed as set', () => {
+    expect(draftFrom({ ...profile, user: { ...profile.user, typing_text: 'cooking' } }).typingText).toBe('cooking')
+    expect(draftFrom(profile).typingText).toBe('')
+    const d = { ...draftFrom(profile), typingText: '  yapping ' }
+    expect(toRequest(d).typing_text).toBe('yapping')
+    expect(previewUser(profile.user, d).typing_text).toBe('yapping')
+    expect(toRequest({ ...d, typingText: '   ' }).typing_text).toBe('')
+    expect(previewUser(profile.user, { ...d, typingText: ' ' }).typing_text).toBeUndefined()
+    expect(isDirty(d, draftFrom(profile))).toBe(true)
+  })
+
   it('dirty detects every field', () => {
     const saved = draftFrom(profile)
     expect(isDirty(draftFrom(profile), saved)).toBe(false)
     const changes: Partial<Draft>[] = [
       { avatarHash: null }, { avatarStill: null }, { bannerHash: 'b2' }, { bannerStill: 'b2s' },
       { themeTop: '#000000' }, { themeBottom: '#000000' }, { font: null }, { colors: ['#ffbe7a'] },
-      { colors: ['#ffbe7a', '#ff7faf'] }, { pronouns: 'she/her' }, { bio: 'hi' }, { glow: false },
+      { colors: ['#ffbe7a', '#ff7faf'] }, { pronouns: 'she/her' }, { bio: 'hi' }, { glow: false }, { typingText: 'cooking' },
     ]
     for (const c of changes) expect(isDirty({ ...saved, ...c }, saved), JSON.stringify(c)).toBe(true)
   })

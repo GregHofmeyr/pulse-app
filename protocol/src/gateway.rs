@@ -1268,6 +1268,7 @@ mod tests {
                 avatar_hash: None,
                 avatar_still: None,
                 style: Default::default(),
+                typing_text: None,
             },
             servers: vec![],
             channels: vec![],
@@ -1368,6 +1369,7 @@ mod tests {
                 avatar_hash: None,
                 avatar_still: None,
                 style: Default::default(),
+                typing_text: None,
             },
             servers: vec![],
             channels: vec![],
@@ -1537,6 +1539,7 @@ mod tests {
                 avatar_hash: None,
                 avatar_still: None,
                 style: Default::default(),
+                typing_text: None,
             },
             servers: vec![],
             channels: vec![],
@@ -1695,6 +1698,7 @@ mod tests {
                 colors: vec!["#ffc4a3".into(), "#ff7fae".into()],
                 effect: Some("neon".into()),
             },
+            typing_text: None,
         };
         let old: OldUser = serde_json::from_value(serde_json::to_value(&user).unwrap()).unwrap();
         assert_eq!(old.id, user.id);
@@ -1711,6 +1715,7 @@ mod tests {
                 avatar_hash: None,
                 avatar_still: None,
                 style: Default::default(),
+                typing_text: None,
             },
             card: CardProfile {
                 banner_hash: None,
@@ -1782,6 +1787,7 @@ mod tests {
                     avatar_hash: None,
                     avatar_still: None,
                     style: Default::default(),
+                    typing_text: None,
                 },
                 nickname: Some("n".into()),
                 join_sound: None,
