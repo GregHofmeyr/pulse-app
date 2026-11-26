@@ -120,20 +120,6 @@ pub async fn may_group_with(
 /// The answer for a person who can't be put in a conversation: the same whether they don't exist or have blocked you.
 pub const UNKNOWN_USER: &str = "unknown user";
 
-/// SQL true when the user in column `author` is someone `viewer` (a column or placeholder) has blocked: their mentions
-/// of the viewer aren't pings (#474). Both are pasted in as they are, so they are `'static` SQL, never request data.
-pub fn blocked_sql(viewer: &'static str, author: &'static str) -> String {
-    format!(
-        "EXISTS (SELECT 1 FROM blocks bk WHERE bk.blocker_id = {viewer} AND bk.target_id = {author})"
-    )
-}
-
-/// SQL true when the message whose `withheld_from` column is `col` may be seen by `viewer` (a column or placeholder):
-/// it wasn't withheld from them. `'static` SQL only, as above.
-pub fn visible_sql(col: &'static str, viewer: &'static str) -> String {
-    format!("({col} IS NULL OR {col} != {viewer})")
-}
-
 /// In a 1:1 DM between `author` and `other`: who a message from `author` is withheld from (`other`, when they've
 /// blocked `author`).
 pub async fn withhold_for<'e>(

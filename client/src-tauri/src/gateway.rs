@@ -337,6 +337,7 @@ impl GatewayHandle {
     }
 
     /// `dead_after`: silence after which the connection is presumed dead (tests shorten it).
+    #[cfg(test)]
     pub fn spawn_tuned(
         base_url: String,
         token: String,

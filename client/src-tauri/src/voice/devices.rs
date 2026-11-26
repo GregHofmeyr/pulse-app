@@ -420,7 +420,7 @@ pub struct Shared {
     /// The "you're muted" sound (#252): the same judgement on its own, shorter clock.
     pub muted_cue: Mutex<super::mutedtalk::MutedCue>,
     /// Strong (low delay)'s model store (`crate::models`, #77).
-    low_delay_model: Mutex<Option<Arc<crate::models::ModelStore>>>,
+    low_delay_model: Option<Arc<crate::models::ModelStore>>,
 }
 
 impl Shared {
@@ -485,17 +485,13 @@ impl Shared {
             mic_levels: Default::default(),
             mic_sink: Mutex::new(None),
             mic_queue: Default::default(),
-            low_delay_model: Mutex::new(crate::models::low_delay_store()),
+            low_delay_model: crate::models::low_delay_store(),
         })
     }
 
     /// Where Strong (low delay)'s downloaded model is (#77); `None` = it can't be had (tests, or before setup).
     pub fn low_delay_model(&self) -> Option<Arc<crate::models::ModelStore>> {
-        relock(&self.low_delay_model).clone()
-    }
-
-    pub fn set_low_delay_model(&self, store: Option<Arc<crate::models::ModelStore>>) {
-        *relock(&self.low_delay_model) = store;
+        self.low_delay_model.clone()
     }
 
     /// Speaker callbacks since the last call that found the mixer busy (played silence).
@@ -1691,6 +1687,7 @@ impl AudioIo {
         )
     }
 
+    #[cfg(test)]
     pub fn input_rate(&self) -> Option<u32> {
         self.input.as_ref().map(|h| h.value.rate)
     }
