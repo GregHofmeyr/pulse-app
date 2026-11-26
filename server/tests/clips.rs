@@ -2375,6 +2375,21 @@ async fn facets_count_live_clips() {
     assert_eq!(games, vec![(apex.id, 2), (halo.id, 2), (doom.id, 1)]);
     let authors: Vec<_> = f.authors.iter().map(|a| (a.user_id, a.count)).collect();
     assert_eq!(authors, vec![(w.sam.0, 4), (w.alex.0, 3)]);
+    // "All games" (#663): every live clip, the two with no game too (not the deleted one or the reply).
+    assert_eq!(f.total, Some(7));
+}
+
+#[tokio::test]
+async fn facets_total_of_an_empty_channel_is_zero_and_outsiders_are_refused() {
+    let w = world().await;
+    let path = format!("/channels/{}/clips/facets", w.channel.id);
+    let f: pulse_protocol::rest::ClipFacets = get_json(&w.app, &w.alex.1, &path).await;
+    assert_eq!(f.total, Some(0));
+    assert!(f.games.is_empty() && f.authors.is_empty());
+    // Members only: someone outside the server learns nothing.
+    let kim = register(&w.app, "kim").await;
+    let r = get_status(&w.app, &kim.1, &path).await;
+    assert!(r.status().is_client_error(), "{}", r.status());
 }
 
 #[tokio::test]

@@ -3,6 +3,11 @@ import type { AuthorCount } from "./AuthorCount";
 import type { GameCount } from "./GameCount";
 
 /**
- * Filter chips of a clips channel: clip counts per game and per author.
+ * `GET /channels/{id}/clips/facets`: a clips channel's filter panel, clip counts per game and per author.
  */
-export type ClipFacets = { games: Array<GameCount>, authors: Array<AuthorCount>, };
+export type ClipFacets = { games: Array<GameCount>, authors: Array<AuthorCount>, 
+/**
+ * Every live clip here, those with no game too: the panel's "All games" (#663). Missing from a server older
+ * than that, which the app shows as no count rather than a guess.
+ */
+total?: number, };

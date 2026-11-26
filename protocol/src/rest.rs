@@ -3174,11 +3174,16 @@ pub struct ClipUrl {
 }
 redacting_debug!(ClipUrl { expires_at ; url });
 
-/// Filter chips of a clips channel: clip counts per game and per author.
+/// `GET /channels/{id}/clips/facets`: a clips channel's filter panel, clip counts per game and per author.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 pub struct ClipFacets {
     pub games: Vec<GameCount>,
     pub authors: Vec<AuthorCount>,
+    /// Every live clip here, those with no game too: the panel's "All games" (#663). Missing from a server older
+    /// than that, which the app shows as no count rather than a guess.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub total: Option<u32>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
