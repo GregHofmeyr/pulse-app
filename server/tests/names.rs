@@ -118,6 +118,7 @@ fn profile_request(display_name: Option<&str>) -> UpdateProfileRequest {
         bio: None,
         display_name: display_name.map(str::to_owned),
         glow: None,
+        typing_text: None,
     }
 }
 

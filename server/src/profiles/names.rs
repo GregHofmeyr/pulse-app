@@ -6,25 +6,92 @@ use crate::error::{AppError, AppResult};
 /// Longest name, in characters, after trimming.
 pub const NAME_MAX: usize = 32;
 
+/// What a piece of chosen text broke: the rules [`clean`] and [`clean_typing_text`] share.
+enum Broken {
+    Length,
+    Control,
+    Invisible,
+}
+
+/// The name rules on trimmed, non-empty text: at most 32 characters, no line breaks, control or
+/// direction characters, and something that draws.
+fn check(s: &str) -> Result<(), Broken> {
+    if s.chars().count() > NAME_MAX {
+        return Err(Broken::Length);
+    }
+    if s.chars().any(|c| c.is_control() || breaks_layout(c)) {
+        return Err(Broken::Control);
+    }
+    if s.chars().all(|c| c.is_whitespace() || invisible(c)) {
+        return Err(Broken::Invisible);
+    }
+    Ok(())
+}
+
 /// A name, trimmed: 1–32 characters, no line breaks or control characters. Not unique.
 pub fn clean(s: &str) -> AppResult<String> {
     let s = s.trim();
-    if s.is_empty() || s.chars().count() > NAME_MAX {
-        return Err(AppError::BadRequest(
-            "Names can be 1 to 32 characters.".into(),
-        ));
+    let msg = match if s.is_empty() {
+        Err(Broken::Length)
+    } else {
+        check(s)
+    } {
+        Ok(()) => return Ok(s.to_owned()),
+        Err(Broken::Length) => "Names can be 1 to 32 characters.",
+        Err(Broken::Control) => "Names can't contain line breaks or control characters.",
+        Err(Broken::Invisible) => "Names need at least one character you can see.",
+    };
+    Err(AppError::BadRequest(msg.into()))
+}
+
+/// What shows after "<name> is" while someone types (#652), as the name rules have it (trimmed,
+/// at most 32 characters, no line breaks, control or direction characters), and stricter: no
+/// zero-width characters at all except a joiner inside an emoji, and no links. Blank is `None`:
+/// the plain "is typing".
+pub fn clean_typing_text(s: &str) -> AppResult<Option<String>> {
+    let s = s.trim();
+    if s.is_empty() {
+        return Ok(None);
     }
-    if s.chars().any(|c| c.is_control() || breaks_layout(c)) {
-        return Err(AppError::BadRequest(
-            "Names can't contain line breaks or control characters.".into(),
-        ));
+    let bad = |m: &str| Err(AppError::BadRequest(m.into()));
+    match check(s) {
+        Ok(()) => {}
+        Err(Broken::Length) => return bad("Typing text can be up to 32 characters."),
+        Err(Broken::Control) => {
+            return bad("Typing text can't contain line breaks or control characters.");
+        }
+        Err(Broken::Invisible) => return bad("Typing text can't contain invisible characters."),
     }
-    if s.chars().all(|c| c.is_whitespace() || invisible(c)) {
-        return Err(AppError::BadRequest(
-            "Names need at least one character you can see.".into(),
-        ));
+    let chars: Vec<char> = s.chars().collect();
+    let drawn = |c: Option<&char>| c.is_some_and(|c| !c.is_whitespace() && !invisible(*c));
+    let hidden = chars.iter().enumerate().any(|(i, &c)| {
+        invisible(c)
+            && !(c == '\u{200d}' && i > 0 && drawn(chars.get(i - 1)) && drawn(chars.get(i + 1)))
+    });
+    if hidden {
+        return bad("Typing text can't contain invisible characters.");
     }
-    Ok(s.to_owned())
+    if has_link(s) {
+        return bad("Typing text can't contain links.");
+    }
+    Ok(Some(s.to_owned()))
+}
+
+/// Whether text carries something that reads as a link: a scheme (`://`), `www.`, or a domain
+/// (a letter or digit, a dot, then two or more letters, as in `pulse.app`). `v1.2` and `...`
+/// aren't.
+fn has_link(s: &str) -> bool {
+    let lower = s.to_lowercase();
+    if lower.contains("://") || lower.contains("www.") {
+        return true;
+    }
+    let c: Vec<char> = lower.chars().collect();
+    (1..c.len().saturating_sub(2)).any(|i| {
+        c[i] == '.'
+            && c[i - 1].is_alphanumeric()
+            && c[i + 1].is_ascii_alphabetic()
+            && c[i + 2].is_ascii_alphabetic()
+    })
 }
 
 /// Unicode line and paragraph separators, and the direction embeddings, overrides and isolates
@@ -173,6 +240,91 @@ mod tests {
         assert_eq!(ZALGO_MARKS, 3);
         for (name, want) in ZALGO_CASES {
             assert_eq!(is_zalgo(name), *want, "{name:?}");
+        }
+    }
+
+    // ---- typing text (#652) ----
+
+    #[test]
+    fn blank_typing_text_is_the_default() {
+        assert_eq!(clean_typing_text("").unwrap(), None);
+        assert_eq!(clean_typing_text("   ").unwrap(), None);
+    }
+
+    #[test]
+    fn typing_text_is_trimmed_and_up_to_32_characters() {
+        assert_eq!(
+            clean_typing_text("  cooking  ").unwrap().as_deref(),
+            Some("cooking")
+        );
+        assert_eq!(
+            clean_typing_text("typing a novel 🍳").unwrap().as_deref(),
+            Some("typing a novel 🍳")
+        );
+        assert!(clean_typing_text(&"x".repeat(32)).is_ok());
+        assert_eq!(
+            clean_typing_text(&"x".repeat(33)).unwrap_err().to_string(),
+            "Typing text can be up to 32 characters."
+        );
+        // characters, not bytes
+        assert!(clean_typing_text(&"é".repeat(32)).is_ok());
+    }
+
+    #[test]
+    fn typing_text_has_no_line_breaks_controls_or_direction_tricks() {
+        for bad in [
+            "a\nb",
+            "a\rb",
+            "a\tb",
+            "a\u{0}b",
+            "a\u{2028}b",
+            "a\u{202e}b",
+            "\u{2066}yapping",
+        ] {
+            assert_eq!(
+                clean_typing_text(bad).unwrap_err().to_string(),
+                "Typing text can't contain line breaks or control characters.",
+                "{bad:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn typing_text_has_no_zero_width_tricks() {
+        for bad in [
+            "\u{200b}",
+            "co\u{200b}oking",
+            "yap\u{feff}",
+            "\u{2060}plotting",
+            "\u{200d}barking",
+            "barking\u{200d}",
+            "a \u{200d} b",
+        ] {
+            assert!(clean_typing_text(bad).is_err(), "{bad:?}");
+        }
+        // a joiner inside an emoji is part of the picture
+        assert!(clean_typing_text("cooking 👩\u{200d}🍳").is_ok());
+    }
+
+    #[test]
+    fn typing_text_has_no_links() {
+        for bad in [
+            "https://example.com",
+            "at http://x",
+            "www.example",
+            "on pulse.app",
+            "join discord.gg/abc",
+            "EXAMPLE.COM",
+        ] {
+            assert_eq!(
+                clean_typing_text(bad).unwrap_err().to_string(),
+                "Typing text can't contain links.",
+                "{bad:?}"
+            );
+        }
+        // dots that aren't a domain are fine
+        for ok in ["typing a novel...", "on v1.2", "cooking. again", "3.14"] {
+            assert!(clean_typing_text(ok).is_ok(), "{ok:?}");
         }
     }
 

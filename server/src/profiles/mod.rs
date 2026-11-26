@@ -196,6 +196,8 @@ pub struct Validated {
     pub display_name: Option<String>,
     /// `None`: keep the current card glow (#156).
     pub glow: Option<bool>,
+    /// `None`: keep the current typing text; `Some(None)`: back to "is typing" (#652).
+    pub typing_text: Option<Option<String>>,
 }
 
 fn bad(msg: &str) -> AppError {
@@ -258,6 +260,11 @@ pub fn validate(req: UpdateProfileRequest) -> AppResult<Validated> {
     };
 
     let display_name = req.display_name.as_deref().map(names::clean).transpose()?;
+    let typing_text = req
+        .typing_text
+        .as_deref()
+        .map(names::clean_typing_text)
+        .transpose()?;
     let pronouns = text(req.pronouns);
     if let Some(p) = &pronouns {
         if p.chars().count() > PRONOUNS_MAX {
@@ -291,6 +298,7 @@ pub fn validate(req: UpdateProfileRequest) -> AppResult<Validated> {
         bio,
         display_name,
         glow: req.glow,
+        typing_text,
     })
 }
 

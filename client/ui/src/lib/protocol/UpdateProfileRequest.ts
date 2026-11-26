@@ -12,4 +12,9 @@ display_name: string | null,
 /**
  * Whether the card glows (#156); absent keeps the current setting (older clients don't send it).
  */
-glow?: boolean, };
+glow?: boolean, 
+/**
+ * The new typing text (#652): blank clears it back to "is typing"; absent keeps the current
+ * one (older clients don't send it).
+ */
+typing_text?: string, };
