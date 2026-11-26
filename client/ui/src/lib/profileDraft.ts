@@ -23,6 +23,8 @@ export type Draft = {
   displayName: string
   /** Your card glows in its colours (#156). */
   glow: boolean
+  /** What follows "<your name> is" while you type (#652), as typed: trimmed on Save, blank for "is typing". */
+  typingText: string
 }
 
 export function draftFrom(p: Profile): Draft {
@@ -42,6 +44,8 @@ export function draftFrom(p: Profile): Draft {
     displayName: p.user.display_name || p.user.username,
     // an older server sends none: on, as every card was
     glow: p.card.glow !== false,
+    // none (or an older server): the plain "is typing"
+    typingText: p.user.typing_text ?? '',
   }
 }
 
@@ -63,12 +67,16 @@ export function toRequest(d: Draft): UpdateProfileRequest {
     bio: orNull(d.bio),
     display_name: d.displayName.trim(),
     glow: d.glow,
+    // always sent: blank clears it (absent would keep it)
+    typing_text: d.typingText.trim(),
   }
 }
 
 /** You as the draft would make you, name colours lightened as Save will store them. */
 export function previewUser(me: User, d: Draft): User {
-  return { ...me, display_name: d.displayName.trim() || me.username, avatar_hash: d.avatarHash, avatar_still: d.avatarStill, style: { font: d.font, colors: d.colors.map(lightenForName), effect: d.effect } }
+  const typing = d.typingText.trim()
+  const { typing_text: _saved, ...rest } = me
+  return { ...rest, display_name: d.displayName.trim() || me.username, avatar_hash: d.avatarHash, avatar_still: d.avatarStill, style: { font: d.font, colors: d.colors.map(lightenForName), effect: d.effect }, ...(typing ? { typing_text: typing } : {}) }
 }
 
 /** The card as the draft would make it. A custom theme pair is kept as picked (spec §4.3). */
