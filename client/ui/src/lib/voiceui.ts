@@ -306,12 +306,10 @@ export const defaultAudioConfig: AudioConfig = {
   noise_suppression: 'strong', auto_sensitivity: true, auto_gain: false, even_out_voices: true,
   voice_clarity_eq: true, mic_test_as_others_hear: false,
 }
-/** The stored config over the defaults. The on/off toggles saved before 0.2.17 (`noise_suppress`, `echo_cancel`) are
- *  dropped unread: the core still folds them into the levels (`AudioConfig::normalized`), so a stray one must never
- *  reach it. */
+/** The stored config over the defaults. A key the core doesn't know (the pre-0.2.17 `noise_suppress`/`echo_cancel`
+ *  toggles, say) is carried along and ignored there (#703). */
 export function migrateAudioConfig(raw: Record<string, unknown>): AudioConfig {
-  const { noise_suppress: _ns, echo_cancel: _ec, ...rest } = raw
-  const c = { ...defaultAudioConfig, ...rest } as AudioConfig
+  const c = { ...defaultAudioConfig, ...raw } as AudioConfig
   // a level this version doesn't know (a newer one's, after a downgrade) would be refused by the core: the default instead
   if (!NS_LEVELS.includes(c.noise_suppression)) c.noise_suppression = defaultAudioConfig.noise_suppression
   return c

@@ -1789,13 +1789,7 @@ pub async fn join_voice(
     // a switch leaves the last channel's stream room (and ends our stream audio there)
     stream_audio.leave().await;
     let r = voice
-        .join(
-            &api,
-            &token,
-            channel_id,
-            config.normalized(),
-            AudioMode::Real,
-        )
+        .join(&api, &token, channel_id, config, AudioMode::Real)
         .await;
     if let Err(VoiceError::Api(ApiError::Unauthorized)) = &r {
         let _ = core.check::<()>(&app, Err(ApiError::Unauthorized));
@@ -1938,7 +1932,7 @@ pub async fn set_audio_config(
     voice: State<'_, VoiceManager>,
     config: AudioConfig,
 ) -> Result<(), VoiceError> {
-    voice.set_audio_config(config.normalized()).await
+    voice.set_audio_config(config).await
 }
 
 #[derive(serde::Serialize)]
@@ -1986,7 +1980,7 @@ pub async fn start_mic_test(
     // work off this worker meanwhile
     tokio::task::block_in_place(|| {
         mic.start(
-            &config.normalized(),
+            &config,
             std::sync::Arc::new(move |e| {
                 let _ = handle.emit("voice://event", &e);
             }),
