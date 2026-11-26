@@ -46,6 +46,8 @@ pub enum SearchScope {
 }
 
 /// What a password login led to. Not `Debug`: both variants hold a credential.
+// One per login, moved once: not worth a box for the size of a `User` (#652 made it a little bigger).
+#[allow(clippy::large_enum_variant)]
 pub enum LoginOutcome {
     Session(SessionResponse),
     /// The account has two-factor on: the ticket goes back with the code (`Api::login_mfa`).
@@ -6452,6 +6454,7 @@ mod tests {
                     bio: Some("hi".into()),
                     display_name: None,
                     glow: None,
+                    typing_text: None,
                 },
             )
             .await

@@ -1144,6 +1144,7 @@ mod tests {
                             avatar_hash: None,
                             avatar_still: None,
                             style: Default::default(),
+                            typing_text: None,
                         },
                         servers: vec![],
                         channels: vec![],
