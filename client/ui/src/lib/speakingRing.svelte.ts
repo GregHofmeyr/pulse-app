@@ -48,8 +48,9 @@ const order = $derived.by(() => {
 })
 const rank = $derived(new Map(order.map((id, i) => [id, i])))
 
-/** Whether `id`'s lit ring may animate: among the first RING_CAP to start of those lit now. */
+/** Whether `id`'s lit ring may animate: among the first RING_CAP to start of those lit now. Someone not in the lit
+ * set (a ring lit by its host alone, e.g. the preview) isn't counted, so it animates. */
 export function isAnimating(id: string): boolean {
   const r = rank.get(id)
-  return r !== undefined && r < RING_CAP
+  return r === undefined || r < RING_CAP
 }
