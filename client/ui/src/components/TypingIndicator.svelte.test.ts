@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { flushSync, mount, unmount } from 'svelte'
 import { compile } from 'svelte/compiler'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import TypingIndicator from './TypingIndicator.svelte'
 import { typingLine, type Typer } from '../lib/typingLine'
 import { DUR_EXIT, exitFade } from '../lib/exit'
@@ -83,6 +83,46 @@ describe('TypingIndicator', () => {
   })
 })
 
+describe('leaving (#652 review)', () => {
+  // an animation that never finishes: whatever waits for it stays on screen
+  const hang = () => ({ onfinish: null, oncancel: null, cancel() {}, finish() {}, play() {}, pause() {}, currentTime: 0, finished: new Promise(() => {}) })
+  let saved: unknown
+  let c: ReturnType<typeof mount> | undefined
+  const props = $state<{ line: ReturnType<typeof typingLine> }>({ line: null })
+  beforeEach(() => {
+    saved = (Element.prototype as unknown as { animate?: unknown }).animate
+    ;(Element.prototype as unknown as { animate: unknown }).animate = hang
+    windowFocus.focused = true
+  })
+  afterEach(() => {
+    ;(Element.prototype as unknown as { animate?: unknown }).animate = saved
+    if (c) unmount(c)
+    c = undefined
+    props.line = null
+    document.body.innerHTML = ''
+  })
+
+  it('the line going still fades out (it stays while its fade runs)', () => {
+    c = mount(TypingIndicator, { target: document.body, props })
+    props.line = typingLine([sam])
+    flushSync()
+    props.line = null
+    flushSync()
+    expect(document.querySelectorAll('.typing-line')).toHaveLength(1)
+  })
+
+  it('the chat around it going (a channel switch, closing the chat) never waits for that fade', async () => {
+    c = mount(TypingIndicator, { target: document.body, props })
+    props.line = typingLine([sam])
+    flushSync()
+    const done = unmount(c, { outro: true })
+    c = undefined
+    flushSync()
+    expect(document.querySelector('.typing')).toBeNull()
+    await done
+  })
+})
+
 describe('the leave fade', () => {
   const withAnimate = () => Object.assign(document.createElement('div'), { animate: () => {} })
   afterEach(() => {
@@ -103,8 +143,10 @@ describe('the leave fade', () => {
     expect(exitFade(withAnimate(), { fadeWhenReduced: true }).duration).toBe(0)
   })
 
-  it('the line leaves with it', () => {
-    expect(readFileSync(resolve(__dirname, 'TypingIndicator.svelte'), 'utf8')).toMatch(/out:exitFade\|global=\{\{ fadeWhenReduced: true \}\}/)
+  it('the line leaves with it, a local outro (never |global: the chat being destroyed would wait for it)', () => {
+    const src = readFileSync(resolve(__dirname, 'TypingIndicator.svelte'), 'utf8')
+    expect(src).toMatch(/out:exitFade=\{\{ fadeWhenReduced: true \}\}/)
+    expect(src).not.toMatch(/\|global/)
   })
 })
 

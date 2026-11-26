@@ -20,11 +20,11 @@
 </script>
 
 <div class="typing" aria-live="polite">
-  {#if line}
-    {#key line.key}
-      <span class="typing-line" use:enter={swap} out:exitFade|global={{ fadeWhenReduced: true }}><strong class="name-clip">{line.names}</strong> {line.rest}</span>
-    {/key}
-  {/if}
+  <!-- a keyed one-item list, so the outro is local: a line that goes (or gives way to new words) fades, but a chat
+       being destroyed around it (a channel switch, closing the chat) never waits for it -->
+  {#each line ? [line] : [] as l (l.key)}
+    <span class="typing-line" use:enter={swap} out:exitFade={{ fadeWhenReduced: true }}><strong class="name-clip">{l.names}</strong> {l.rest}</span>
+  {/each}
 </div>
 
 <style>
