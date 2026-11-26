@@ -1,7 +1,8 @@
 <script lang="ts">
   // A clips channel's right panel (#663), the builds channel's design: Games ("All games", then each game used here,
   // with counts), then People ("Everyone", then each person who shared one, with counts). A click filters the feed.
-  // Counts are the whole channel's (as the server gives them), not narrowed by the other filter.
+  // Each section's counts are narrowed by the other section's pick, not its own (#664), so a number is what clicking
+  // that row would show: with a person picked, Games counts their clips; with a game picked, People counts its clips.
   import FilterList from './FilterList.svelte'
   import GameFilterPanel from './GameFilterPanel.svelte'
   import { displayName } from '../lib/selectors'
@@ -30,6 +31,6 @@
 
 <GameFilterPanel class="clips-panel" {id} label="Filter clips" {serverId} games={facets?.games} total={facets?.total} selected={filter.game}
   onSelect={(g) => onFilter(clipFilter(g, filter.author))}>
-  <FilterList heading="People" kind="people" allLabel="Everyone" allCount={facets?.total} rows={people} selected={filter.author}
+  <FilterList heading="People" kind="people" allLabel="Everyone" allCount={facets ? (facets.authors_total ?? facets.total) : undefined} rows={people} selected={filter.author}
     onSelect={(a) => onFilter(clipFilter(filter.game, a))} />
 </GameFilterPanel>

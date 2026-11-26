@@ -14,7 +14,7 @@
   import BuildRow from './BuildRow.svelte'
   import BuildsHeader from './BuildsHeader.svelte'
   import BuildsPanel from './BuildsPanel.svelte'
-  import { buildFacetsOf, buildFeedFailed, dropBuildFeed, buildFeedKey, buildFilter, loadBuildPage, openBuildFeed, refreshedBuild, setBuildFacets, settleBuild, unsureBuilds, type BuildFeed, type BuildFilter } from '../lib/builds'
+  import { buildFacetsOf, buildFeedFailed, dropBuildFeed, dropSearchFacets, buildFeedKey, buildFilter, loadBuildPage, openBuildFeed, refreshedBuild, setBuildFacets, settleBuild, unsureBuilds, type BuildFeed, type BuildFilter } from '../lib/builds'
   import { barActions as shownActions, bulkPartial, bulkPlan, bulkSummary, runChunks, rangeSelected, toggleSelected, type BulkAction, type BuildMenuItem, type SelectBarAction } from '../lib/buildSelect'
   import { buildRights, isFavourite } from '../lib/builds'
   import { menuPoint } from '../lib/participantMenu'
@@ -48,8 +48,9 @@
 
   const games = $derived(app.state.games[serverId] ?? [])
   const title = $derived(game ? (games.find((g) => g.id === game)?.name ?? 'Game') : 'All games')
-  const stored = $derived(buildFacetsOf(app.state, channelId, archived))
-  /** The counts last fetched here, with and without archived builds: shown while fresh ones are fetched. */
+  const stored = $derived(buildFacetsOf(app.state, channelId, archived, filter.q))
+  /** The counts last fetched here, with and without archived builds (under whatever search was in view then): shown
+   * while fresh ones are fetched, so the numbers never flash blank. */
   let held = $state<{ live?: BuildFacets; all?: BuildFacets }>({})
   const facets = $derived(stored ?? (archived ? held.all : held.live))
   const count = $derived(
@@ -67,9 +68,9 @@
     setView(channelId, v)
   }
 
-  // --- counts: fetched whenever they're missing: on open, when Show archived flips, after a reconnect, and a second
-  // after a build changes (any build event drops a channel's counts, open or not: `buildsOnEvent`). The last ones
-  // fetched stay on screen meanwhile. ---
+  // --- counts: fetched whenever they're missing: on open, when Show archived flips or the search's words change (the
+  // counts follow the search, #664), after a reconnect, and a second after a build changes (any build event drops a
+  // channel's counts, open or not: `buildsOnEvent`). The last ones fetched stay on screen meanwhile. ---
   const FACETS_DEBOUNCE_MS = 1000
   let facetsSeq = 0
   /** The fetch for the counts in view failed: not asked again until a build changes, the variant flips or a Ready. */
@@ -77,14 +78,14 @@
   /** Bumped by a build event so the counts are asked for again (also when they were already being fetched). */
   let facetsTick = $state(0)
   let facetsSoon = false
-  async function loadFacets(withArchived: boolean) {
+  async function loadFacets(withArchived: boolean, words: string) {
     const seq = ++facetsSeq
     try {
-      const f = await api.buildFacets(channelId, withArchived)
+      const f = await api.buildFacets(channelId, withArchived, words || undefined)
       if (seq !== facetsSeq || !f) return
       facetsFailed = false
       held = withArchived ? { ...held, all: f } : { ...held, live: f }
-      app.state = setBuildFacets(app.state, channelId, withArchived, f)
+      app.state = setBuildFacets(app.state, channelId, withArchived, f, words)
     } catch {
       if (seq === facetsSeq) facetsFailed = true // the counts stay as they were
     }
@@ -93,14 +94,27 @@
     void facetsTick
     if (stored || facetsFailed) return
     const a = archived
+    const words = filter.q ?? ''
     const soon = facetsSoon
     facetsSoon = false
-    if (!soon) return untrack(() => void loadFacets(a))
-    const t = setTimeout(() => void loadFacets(a), FACETS_DEBOUNCE_MS)
+    if (!soon) return untrack(() => void loadFacets(a, words))
+    const t = setTimeout(() => void loadFacets(a, words), FACETS_DEBOUNCE_MS)
     return () => clearTimeout(t)
+  })
+  // a search's counts are thrown away once its words (or Show archived) change, as its feed is: one set per query
+  // would pile up
+  $effect(() => {
+    const a = archived
+    const words = filter.q
+    if (!words) return
+    return () => untrack(() => (app.state = dropSearchFacets(app.state, channelId, a, words)))
   })
   function pickArchived(on: boolean) {
     archived = on
+    facetsFailed = false
+  }
+  function pickQ(v: string) {
+    q = v
     facetsFailed = false
   }
   $effect(() =>
@@ -474,7 +488,7 @@
       <div class="head">
         <!-- under the selection bar: out of Tab's reach while it's up -->
         <div class="head-under" inert={selecting}>
-          <BuildsHeader {title} {count} {q} onQ={(v) => (q = v)} {view} onView={pickView} {panel} onPanel={togglePanel} panelId="builds-panel-{channelId}" onAdd={() => openQuick()} />
+          <BuildsHeader {title} {count} {q} onQ={pickQ} {view} onView={pickView} {panel} onPanel={togglePanel} panelId="builds-panel-{channelId}" onAdd={() => openQuick()} />
         </div>
         {#if selecting}
           <BuildsSelectBar count={selected.length} {notYours} actions={barActions} {busy} onClear={() => { picked = []; anchor = null }} onCancel={stopSelecting} />

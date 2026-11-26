@@ -1,6 +1,6 @@
 <script lang="ts">
   // A builds channel's right panel (#617): Games ("All games", then each game with a build here, with counts that
-  // follow Show archived; a click filters the view), the Show archived checkbox, and Archive old builds. The panel
+  // follow Show archived and the search's words, #664; a click filters the view), the Show archived checkbox, and Archive old builds. The panel
   // and its Games are the shared GameFilterPanel (#663).
   import BulkArchive from './BulkArchive.svelte'
   import GameFilterPanel from './GameFilterPanel.svelte'

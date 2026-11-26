@@ -3905,19 +3905,26 @@ impl Api {
         Self::clip_parse(req.send().await).await
     }
 
+    /// A clips channel's counts, each side narrowed by the other side's filter (#664): `author` the games, `game`
+    /// the people.
     pub async fn clip_facets(
         &self,
         token: &str,
         channel: ChannelId,
+        game: Option<GameId>,
+        author: Option<UserId>,
     ) -> Result<ClipFacets, ApiError> {
-        Self::clip_parse(
-            self.http
-                .get(self.url(&["channels", &channel.to_string(), "clips", "facets"])?)
-                .bearer_auth(token)
-                .send()
-                .await,
-        )
-        .await
+        let mut req = self
+            .http
+            .get(self.url(&["channels", &channel.to_string(), "clips", "facets"])?)
+            .bearer_auth(token);
+        if let Some(g) = game {
+            req = req.query(&[("game", g.to_string())]);
+        }
+        if let Some(a) = author {
+            req = req.query(&[("author", a.to_string())]);
+        }
+        Self::clip_parse(req.send().await).await
     }
 
     pub async fn set_clip_view(
@@ -7358,8 +7365,26 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
-        let facets = r.api.clip_facets(&r.token, r.channel.id).await.unwrap();
+        let facets = r
+            .api
+            .clip_facets(&r.token, r.channel.id, None, None)
+            .await
+            .unwrap();
         assert_eq!(facets.games[0].game_id, game.id);
+        // narrowed by the other filter (#664): both asks reach the server
+        let facets = r
+            .api
+            .clip_facets(&r.token, r.channel.id, Some(game.id), msg.author_id)
+            .await
+            .unwrap();
+        assert_eq!((facets.total, facets.authors_total), (Some(1), Some(1)));
+        let facets = r
+            .api
+            .clip_facets(&r.token, r.channel.id, None, Some(UserId::new()))
+            .await
+            .unwrap();
+        assert_eq!((facets.total, facets.authors_total), (Some(0), Some(1)));
+        assert!(facets.games.is_empty());
 
         let url = r.api.clip_url(&r.token, msg.id).await.unwrap();
         let got = reqwest::get(&url.url).await.unwrap().bytes().await.unwrap();
@@ -7739,7 +7764,7 @@ mod tests {
             );
             said(api.clip_url(t, msg.1).await.unwrap_err());
             said(api.list_clips(t, ch, None, None, None).await.unwrap_err());
-            said(api.clip_facets(t, ch).await.unwrap_err());
+            said(api.clip_facets(t, ch, None, None).await.unwrap_err());
             said(api.set_clip_view(t, ch, ClipView::List).await.unwrap_err());
             said(api.clip_storage(t, sv).await.unwrap_err());
         }
