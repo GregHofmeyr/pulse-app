@@ -161,17 +161,21 @@ describe('BuildsPanel', () => {
   })
 
   it('panel CSS: one inset for every row and label, the settings divider token, full-width controls', () => {
-    const panelCss = readFileSync(resolve(__dirname, 'BuildsPanel.svelte'), 'utf8').split('<style>')[1]
-    const bulkCss = readFileSync(resolve(__dirname, 'BulkArchive.svelte'), 'utf8').split('<style>')[1]
+    // the panel and its Games are the shared GameFilterPanel / FilterList (#663); Builds adds the switch row
+    const read = (f: string) => readFileSync(resolve(__dirname, f), 'utf8').split('<style>')[1]
+    const shellCss = read('GameFilterPanel.svelte')
+    const listCss = read('FilterList.svelte')
+    const panelCss = read('BuildsPanel.svelte')
+    const bulkCss = read('BulkArchive.svelte')
     const rule = (css: string, sel: string) => css.match(new RegExp(`(?:^|\\n)\\s*${sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} \\{([^}]*)\\}`))?.[1] ?? ''
-    expect(rule(panelCss, '.builds-panel')).toMatch(/--inset: 10px/)
+    expect(rule(shellCss, '.filter-panel')).toMatch(/--inset: 10px/)
     // headers, game rows, the switch row and the field labels all put their text on the same edge
-    for (const [css, sel] of [[panelCss, 'h3'], [panelCss, '.games button'], [panelCss, '.check'], [bulkCss, 'h3'], [bulkCss, '.field-label']] as const)
+    for (const [css, sel] of [[listCss, 'h3'], [listCss, '.list button'], [panelCss, '.check'], [bulkCss, 'h3'], [bulkCss, '.field-label']] as const)
       expect(rule(css, sel), sel).toMatch(/padding-inline: var\(--inset\)|padding: [^;]*var\(--inset\)/)
     // the divider is Settings' row/sidebar rule
-    expect(rule(panelCss, '.sep')).toMatch(/background: var\(--line-soft\)/)
+    expect(rule(shellCss, '.filter-panel > :global(.sep)')).toMatch(/background: var\(--line-soft\)/)
     // the same vertical rhythm for every section
-    expect(rule(panelCss, '.builds-panel > :global(section)')).toMatch(/padding-block: 14px/)
+    expect(rule(shellCss, '.filter-panel > :global(section)')).toMatch(/padding-block: 14px/)
     expect(rule(bulkCss, '.bulk')).not.toMatch(/padding/) // takes the panel's section rule
     expect(rule(bulkCss, '.when')).toMatch(/grid-template-columns: 1fr 1fr/)
     expect(rule(bulkCss, '.go')).toMatch(/width: 100%/)
