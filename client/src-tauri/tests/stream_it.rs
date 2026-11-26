@@ -20,7 +20,7 @@ use pulse_protocol::rest::StreamRole;
 use pulse_server::testing;
 
 mod common;
-use common::livekit_turn;
+use common::{levels_over, livekit_turn};
 
 const DEV_SECRET: &str = "pulse-dev-secret-0123456789abcdefghij";
 
@@ -460,7 +460,9 @@ async fn published_stream_audio_reaches_a_watcher() {
         "stream audio keeps flowing into the mixer"
     );
     assert!(
-        sam_vm.mixer_levels().await.is_empty(),
+        levels_over(&sam_vm, Duration::from_millis(500))
+            .await
+            .is_empty(),
         "stream audio never lights the speaking ring"
     );
 

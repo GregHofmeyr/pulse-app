@@ -2247,8 +2247,9 @@ impl VoiceManager {
                 }
             }));
         }
-        // speaking ring + its levels, ~14 Hz (#651); the only reader of the read-and-reset voice
-        // meters
+        // speaking ring + its levels, ~14 Hz (#651); the only reader in production of the
+        // read-and-reset voice meters; `mixer_levels()` is a test hook that races it. A steady tick
+        // allocates nothing: one reused peer buffer, your own level beside it.
         {
             let (shared, events, alive) = (shared.clone(), self.events.clone(), alive.clone());
             tasks.push(tokio::spawn(async move {
@@ -2256,19 +2257,26 @@ impl VoiceManager {
                 tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
                 let mut speaking = speaking::SpeakingTracker::default();
                 let mut ring = ringlevels::RingLevels::default();
+                let mut peers: Vec<(String, f32)> = Vec::new();
                 loop {
                     tick.tick().await;
                     if !alive.load(Ordering::SeqCst) {
                         break;
                     }
                     // Ring = actually audible: received levels per peer + what we really send.
-                    let mut levels = shared.mix_in.take_peer_levels();
-                    levels.push((me_id.clone(), shared.take_sent_level()));
-                    if let Some(user_ids) = speaking.update(&levels, Instant::now()) {
+                    shared.mix_in.take_peer_levels_into(&mut peers);
+                    let me = shared.take_sent_level();
+                    let levels = || {
+                        peers
+                            .iter()
+                            .map(|(id, rms)| (id.as_str(), *rms))
+                            .chain(std::iter::once((me_id.as_str(), me)))
+                    };
+                    if let Some(user_ids) = speaking.observe(levels(), Instant::now()) {
                         events(VoiceEvent::Speaking { user_ids });
                     }
                     let watched = devices::relock(&shared.controls).rings_shown();
-                    if let Some(levels) = ring.frame(&levels, speaking.current(), watched) {
+                    if let Some(levels) = ring.frame_from(levels(), speaking.current(), watched) {
                         events(VoiceEvent::SpeakingLevels { levels });
                     }
                 }
@@ -2589,7 +2597,9 @@ impl VoiceManager {
         }
     }
 
-    /// Loudest voice level per person since the last call (tests: sound, not just frames).
+    /// Loudest voice level per person since the last call (tests: sound, not just frames). A test
+    /// hook: the session's ring tick drains the same meters every 70 ms, so a read covers at most
+    /// that long. Poll it and take the max (`tests/common::loudest`).
     pub async fn mixer_levels(&self) -> Vec<(String, f32)> {
         match self.session.lock().await.as_ref() {
             Some(s) => s.pipeline.shared.mix_in.take_peer_levels(),

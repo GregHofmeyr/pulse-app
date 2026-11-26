@@ -40,17 +40,31 @@ impl RingLevels {
         speaking: &[String],
         watched: bool,
     ) -> Option<BTreeMap<String, f32>> {
+        self.frame_from(
+            levels.iter().map(|(id, rms)| (id.as_str(), *rms)),
+            speaking,
+            watched,
+        )
+    }
+
+    /// `frame` from borrowed levels (the ring tick: peers' buffer plus your own level).
+    pub fn frame_from<'a>(
+        &mut self,
+        levels: impl IntoIterator<Item = (&'a str, f32)>,
+        speaking: &[String],
+        watched: bool,
+    ) -> Option<BTreeMap<String, f32>> {
         // only speakers have a ring: everyone else's state is dropped (attack is instant anyway)
         self.shown.retain(|id, _| speaking.contains(id));
         for (id, rms) in levels {
-            if !speaking.contains(id) {
+            if !speaking.iter().any(|s| s == id) {
                 continue;
             }
-            let new = ring_level(*rms);
+            let new = ring_level(rms);
             match self.shown.get_mut(id) {
                 Some(v) => *v = new.max(*v * RELEASE),
                 None => {
-                    self.shown.insert(id.clone(), new);
+                    self.shown.insert(id.to_owned(), new);
                 }
             }
         }
