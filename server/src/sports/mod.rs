@@ -50,15 +50,6 @@ pub fn sport_of(league: SportsLeague) -> Sport {
     }
 }
 
-/// The league's display name.
-pub fn league_name(league: SportsLeague) -> &'static str {
-    match league {
-        SportsLeague::Psl => "Premiership (PSL)",
-        SportsLeague::Urc => "United Rugby Championship",
-        SportsLeague::Epl => "Premier League",
-    }
-}
-
 /// The season API-Sports files a date under: all three leagues run from about August to June and are named by the
 /// year they start in.
 pub fn season_for(date: jiff::civil::Date) -> i32 {

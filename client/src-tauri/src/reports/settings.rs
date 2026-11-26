@@ -85,6 +85,7 @@ impl Store {
     }
 
     /// Why loading fell back to off (the file was there but unreadable), if it did.
+    #[cfg(test)]
     pub fn load_problem(&self) -> Option<&str> {
         self.problem.as_deref()
     }

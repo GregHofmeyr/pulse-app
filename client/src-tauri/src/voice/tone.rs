@@ -77,10 +77,6 @@ impl ToneStage {
         }
     }
 
-    pub fn is_on(&self) -> bool {
-        self.on
-    }
-
     /// Turning it on starts from silence (no stale ring from before it was turned off).
     pub fn set_on(&mut self, on: bool) {
         if on && !self.on {

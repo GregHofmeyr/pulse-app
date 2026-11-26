@@ -88,6 +88,7 @@ impl Limiter {
     }
 
     /// A block in place.
+    #[cfg(test)]
     pub fn process_block(&mut self, block: &mut [f32]) {
         for v in block.iter_mut() {
             *v = self.process(*v);
