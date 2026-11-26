@@ -34,7 +34,7 @@ pub mod tokens;
 pub mod tone;
 pub mod virtualmic;
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -929,6 +929,11 @@ pub enum VoiceEvent {
     },
     Speaking {
         user_ids: Vec<String>,
+    },
+    /// Per-speaker loudness 0..1 for the reactive rings (#651): only for people speaking, only while
+    /// a ring watches; one `{}` when the last one stops.
+    SpeakingLevels {
+        levels: BTreeMap<String, f32>,
     },
     Quality {
         user_id: String,
@@ -2194,8 +2199,7 @@ impl VoiceManager {
             }));
         }
 
-        // levels for the UI meter + speaking ring (FINDINGS rule 2); the device watchdog is the
-        // pipeline's
+        // levels for the UI meter (FINDINGS rule 2); the device watchdog is the pipeline's
         let me_id = room.local_participant().identity().to_string();
         // a new call judges the mic afresh ("heard" in the last call says nothing about this one)
         shared.mic_silence.lock().unwrap().restart();
@@ -2204,7 +2208,6 @@ impl VoiceManager {
             tasks.push(tokio::spawn(async move {
                 let mut tick = tokio::time::interval(Duration::from_millis(100));
                 tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-                let mut speaking = speaking::SpeakingTracker::default();
                 let mut clip = miclevels::ClipHint::default();
                 loop {
                     tick.tick().await;
@@ -2241,11 +2244,32 @@ impl VoiceManager {
                     if devices::relock(&shared.muted_cue).take_fired() {
                         events(VoiceEvent::MutedCue);
                     }
+                }
+            }));
+        }
+        // speaking ring + its levels, ~14 Hz (#651); the only reader of the read-and-reset voice
+        // meters
+        {
+            let (shared, events, alive) = (shared.clone(), self.events.clone(), alive.clone());
+            tasks.push(tokio::spawn(async move {
+                let mut tick = tokio::time::interval(Duration::from_millis(70));
+                tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                let mut speaking = speaking::SpeakingTracker::default();
+                let mut ring = ringlevels::RingLevels::default();
+                loop {
+                    tick.tick().await;
+                    if !alive.load(Ordering::SeqCst) {
+                        break;
+                    }
                     // Ring = actually audible: received levels per peer + what we really send.
                     let mut levels = shared.mix_in.take_peer_levels();
                     levels.push((me_id.clone(), shared.take_sent_level()));
                     if let Some(user_ids) = speaking.update(&levels, Instant::now()) {
                         events(VoiceEvent::Speaking { user_ids });
+                    }
+                    let watched = devices::relock(&shared.controls).rings_shown();
+                    if let Some(levels) = ring.frame(&levels, speaking.current(), watched) {
+                        events(VoiceEvent::SpeakingLevels { levels });
                     }
                 }
             }));
@@ -4330,6 +4354,15 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&e).unwrap(),
             r#"{"kind":"stage","stage":"reconnecting","attempt":2}"#
+        );
+    }
+
+    #[test]
+    fn speaking_levels_event_serialises_for_the_ui() {
+        let levels = [("U1".to_string(), 0.45f32), ("U2".to_string(), 1.0)].into();
+        assert_eq!(
+            serde_json::to_string(&VoiceEvent::SpeakingLevels { levels }).unwrap(),
+            r#"{"kind":"speaking_levels","levels":{"U1":0.45,"U2":1.0}}"#
         );
     }
 

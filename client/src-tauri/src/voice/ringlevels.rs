@@ -69,15 +69,14 @@ impl RingLevels {
         }
         let level = |id: &String| step(self.shown.get(id).copied().unwrap_or(0.0));
         // compare before building: a steady frame allocates nothing (both sides are sorted by id)
-        if let Some(last) = &self.last_sent {
-            if last.len() == speaking.len()
-                && last
-                    .iter()
-                    .zip(speaking)
-                    .all(|((k, v), id)| k == id && *v == level(id))
-            {
-                return None;
-            }
+        if let Some(last) = &self.last_sent
+            && last.len() == speaking.len()
+            && last
+                .iter()
+                .zip(speaking)
+                .all(|((k, v), id)| k == id && *v == level(id))
+        {
+            return None;
         }
         let frame: BTreeMap<String, f32> =
             speaking.iter().map(|id| (id.clone(), level(id))).collect();

@@ -663,6 +663,7 @@ impl MixerInput {
 
     /// (person, rms since the last call): how each person's *voice* sounded, after their volume.
     /// Stream meters are drained too but never reported: a loud game isn't talking.
+    /// Read-and-reset, so one caller in a call: the ring tick in `voice/mod.rs` (#651).
     pub fn take_peer_levels(&self) -> Vec<(String, f32)> {
         let mut out: Vec<(String, f32)> = Vec::new();
         for s in self.sources.lock().unwrap().values_mut() {
