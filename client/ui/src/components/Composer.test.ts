@@ -965,3 +965,36 @@ describe('Composer suggestion lists close on Escape and click-away', () => {
     expect(listbox()).not.toBeNull()
   })
 })
+
+// #652: right after a send, others drop a Typing from you for TYPING_STOP_GUARD_MS (it may be one that overtook the
+// message). The next one goes out just after that window, not on the first keystroke (dropped) nor 3 s later.
+describe('Composer typing signal after a send', () => {
+  it('the first Typing after a send goes out just after the guard, then every 3 s again', async () => {
+    const { TYPING_STOP_GUARD_MS } = await import('../lib/typingLine')
+    const { TYPING_EVERY_MS } = await import('../lib/markdown')
+    vi.useFakeTimers({ now: 1_000_000 })
+    try {
+      const onTyping = vi.fn()
+      const box = show(undefined, { onTyping })
+      type(box, 'hi')
+      expect(onTyping).toHaveBeenCalledTimes(1)
+      press(box, 'Enter')
+      expect(onSend).toHaveBeenCalled()
+      onTyping.mockClear()
+      vi.advanceTimersByTime(300)
+      type(box, 'a') // within the guard: it would be dropped, so it isn't sent
+      expect(onTyping).not.toHaveBeenCalled()
+      vi.advanceTimersByTime(TYPING_STOP_GUARD_MS + 250 - 300)
+      type(box, 'ab') // just after it: sent
+      expect(onTyping).toHaveBeenCalledTimes(1)
+      vi.advanceTimersByTime(TYPING_EVERY_MS - 1)
+      type(box, 'abc')
+      expect(onTyping).toHaveBeenCalledTimes(1)
+      vi.advanceTimersByTime(1)
+      type(box, 'abcd')
+      expect(onTyping).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})

@@ -1,5 +1,6 @@
 // The app's single source of truth, as pure functions over plain data so they're easy to test.
 // The reactive wrapper lives in store.svelte.ts.
+import { TYPING_STOP_GUARD_MS } from './typingLine'
 import type { CallInfo } from './protocol/CallInfo'
 import type { DmLayout } from './protocol/DmLayout'
 import type { PersonDnd } from './protocol/PersonDnd'
@@ -228,9 +229,7 @@ export type History = {
 export const MISSED_CAP = 200
 
 export const TYPING_TTL_MS = 6000
-/** How long after someone's message a Typing from them is taken as stale (sent before it, delivered after). Their client
- *  signals at most every 3 s, so a real new start is at worst shown one signal late. */
-export const TYPING_STOP_GUARD_MS = 1000
+export { TYPING_STOP_GUARD_MS }
 
 export function emptyState(): AppState {
   return { me: null, servers: [], channels: {}, members: {}, dmMembers: {}, voice: {}, messages: {}, pending: {}, typing: {}, typingStops: {}, history: {}, conn: 'connecting', people: {}, myStatus: { status: 'online', dnd_until: null }, myCustomStatus: { current: null, until: null, recent: [] }, appearOfflineTo: [], liveNotify: [], serverOrder: [], dmLayout: { categories: [], placements: [] }, personDnd: [], activityHidden: [], myServerStatuses: [], blocks: [], invitesRev: {}, bansRev: {}, inboxFilters: [], channelOrders: {}, planReminders: true, calls: {}, profiles: {}, roleColors: {}, privateNicks: {}, reads: {}, mutes: [], notifyLevels: [], hidden: {}, latest: {}, streams: {}, customEmoji: {}, frequentEmoji: [], sounds: {}, soundFavourites: [], frequentSounds: [], serverVoice: {}, threads: {}, threadStart: {}, threadSeen: {}, goneReplies: {}, openRoot: null, qoty: {}, speakerLinks: {}, games: {}, clipViews: {}, clipFeeds: {}, clipFacets: {}, buildFeeds: {}, buildFacets: {}, clipJobs: {}, layouts: {}, pins: {}, stageShares: {}, watchParties: {} }

@@ -3,6 +3,11 @@
 // timeouts in any order land on the same words.
 import { charCount } from './profileDraft'
 
+/** How long after someone's message a Typing from them is taken as stale: sent just before it, delivered just after
+ *  (state.ts `typingStops`). Short, as a real new start lands in it too: the sender's next Typing after a send waits
+ *  until just past it (markdown.ts `typingSentAfterSend`), so it isn't dropped. */
+export const TYPING_STOP_GUARD_MS = 400
+
 /** Most characters in typing text (the server's limit, server/src/profiles/names.rs). */
 export const TYPING_TEXT_MAX = 32
 

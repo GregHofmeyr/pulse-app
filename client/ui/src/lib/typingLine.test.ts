@@ -182,3 +182,29 @@ describe('typing text rules (the server keeps them; this is the preview)', () =>
     expect(TYPING_SUGGESTIONS).toEqual(expect.arrayContaining(['cooking', 'yapping', 'plotting', 'barking', 'typing a novel']))
   })
 })
+
+describe('typing again right after a send (#652 review)', () => {
+  it('kim sends, then types 300 ms later: others see her typing within about 0.7 s, and it never drops out', async () => {
+    const { typingThrottle, typingSentAfterSend } = await import('./markdown')
+    const LATENCY = 40
+    // the sender's side, as the Composer does it: one Typing per allowed keystroke, a keystroke every 50 ms
+    let last: number | null = 0
+    const typingsAt: number[] = []
+    last = typingSentAfterSend(0) // the send at t=0
+    for (let t = 300; t <= 4000; t += 50) {
+      if (typingThrottle(last, t)) {
+        last = t
+        typingsAt.push(t)
+      }
+    }
+    // the watcher's side: the message lands, then each Typing, all a little later
+    let s = sent(applyReady(emptyState(), ready()), 'U3', LATENCY)
+    const at = (t: number) => {
+      for (const sentAt of typingsAt) if (sentAt + LATENCY <= t && !seen.has(sentAt)) { seen.add(sentAt); s = typing(s, 'U3', sentAt + LATENCY) }
+      return shown(s, t)
+    }
+    const seen = new Set<number>()
+    expect(at(600)).toBe('') // not yet
+    for (let t = 700; t <= 4000; t += 20) expect(at(t), `at ${t} ms`).toBe('kim is barking')
+  })
+})

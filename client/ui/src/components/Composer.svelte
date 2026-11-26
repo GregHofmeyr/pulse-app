@@ -32,7 +32,7 @@
   import { customToken, savedTone, search, twemojiUrl, withSkin, type Std } from '../lib/emoji'
   import { applyEmoji, emojiQuery, insertAt } from '../lib/emojiComplete'
   import { animatedEmoji, stillSrc } from '../lib/animate.svelte'
-  import { typingThrottle } from '../lib/markdown'
+  import { typingSentAfterSend, typingThrottle } from '../lib/markdown'
   import { applyMention, mentionQuery, suggest, type Mentionable } from '../lib/mentions'
   import { applyCommand, commandQuery, suggestCommands, typingCommand, type SlashCommand } from '../lib/commands'
   import type { CustomEmoji } from '../lib/protocol/CustomEmoji'
@@ -474,7 +474,8 @@
       fileError = null
       box.setText({ text: '', caret: 0 }, true, false)
       box.forget()
-      lastTyping = null
+      // the next Typing goes just past the window in which others drop one from us (#652)
+      lastTyping = typingSentAfterSend(Date.now())
       return
     }
     if (e.key === 'Escape' && replyingTo) {
