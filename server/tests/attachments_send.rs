@@ -551,19 +551,22 @@ async fn purging_a_channel_deletes_its_attachments() {
         .await
         .unwrap();
     assert_eq!(r.status(), 204);
-    // the objects go after the commit, on a task
+    // the objects go after the commit, on a task that deletes each object and then its row, so
+    // wait for both: the last row can still be there just after the last object goes
+    let rows = || async {
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM attachments")
+            .fetch_one(&app.db)
+            .await
+            .unwrap()
+    };
     for _ in 0..50 {
-        if s3(app).keys().is_empty() {
+        if s3(app).keys().is_empty() && rows().await == 0 {
             break;
         }
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
     assert!(s3(app).keys().is_empty(), "{:?}", s3(app).keys());
-    let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM attachments")
-        .fetch_one(&app.db)
-        .await
-        .unwrap();
-    assert_eq!(n, 0);
+    assert_eq!(rows().await, 0);
 }
 
 async fn age(app: &TestApp, hours: i64) {
@@ -708,18 +711,21 @@ async fn purging_a_deleted_server_deletes_its_files() {
     .await
     .unwrap();
     assert_eq!(purged, 1);
+    // each object goes before its row, so wait for both
+    let rows = || async {
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM attachments")
+            .fetch_one(&app.db)
+            .await
+            .unwrap()
+    };
     for _ in 0..50 {
-        if s3(app).keys().is_empty() {
+        if s3(app).keys().is_empty() && rows().await == 0 {
             break;
         }
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
     assert!(s3(app).keys().is_empty(), "{:?}", s3(app).keys());
-    let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM attachments")
-        .fetch_one(&app.db)
-        .await
-        .unwrap();
-    assert_eq!(n, 0);
+    assert_eq!(rows().await, 0);
 }
 
 #[tokio::test]
