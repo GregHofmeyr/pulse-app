@@ -104,8 +104,12 @@ function prng(seed: number): () => number {
 
 // --- soak -----------------------------------------------------------------------------------------------------------
 
+// Three simulated days (20,000+ events, a reconnect every five hours) is what lets a slow leak show day over day, so
+// the run isn't trimmed: it takes a couple of seconds alone, past vitest's 5 s default on a busy machine (#646).
+const SOAK_TIMEOUT_MS = 60_000
+
 describe('long-session soak', () => {
-  it('a medium community over three days keeps every structure bounded', () => {
+  it('a medium community over three days keeps every structure bounded', { timeout: SOAK_TIMEOUT_MS }, () => {
     const rand = prng(544)
     const pick = <T,>(xs: readonly T[]): T => xs[Math.floor(rand() * xs.length)]
     const chance = (p: number) => rand() < p
