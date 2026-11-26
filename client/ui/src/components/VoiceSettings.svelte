@@ -110,7 +110,7 @@
   }
 
   const toggles: { key: 'voice_clarity_eq' | 'auto_gain' | 'even_out_voices'; label: string; help: string }[] = [
-    { key: 'voice_clarity_eq', label: 'Voice clarity EQ', help: 'Cuts rumble and boominess from your mic and adds a little clarity to your voice.' },
+    { key: 'voice_clarity_eq', label: 'Voice clarity EQ', help: 'Cuts boominess from your mic and adds a little clarity to your voice.' },
     { key: 'auto_gain', label: 'Automatic gain control', help: 'Evens out your volume. Leave off if you use input gain.' },
     { key: 'even_out_voices', label: 'Even out voice volumes', help: "Brings quiet and loud people closer to the same volume. Each person's own volume still applies on top." },
   ]

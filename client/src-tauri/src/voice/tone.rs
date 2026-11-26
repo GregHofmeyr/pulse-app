@@ -1,24 +1,21 @@
-//! The mic's tone stage (#590): "Voice clarity EQ". Three gentle biquads after the denoiser, before the gain and
-//! the limiter, at 48 kHz.
+//! The mic's tone stage (#590): "Voice clarity EQ". Two gentle bells after the denoiser, before the gain and the
+//! limiter, at 48 kHz.
 //!
-//! - **High-pass, 65 Hz, 2nd order (Butterworth, Q 0.707).** Rumble, desk thumps and plosive pops carry a lot of
-//!   energy and little speech. Left in, they set the peak the limiter reacts to, so the whole voice gets turned
-//!   down for a "p". WebRTC's APM runs its own high-pass *before* the denoiser; this one sits after it, so whatever
-//!   reaches the gain is rumble-free whichever suppression runs. It was 80 Hz; it is 65 Hz now (#589's PR) so a
-//!   deep voice's fundamental (~85–110 Hz) isn't on its slope. Above 150 Hz it costs < 0.2 dB.
+//! **No high-pass here: the low cut is the APM's (#660).** WebRTC's APM runs before the denoiser, always built
+//! with its high-pass on ([`super::devices::APM_HIGH_PASS`]). Measured on the libwebrtc we link, 48 kHz, 10 ms
+//! frames (`measured_low_cut` below), it is −3 dB at **58 Hz** and steep: −21 dB at 50 Hz, −44 dB at 40 Hz,
+//! ~−80 dB at 30 Hz. From 60 Hz up it's flat to within the ±0.5 dB ripple of the APM's 3-band split. That takes out
+//! rumble, desk thumps and the bottom of plosive pops before the denoiser, the gain and the limiter, whether or
+//! not this stage is on. Echo cancellation runs it whatever the flag says, because AEC3 enforces it. This stage had
+//! its own 2nd-order high-pass (80 Hz, then 65 Hz). Stacked on the APM's, it was redundant below 58 Hz and cost a
+//! deep voice's fundamental (~85–110 Hz) another 1.1–1.4 dB, so it's gone.
 //!
-//!   **The APM's high-pass, measured (#660)** on the libwebrtc we link, 48 kHz, 10 ms frames (`measured_low_cut`
-//!   below): −3 dB at **58 Hz**, and steep: −21 dB at 50 Hz, −44 dB at 40 Hz, ~−80 dB at 30 Hz. From 60 Hz up it is
-//!   flat to within the ±0.5 dB ripple of the APM's 3-band split (−0.2 dB at 90, −0.5 at 110, −0.2 at 150). Not the
-//!   ~100 Hz 2nd-order slope once assumed: it sits below a deep voice, so the two stack to only −1.6 dB at 90–150 Hz
-//!   (this stage −1.1…−1.4, the APM ≤ −0.5). Both stay on: the APM's takes out what's below 50 Hz before the echo
-//!   canceller and the denoiser, this one adds the gentle 50–80 Hz slope for plosives. Echo cancellation keeps the
-//!   APM's high-pass running whatever flag it's built with (AEC3 enforces it), and with the clarity EQ off the
-//!   APM's alone still cuts 30 Hz rumble by ~80 dB.
-//! - **Low-mid cut, −2 dB at 220 Hz (peaking, Q 1.0).** The "boom" of a deep voice, or a mic close up (proximity
+//! - **Low-mid cut, −2 dB at 220 Hz (peaking, Q 1.2).** The "boom" of a deep voice, or a mic close up (proximity
 //!   effect), piles up around 150–300 Hz. A bell there, not a low shelf, leaves the fundamental under it and the
-//!   warmth above it mostly alone: the whole stage is −1.1 dB at 110 Hz, −2.1 dB at 220 Hz, −0.4 dB at 500 Hz. −2 dB is about the smallest broad cut that's
-//!   audible: enough to take the muddiness off without making a light voice thin.
+//!   warmth above it mostly alone. The stage is −0.3 dB at 90 Hz, −0.5 dB at 110 Hz, −1.1 dB at 150 Hz, −2.0 dB at
+//!   220 Hz and −0.3 dB at 500 Hz. It was Q 1.0, which took 0.6 dB at 110 Hz; Q 1.2 keeps a deep voice's
+//!   fundamental under 0.5 dB. −2 dB is about the smallest broad cut that's audible: enough to take the
+//!   muddiness off without making a light voice thin.
 //! - **Presence lift, +1.5 dB at 3.5 kHz (peaking, Q 0.8).** Consonants live here; a little more makes speech easier
 //!   to follow through Opus and over game audio. Kept at +1.5 dB (not more) because there is no de-esser: more lift
 //!   would sharpen "s" sounds too.
@@ -26,14 +23,14 @@
 //! No de-esser: a safe one is a split-band compressor (sidechain detection, attack/release, threshold tuned per
 //! voice); a fixed cut would dull every voice and a badly tuned dynamic one lisps. Left for a follow-up.
 //!
-//! Off, the block passes through untouched. No allocation: three biquads' state. Denormal-safe: the state is
-//! zeroed once it has decayed below 1e-20 (checked once per block). Cost: 15 multiply-adds per sample.
+//! Off, the block passes through untouched. No allocation: two biquads' state. Denormal-safe: the state is
+//! zeroed once it has decayed below 1e-20 (checked once per block). Cost: 10 multiply-adds per sample.
 
 use super::leveller::Biquad;
 
-pub const HIGH_PASS_HZ: f64 = 65.0;
 pub const LOW_MID_HZ: f64 = 220.0;
 pub const LOW_MID_DB: f64 = -2.0;
+pub const LOW_MID_Q: f64 = 1.2;
 pub const PRESENCE_HZ: f64 = 3_500.0;
 pub const PRESENCE_DB: f64 = 1.5;
 
@@ -50,16 +47,6 @@ fn normalise(b: [f64; 3], a: [f64; 3]) -> Coeffs {
     ]
 }
 
-/// RBJ Audio EQ Cookbook high-pass.
-fn high_pass(rate: f64, f0: f64, q: f64) -> Coeffs {
-    let w = std::f64::consts::TAU * f0 / rate;
-    let (cos, alpha) = (w.cos(), w.sin() / (2.0 * q));
-    normalise(
-        [(1.0 + cos) / 2.0, -(1.0 + cos), (1.0 + cos) / 2.0],
-        [1.0 + alpha, -2.0 * cos, 1.0 - alpha],
-    )
-}
-
 /// RBJ Audio EQ Cookbook peaking EQ.
 fn peaking(rate: f64, f0: f64, q: f64, db: f64) -> Coeffs {
     let w = std::f64::consts::TAU * f0 / rate;
@@ -73,8 +60,8 @@ fn peaking(rate: f64, f0: f64, q: f64, db: f64) -> Coeffs {
 
 pub struct ToneStage {
     on: bool,
-    coeffs: [Coeffs; 3],
-    state: [Biquad; 3],
+    coeffs: [Coeffs; 2],
+    state: [Biquad; 2],
 }
 
 impl ToneStage {
@@ -83,11 +70,10 @@ impl ToneStage {
         Self {
             on,
             coeffs: [
-                high_pass(rate, HIGH_PASS_HZ, std::f64::consts::FRAC_1_SQRT_2),
-                peaking(rate, LOW_MID_HZ, 1.0, LOW_MID_DB),
+                peaking(rate, LOW_MID_HZ, LOW_MID_Q, LOW_MID_DB),
                 peaking(rate, PRESENCE_HZ, 0.8, PRESENCE_DB),
             ],
-            state: [Biquad::default(); 3],
+            state: [Biquad::default(); 2],
         }
     }
 
@@ -98,7 +84,7 @@ impl ToneStage {
     /// Turning it on starts from silence (no stale ring from before it was turned off).
     pub fn set_on(&mut self, on: bool) {
         if on && !self.on {
-            self.state = [Biquad::default(); 3];
+            self.state = [Biquad::default(); 2];
         }
         self.on = on;
     }
@@ -108,11 +94,11 @@ impl ToneStage {
         if !self.on {
             return;
         }
-        let [hp, lm, pr] = &self.coeffs;
-        let [s0, s1, s2] = &mut self.state;
+        let [lm, pr] = &self.coeffs;
+        let [s0, s1] = &mut self.state;
         for v in block.iter_mut() {
             let x = *v as f64;
-            *v = s2.run(pr, s1.run(lm, s0.run(hp, x))) as f32;
+            *v = s1.run(pr, s0.run(lm, x)) as f32;
         }
         for s in &mut self.state {
             s.flush_tiny();
@@ -129,7 +115,7 @@ mod tests {
     /// The stage's gain (dB) on a steady sine at `hz`, measured after it has settled.
     fn gain_db(hz: f64) -> f64 {
         let mut t = ToneStage::new(RATE, true);
-        let n = RATE as usize; // 1 s: the 65 Hz high-pass settles well within it
+        let n = RATE as usize; // 1 s: the 220 Hz bell settles well within it
         let mut x: Vec<f32> = (0..2 * n)
             .map(|i| (0.25 * (std::f64::consts::TAU * hz * i as f64 / RATE as f64).sin()) as f32)
             .collect();
@@ -152,22 +138,19 @@ mod tests {
     }
 
     #[test]
-    fn rumble_is_cut_hard() {
-        assert!(gain_db(20.0) < -19.5, "{}", gain_db(20.0));
-        assert!(gain_db(40.0) < -8.0, "{}", gain_db(40.0));
+    fn it_leaves_the_low_cut_to_the_apm() {
+        // no high-pass of its own (#660): below the bell it is within 0.2 dB of flat
+        assert_near(20.0, 0.0, 0.2);
+        assert_near(40.0, -0.1, 0.2);
     }
 
     #[test]
-    fn the_high_pass_corner_is_65_hz() {
-        // −3 dB from the Butterworth, plus the low-mid bell's skirt
-        assert_near(65.0, -3.2, 0.3);
-    }
-
-    #[test]
-    fn a_deep_voice_fundamental_is_only_trimmed() {
-        // −1.7 dB with the old 80 Hz corner; and a deeper one, at 90 Hz, keeps most of its level too
-        assert_near(110.0, -1.1, 0.3);
-        assert_near(90.0, -1.4, 0.3);
+    fn a_deep_voice_fundamental_keeps_its_level() {
+        // −1.1 / −1.4 dB with the old 65 Hz high-pass and the Q 1.0 bell; the bell alone, at Q 1.2, takes ≤ 0.5 dB at 110 Hz
+        assert!(gain_db(110.0) >= -0.5, "110 Hz: {:.2} dB", gain_db(110.0));
+        assert_near(110.0, -0.47, 0.1);
+        assert_near(90.0, -0.29, 0.1);
+        assert_near(150.0, -1.06, 0.1);
     }
 
     #[test]
@@ -249,6 +232,7 @@ mod tests {
 #[cfg(test)]
 mod measured_low_cut {
     use super::super::denoise::{FRAME, NsLevel};
+    use super::super::devices::APM_HIGH_PASS;
     use super::super::processor::MicChain;
     use livekit::webrtc::native::apm::AudioProcessingModule;
     use std::time::Instant;
@@ -297,14 +281,15 @@ mod measured_low_cut {
         20.0 * (rms(&y[RATE..]) / rms(&x[RATE..])).log10()
     }
 
+    /// The APM as the mic builds it, echo cancellation off (where the flag is all that decides).
     fn apm_alone(hz: f64) -> f64 {
-        gain_db(hz, |y| through_apm(y, false, true))
+        gain_db(hz, |y| through_apm(y, false, APM_HIGH_PASS))
     }
 
-    /// APM (high-pass on, echo off) → denoiser off → tone stage (clarity EQ `eq`) → gain 1 → limiter → gate.
+    /// APM (as the mic builds it, echo off) → denoiser off → tone stage (clarity EQ `eq`) → gain 1 → limiter → gate.
     fn whole_chain(hz: f64, eq: bool) -> f64 {
         gain_db(hz, |y| {
-            through_apm(y, false, true);
+            through_apm(y, false, APM_HIGH_PASS);
             let mut chain = MicChain::new(NsLevel::Off, false, 0.0, 1.0);
             chain.set_tone(eq);
             let t0 = Instant::now();
@@ -370,26 +355,59 @@ mod measured_low_cut {
         assert!(bypass.abs() < 0.01, "{bypass}");
     }
 
-    /// A deep voice's fundamental through everything that filters it: the APM costs it ≤ 0.5 dB on top of the
-    /// tone stage, so the two together stay well under the 3 dB the issue worried about.
+    /// A deep voice's fundamental through everything that filters it. Apart from the clarity EQ's own 220 Hz bell,
+    /// the chain is within 0.6 dB of flat at 90–150 Hz. It was −1.6 dB everywhere there while `tone.rs` had its own
+    /// 65 Hz high-pass.
     #[test]
     fn the_whole_chain_keeps_a_deep_voice_fundamental() {
-        let near = |hz: f64, want: f64, tol: f64| {
-            let got = whole_chain(hz, true);
+        for (hz, want) in [(90.0, -0.45), (110.0, -0.97), (150.0, -1.29)] {
+            let chain = whole_chain(hz, true);
+            let bell = gain_db(hz, |y| super::ToneStage::new(RATE as u32, true).process(y));
             assert!(
-                (got - want).abs() <= tol,
-                "{hz} Hz: {got:.2} dB, wanted {want} ± {tol}"
+                (chain - bell).abs() <= 0.6,
+                "{hz} Hz: chain {chain:.2} dB, the bell {bell:.2} dB: {:.2} dB more than the bell",
+                chain - bell
             );
-        };
-        near(90.0, -1.6, 0.4);
-        near(110.0, -1.6, 0.4);
-        near(150.0, -1.6, 0.4);
+            assert!(
+                (chain - want).abs() <= 0.3,
+                "{hz} Hz: {chain:.2} dB, wanted {want} ± 0.3"
+            );
+        }
     }
 
-    /// The clarity EQ off: the APM's high-pass alone still takes rumble out.
+    /// Rumble is cut hard, EQ on or off: the APM's high-pass is the only low cut.
     #[test]
-    fn with_the_eq_off_rumble_is_still_cut() {
-        let got = whole_chain(30.0, false);
-        assert!(got <= -12.0, "30 Hz: {got:.2} dB");
+    fn rumble_is_cut_by_at_least_40_db_eq_on_or_off() {
+        for eq in [true, false] {
+            let got = whole_chain(30.0, eq);
+            assert!(got <= -40.0, "30 Hz, EQ {eq}: {got:.2} dB");
+        }
+    }
+
+    /// The guard: nothing else in the chain high-passes, so the mic must be built with the APM's on.
+    #[test]
+    fn the_mic_is_built_with_the_apm_high_pass_on() {
+        let got = apm_alone(30.0);
+        assert!(
+            got <= -40.0,
+            "30 Hz through the APM as built (APM_HIGH_PASS = {APM_HIGH_PASS}): {got:.2} dB. tone.rs has no \
+             high-pass (#660): put a low cut back before turning the APM's off"
+        );
+    }
+
+    /// 30 Hz rumble at 0.3 with ×4 gain would hit the limiter. Through the APM first, it never does.
+    #[test]
+    fn rumble_never_reaches_the_limiter() {
+        let mut y = sine(30.0, 2);
+        y.iter_mut().for_each(|v| *v *= 1.2); // 0.3
+        through_apm(&mut y, false, APM_HIGH_PASS);
+        let mut chain = MicChain::new(NsLevel::Off, false, 0.0, 4.0);
+        let t0 = Instant::now();
+        let limited: u32 = y
+            .chunks_mut(FRAME)
+            .skip(10)
+            .map(|b| chain.process(b, true, t0).limited)
+            .sum();
+        assert_eq!(limited, 0, "the APM's high-pass took it out first");
     }
 }
