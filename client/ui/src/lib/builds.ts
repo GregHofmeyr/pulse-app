@@ -6,6 +6,16 @@ import type { BuildFacets } from './protocol/BuildFacets'
 import type { EmbedThumb } from './protocol/EmbedThumb'
 import type { Event } from './protocol/Event'
 import type { Message } from './protocol/Message'
+import { build_limits } from './protocol/limits'
+
+/** The server's `build_limits` (generated into protocol/limits.ts, #415). Characters as the server counts them (code
+ *  points). */
+export const BUILD_LIMITS = {
+  titleChars: build_limits.TITLE_CHARS,
+  notesChars: build_limits.NOTES_CHARS,
+  maxScreenshots: build_limits.MAX_SCREENSHOTS,
+  linkChars: build_limits.LINK_CHARS,
+} as const
 
 /** Which builds of a channel a feed shows: one game (id), archived ones too, ones with these words, and/or only the ones
  *  you starred (the Favourites section's own feed, #617). */

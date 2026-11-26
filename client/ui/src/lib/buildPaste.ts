@@ -1,6 +1,7 @@
 // What a paste into a builds channel adds (#618, spec §4.3): an image (a screenshot), a link (one http(s) URL) or a
 // title (any other text). An image wins over text pasted with it.
 
+import { BUILD_LIMITS } from './builds'
 import type { StagedFile } from './tauri'
 
 /** What quick add's "Add details" hands the full form. */
@@ -8,10 +9,8 @@ export type QuickPrefill = { title: string; link: string; files: StagedFile[] }
 
 export type BuildPaste = { kind: 'image'; file: File } | { kind: 'link'; url: string } | { kind: 'text'; text: string }
 
-/** A title's most characters (the server's limit). */
-export const TITLE_MAX = 120
-
-/** Typed (or pasted) text: a single http(s) URL is a link; other text a title, trimmed, its first 120 characters. */
+/** Typed (or pasted) text: a single http(s) URL is a link; other text a title, trimmed, at most the server's title
+ *  length (`BUILD_LIMITS.titleChars`). */
 export function classifyText(raw: string): { kind: 'link'; url: string } | { kind: 'text'; text: string } | null {
   const t = raw.trim()
   if (!t) return null
@@ -23,7 +22,7 @@ export function classifyText(raw: string): { kind: 'link'; url: string } | { kin
       /* not a URL after all: a title */
     }
   }
-  return { kind: 'text', text: [...t].slice(0, TITLE_MAX).join('') }
+  return { kind: 'text', text: [...t].slice(0, BUILD_LIMITS.titleChars).join('') }
 }
 
 export function classifyPaste(data: DataTransfer): BuildPaste | null {
