@@ -487,7 +487,13 @@ pub async fn run(db: &SqlitePool, hub: &Hub, jobs: Vec<Job>) {
                 }
             }
         }
-        hub.queue_inbox(db, theirs.into_iter().map(|user| Job::Recount { user }).collect());
+        hub.queue_inbox(
+            db,
+            theirs
+                .into_iter()
+                .map(|user| Job::Recount { user })
+                .collect(),
+        );
     }
     match with_items_in(db, &gone_channels, &gone_servers).await {
         Ok(users) => {
