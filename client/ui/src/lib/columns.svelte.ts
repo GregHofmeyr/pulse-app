@@ -43,11 +43,6 @@ export function resetColumn(side: Column): void {
   store()
 }
 
-/** Write the current widths down (the end of a drag). */
-export function saveColumns(): void {
-  store()
-}
-
 /** Read back from storage (tests: as after a restart). */
 export function reloadColumns(): void {
   Object.assign(columns, saved())

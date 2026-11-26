@@ -14,21 +14,6 @@ export type SoundName =
 export const SOUND_NAMES: readonly SoundName[] = [
   'join', 'leave', 'mute', 'unmute', 'deafen', 'undeafen', 'muted_talk', 'message', 'live', 'live_end', 'badge', 'wheel_tick', 'wheel_result',
 ]
-export const SOUND_LABELS: Record<SoundName, string> = {
-  join: 'Join a call',
-  leave: 'Leave a call',
-  mute: 'Mute',
-  unmute: 'Unmute',
-  deafen: 'Deafen',
-  undeafen: 'Undeafen',
-  muted_talk: 'Talking while muted',
-  message: 'New message',
-  live: 'Someone goes live',
-  live_end: 'A stream ends',
-  badge: 'Badge unlocked',
-  wheel_tick: 'Picker wheel tick',
-  wheel_result: 'Picker wheel result',
-}
 
 export type SoundSetId =
   | 'classic' | 'twostep-bright' | 'twostep-warm' | 'twostep-deep'

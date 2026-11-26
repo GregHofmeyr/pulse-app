@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { readdirSync } from 'node:fs'
 import {
   noMicTip, processedMicHint, type AudioDevice, soundFor, volumeLabel, clampVolume, migrateAudioConfig, defaultAudioConfig, playSound,
-  SOUND_NAMES, SOUND_SETS, SOUND_LABELS, PREVIEW, PREVIEW_GAP_MS, defaultSoundPrefs,
+  SOUND_NAMES, SOUND_SETS, PREVIEW, PREVIEW_GAP_MS, defaultSoundPrefs,
   normalizeSoundPrefs, loadSoundPrefs, saveSoundPrefs, previewSet, stopPreview,
   playSoundAt, playRingingAt, previewRingtone, RINGTONES,
 } from './voiceui'
@@ -436,14 +436,10 @@ describe('sound catalogue', () => {
     for (const s of SOUND_SETS) expect(s.blurb.length).toBeGreaterThan(10)
   })
 
-  it('event names match the classic files, with labels', () => {
+  it('event names match the classic files', () => {
     const files = readdirSync(new URL('classic/', soundsDir)).map((f) => f.replace(/\.wav$/, ''))
     expect([...SOUND_NAMES].sort()).toEqual(files.sort())
     expect(SOUND_NAMES).toEqual(['join', 'leave', 'mute', 'unmute', 'deafen', 'undeafen', 'muted_talk', 'message', 'live', 'live_end', 'badge', 'wheel_tick', 'wheel_result'])
-    expect(SOUND_NAMES.map((n) => SOUND_LABELS[n])).toEqual([
-      'Join a call', 'Leave a call', 'Mute', 'Unmute', 'Deafen', 'Undeafen', 'Talking while muted',
-      'New message', 'Someone goes live', 'A stream ends', 'Badge unlocked', 'Picker wheel tick', 'Picker wheel result',
-    ])
   })
 })
 

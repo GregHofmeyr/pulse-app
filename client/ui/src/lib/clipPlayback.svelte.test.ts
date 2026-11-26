@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { claim, elementVolume, loadVolume, playback, release, setMuted, setVolume } from './clipPlayback.svelte'
-import { mixer, setNotch } from './mixer.svelte'
+import { claim, elementVolume, playback, release, setMuted, setVolume } from './clipPlayback.svelte'
+import { mixer, reloadMixer, setNotch } from './mixer.svelte'
 
 beforeEach(() => {
   localStorage.clear()
@@ -57,7 +57,7 @@ describe('volume', () => {
     expect(mixer.media).toEqual({ clips: 100, clipsMuted: false })
     setVolume(40)
     setMuted(true)
-    loadVolume()
+    reloadMixer()
     expect(playback.volume).toBe(40)
     expect(playback.muted).toBe(true)
   })
@@ -71,7 +71,7 @@ describe('volume', () => {
   })
   it('migrates the old linear clip volume by loudness', () => {
     localStorage.setItem('pulse.clipVolume', '{"volume":0.5,"muted":true}')
-    loadVolume()
+    reloadMixer()
     expect(playback.volume).toBe(85)
     expect(playback.muted).toBe(true)
   })

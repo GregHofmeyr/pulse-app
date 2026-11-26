@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { clockText, correction, DRIFT_S, mayControl, partyPlayerSrc, partySeconds, validVideoId, watching, youtubeIdOf, YT } from './watchParty'
+import { clockText, correction, DRIFT_S, mayControl, partyPlayerSrc, partySeconds, validVideoId, watching, YT } from './watchParty'
 import type { WatchParty } from './protocol/WatchParty'
 import type { LinkEmbed } from './protocol/LinkEmbed'
 
@@ -14,10 +14,6 @@ describe('watch party sync (#384)', () => {
     expect(validVideoId('dQw4w9WgXcQ')).toBe(true)
     expect(validVideoId('a-b_c-d_e-f')).toBe(true)
     for (const bad of ['', 'short', 'dQw4w9WgXcQQ', 'dQw4w9WgXc!', '../../admin', null, undefined]) expect(validVideoId(bad)).toBe(false)
-    const e = { provider: 'youtube', provider_id: 'dQw4w9WgXcQ' } as LinkEmbed
-    expect(youtubeIdOf(e)).toBe('dQw4w9WgXcQ')
-    expect(youtubeIdOf({ ...e, provider_id: 'x' })).toBeNull()
-    expect(youtubeIdOf({ ...e, provider: 'twitch' })).toBeNull()
   })
 
   it('the position runs on by the server clock while playing, not while paused', () => {
