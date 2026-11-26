@@ -2,6 +2,8 @@
   // Scheduled messages (#299) as a list: when each goes (and where, in the global list), its text, and why it couldn't
   // go for a failed one. Edit opens the text and time in place (Save, or Escape to leave it); Send now posts it at
   // once; Delete drops it. A failed one given a new time waits again.
+  import DateField from './DateField.svelte'
+  import { toDay } from '../lib/calendar'
   import { fieldsToIso, isoToFields } from '../lib/plan'
   import { whenLabel, whenReady } from '../lib/schedule'
   import { deleteScheduled, editScheduled, sendScheduledNow, whereTo } from '../lib/scheduled.svelte'
@@ -78,7 +80,7 @@
           <!-- svelte-ignore a11y_autofocus -->
           <textarea class="input input-sm text" bind:value={text} aria-label="Message" rows="3" autofocus onkeydown={(e) => editKey(e, s)}></textarea>
           <div class="row">
-            <input class="input input-sm" type="date" bind:value={date} aria-label="Day" onkeydown={(e) => editKey(e, s)} />
+            <DateField bind:value={date} label="Day" min={toDay(new Date())} onkeydown={(e) => editKey(e, s)} />
             <input class="input input-sm" type="time" bind:value={time} aria-label="Time" onkeydown={(e) => editKey(e, s)} />
           </div>
           <div class="actions">
@@ -115,7 +117,7 @@
   .why { margin: 0; color: var(--danger-text); font-size: 12px; }
   .text { width: 100%; resize: vertical; font: inherit; }
   .row { display: flex; gap: 6px; }
-  .row .input { flex: 1; min-width: 0; }
+  .row .input, .row :global(.date-field) { flex: 1; min-width: 0; }
   .actions { display: flex; gap: 4px; justify-content: flex-end; }
   .sm { height: 26px; padding: 0 8px; font-size: 12px; }
   .danger { color: var(--danger-text); }

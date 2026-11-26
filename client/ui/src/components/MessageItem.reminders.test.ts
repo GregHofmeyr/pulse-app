@@ -86,8 +86,10 @@ describe('Remind me (#300)', () => {
     flushSync()
     const picker = document.querySelector<HTMLElement>('[role=dialog][aria-label="Remind me about this"]')!
     expect(picker).not.toBeNull()
-    const [day, time] = [...picker.querySelectorAll<HTMLInputElement>('input')]
-    day.value = '2026-11-20'; day.dispatchEvent(new Event('input', { bubbles: true }))
+    // the day comes from the shared DatePicker (#643)
+    picker.querySelector<HTMLButtonElement>('button.date-field')!.click(); flushSync()
+    document.querySelector<HTMLButtonElement>('.date-picker [data-day="2026-11-20"]')!.click(); flushSync()
+    const time = picker.querySelector<HTMLInputElement>('input[type=time]')!
     time.value = '18:30'; time.dispatchEvent(new Event('input', { bubbles: true }))
     flushSync()
     const set = [...picker.querySelectorAll('button')].find((b) => b.textContent === 'Set reminder')!
@@ -106,8 +108,9 @@ describe('Remind me (#300)', () => {
     choices().at(-1)!.click()
     flushSync()
     const picker = document.querySelector<HTMLElement>('[role=dialog][aria-label="Remind me about this"]')!
-    const [day, time] = [...picker.querySelectorAll<HTMLInputElement>('input')]
-    day.value = '2026-11-16'; day.dispatchEvent(new Event('input', { bubbles: true }))
+    // today, the day it starts on (#643: past days can't be picked at all)
+    expect(picker.querySelector('button.date-field')!.textContent).toContain('16 Nov 2026')
+    const time = picker.querySelector<HTMLInputElement>('input[type=time]')!
     time.value = '09:00'; time.dispatchEvent(new Event('input', { bubbles: true }))
     flushSync()
     expect([...picker.querySelectorAll('button')].find((b) => b.textContent === 'Set reminder')!.disabled).toBe(true)

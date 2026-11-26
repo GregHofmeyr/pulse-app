@@ -3,7 +3,9 @@
   // UTC), checked to be ahead and within a year, then `onPick` with the instant. Placed by its anchor, as the plan form.
   // Enter confirms, Escape or a press outside closes it.
   import { onMount, tick, untrack } from 'svelte'
+  import DateField from './DateField.svelte'
   import { clickOutside } from '../lib/actions'
+  import { toDay } from '../lib/calendar'
   import { defaultStart, fieldsToIso, isoToFields } from '../lib/plan'
   import { popoverStyle } from '../lib/reactions'
   import { whenLabel, whenReady } from '../lib/schedule'
@@ -30,7 +32,7 @@
   let time = $state(start.time)
   let busy = $state(false)
   let error = $state('')
-  let first: HTMLInputElement | undefined = $state()
+  let first: HTMLButtonElement | undefined = $state()
   onMount(() => void tick().then(() => first?.focus()))
 
   const at = $derived(fieldsToIso(date, time))
@@ -66,7 +68,7 @@
 <div class="when menu-surface pop-in" role="dialog" aria-label={title} tabindex="-1" use:clickOutside={onClose} onkeydown={key} {style}>
   <h3 class="menu-label">{title}</h3>
   <div class="row">
-    <label class="field"><span class="menu-label">Day</span><input bind:this={first} class="input input-sm" type="date" bind:value={date} aria-label="Day" /></label>
+    <div class="field"><span class="menu-label" aria-hidden="true">Day</span><DateField bind:button={first} bind:value={date} label="Day" min={toDay(new Date())} /></div>
     <label class="field"><span class="menu-label">Time</span><input class="input input-sm" type="time" bind:value={time} aria-label="Time" /></label>
   </div>
   <small class="hint" aria-live="polite">{hint}</small>
