@@ -601,8 +601,7 @@ pub enum ChannelKind {
     Quotes,
     /// A server channel for video clips: posts are clips, replies live in threads.
     Clips,
-    /// A server channel for character builds (#616): posts are builds, comments live in threads. Protocol 5 on: a
-    /// version-4 client is never sent one.
+    /// A server channel for character builds (#616): posts are builds, comments live in threads. Protocol 5 on.
     Builds,
     /// A kind this build doesn't know (one added after it). Never sent or stored by this server; a client keeps such a
     /// channel out of sight instead of failing to read everything around it.

@@ -1,6 +1,6 @@
 //! Build favourites (#617): each person's own stars on builds. A build's `favourite` is the caller's (gateway events
 //! carry `false`); starring needs only membership of the build's channel, and is told only to the person's own
-//! sessions (`BuildFavouriteChanged`, never to a version-4 client: `compat`).
+//! sessions (`BuildFavouriteChanged`).
 
 use std::collections::HashSet;
 

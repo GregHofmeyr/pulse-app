@@ -812,34 +812,3 @@ async fn builds_of_another_channel_are_skipped() {
         400
     );
 }
-
-/// A version-4 client hears nothing of a batch (#616): neither its `BuildsArchived` nor its `MessageDeleted`s.
-#[tokio::test]
-#[ignore = "protocol 4 is refused at the gateway since #634; goes with builds::compat in a later PR"]
-async fn a_version_4_client_hears_nothing_of_a_batch() {
-    let w = world().await;
-    let text = general(&w.app, &w.alex.1, w.server).await;
-    let a = w.build(&w.alex.1, json!({ "title": "A" })).await;
-    let b = w.build(&w.alex.1, json!({ "title": "B" })).await;
-    let mut old = hello_as(&w.app, &w.sam.1, 4).await;
-    batch(w.archive_many(&w.alex.1, w.ch, &[a.id], true).await).await;
-    batch(w.archive_many(&w.alex.1, w.ch, &[a.id], false).await).await;
-    batch(w.delete_many(&w.alex.1, w.ch, &[a.id, b.id]).await).await;
-    send(&w.app, &w.alex.1, text.id, "after").await;
-    let id = w.ch.to_string();
-    loop {
-        match next_frame_beating(&mut old, Duration::from_secs(3)).await {
-            Some(ServerFrame::Event(Event::MessageCreated { message, .. }))
-                if message.content == "after" =>
-            {
-                break;
-            }
-            Some(ServerFrame::Event(e)) => {
-                let s = serde_json::to_string(&e).unwrap();
-                assert!(!s.contains(&id) && !s.contains(&a.id.to_string()), "{s}");
-            }
-            Some(_) => continue,
-            None => panic!("expected the sentinel"),
-        }
-    }
-}

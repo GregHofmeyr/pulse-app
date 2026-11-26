@@ -217,15 +217,10 @@ async fn in_server(
     AuthUser(me): AuthUser,
     Path(server): Path<ServerId>,
     Query(p): Query<Params>,
-    headers: axum::http::HeaderMap,
 ) -> AppResult<Json<SearchResults>> {
     limit(&s, me)?;
     let search = Search::parse(&p)?;
     let mut channels = readable_server_channels(&s.db, me, server).await?;
-    if !crate::builds::compat::speaks_builds(crate::builds::compat::rest_version(&headers)) {
-        // an older client can't open a builds channel (#616)
-        crate::builds::compat::strip_channels(&mut channels);
-    }
     // Another server's channel (or one you can't read) is simply not among them: nothing matches.
     if let Some(only) = p.in_channel {
         channels.retain(|c| c.id == only);
@@ -261,7 +256,6 @@ async fn everywhere(
     State(s): State<AppState>,
     AuthUser(me): AuthUser,
     Query(p): Query<Params>,
-    headers: axum::http::HeaderMap,
 ) -> AppResult<Json<SearchResults>> {
     limit_on(&s.limits.search_everywhere_user, me)?;
     if p.in_channel.is_some() {
@@ -277,15 +271,6 @@ async fn everywhere(
                 .fetch_all(&s.db)
                 .await?;
         skip.extend(of_server);
-    }
-    if !crate::builds::compat::speaks_builds(crate::builds::compat::rest_version(&headers)) {
-        // an older client can't open a builds channel (#616)
-        let builds = crate::builds::compat::builds_among(
-            &s.db,
-            channels.iter().filter_map(|c| c.parse().ok()),
-        )
-        .await?;
-        skip.extend(builds.iter().map(|c| c.to_string()));
     }
     channels.retain(|c| !skip.contains(c));
     run(&s, me, &search, &channels).await.map(Json)

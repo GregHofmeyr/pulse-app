@@ -567,25 +567,18 @@ async fn added(
             message: message.clone(),
             read,
         };
-        // one in a builds channel (#616) never reaches a client from before them
-        let since = if crate::builds::compat::is_builds(db, message.channel_id).await? {
-            crate::builds::compat::BUILDS_SINCE
-        } else {
-            0
-        };
-        AppResult::Ok(Some((item, unread, since)))
+        AppResult::Ok(Some((item, unread)))
     };
     match read.await {
-        Ok(Some((item, unread, since))) => {
+        Ok(Some((item, unread))) => {
             *told = Some(unread);
-            hub.send_inbox_since(
+            hub.send_inbox(
                 &slot,
                 Event::InboxItemAdded {
                     user_id: user,
                     item: Box::new(item),
                     unread,
                 },
-                since,
             );
         }
         Ok(None) => {}

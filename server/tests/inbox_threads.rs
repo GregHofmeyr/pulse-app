@@ -285,16 +285,12 @@ async fn builds_fx() -> (Fx, ChannelId, Message) {
     (f, builds.id, build)
 }
 
-/// The Threads list as a current client asks for it (builds channels are left out for an older one, #616).
+/// The Threads list.
 async fn threads_now(f: &Fx, token: &str) -> InboxThreads {
     f.app
         .http
         .get(f.app.url("/inbox/threads"))
         .bearer_auth(token)
-        .header(
-            pulse_protocol::PROTOCOL_HEADER,
-            pulse_protocol::PROTOCOL_VERSION.to_string(),
-        )
         .send()
         .await
         .unwrap()

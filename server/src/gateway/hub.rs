@@ -14,7 +14,6 @@
 //!    client checks an arriving item against what it already knows.
 
 use std::collections::{HashMap, HashSet};
-use std::ops::Range;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -24,7 +23,7 @@ use pulse_protocol::rest::{Listening, Person, Playing, ServerPresence, SteamJoin
 use sqlx::SqlitePool;
 use tokio::sync::{mpsc, oneshot};
 
-use super::audience::{Audience, route};
+use super::audience::{Audience, audience_for};
 use crate::presence::{PresenceView, load_all, load_subject, view_for};
 
 /// What a connection was last told of someone's presence: their view, and inside which servers it differs (#154).
@@ -38,12 +37,6 @@ pub const CLOSE_UNAUTHORIZED: u16 = 4001;
 pub const CLOSE_UPDATE_REQUIRED: u16 = 4005;
 /// Close code for a connection over the per-user cap (existing connections are never kicked).
 pub const CLOSE_TOO_MANY_CONNECTIONS: u16 = 4006;
-/// Close code for a client that should connect again for a fresh Ready: a version-3 client that just joined a server
-/// (#80), whose `ServerJoined` it would skip. Older clients reconnect on any code they don't know.
-pub const CLOSE_RESYNC: u16 = 4007;
-/// The first protocol version that reads `ServerJoined` (#80, [`pulse_protocol::PROTOCOL_VERSION`] 4). Below the
-/// gateway's minimum since #634 (5); kept with `builds::compat` until a later PR lifts the old-protocol code.
-const SERVER_JOINED_SINCE: u32 = 4;
 
 pub type ConnId = u64;
 
@@ -298,8 +291,7 @@ impl Hub {
         self.try_register_as(user, token_hash, max, pulse_protocol::PROTOCOL_VERSION)
     }
 
-    /// [`Hub::try_register`] for a client that speaks protocol `client_version` (its Hello's): every frame from the
-    /// moment it's in the hub is chosen for that version (#616: a version-4 client never gets a builds channel).
+    /// [`Hub::try_register`] for a client that speaks protocol `client_version` (its Hello's), kept on the connection.
     pub fn try_register_as(
         &self,
         user: UserId,
@@ -507,12 +499,6 @@ impl Hub {
     /// Send inbox event `event` to its owner's connections that have had their Ready count, if `slot` (held by
     /// the caller) is still theirs: after a disconnect and reconnect it isn't, and the new Ready supersedes it.
     pub(crate) fn send_inbox(&self, slot: &InboxSlot, event: Event) {
-        self.send_inbox_since(slot, event, 0)
-    }
-
-    /// [`Hub::send_inbox`] to the devices whose client speaks protocol `since` or later (#616: an inbox item in a
-    /// builds channel never reaches an older client).
-    pub(crate) fn send_inbox_since(&self, slot: &InboxSlot, event: Event, since: u32) {
         let Some(owner) = event.only_for() else {
             return;
         };
@@ -529,7 +515,7 @@ impl Hub {
         }
         if deliver_where(
             &mut conns,
-            |c| c.user == owner && c.inbox && c.client_version >= since,
+            |c| c.user == owner && c.inbox,
             &ServerFrame::Event(event),
         ) {
             self.prune_inbox(&conns);
@@ -641,8 +627,8 @@ impl Hub {
     pub async fn publish_all(&self, db: &SqlitePool, events: Vec<Event>) {
         let mut out = Vec::with_capacity(events.len());
         for event in events {
-            match route(db, &event).await {
-                Ok(routed) => {
+            match audience_for(db, &event).await {
+                Ok(audience) => {
                     // a member's `User` reaches the people they've blocked emptied (#508)
                     let views = match crate::blocks::member_views(db, &event).await {
                         Ok(v) => v,
@@ -651,7 +637,7 @@ impl Hub {
                             continue;
                         }
                     };
-                    out.push((routed, event, views))
+                    out.push((audience, event, views))
                 }
                 Err(e) => tracing::error!(error = ?e, "audience_for failed; event dropped"),
             }
@@ -660,8 +646,8 @@ impl Hub {
         {
             let mut conns = self.inner.conns.lock().unwrap();
             let mut dropped = false;
-            for (routed, event, views) in out {
-                dropped |= deliver_routed(&mut conns, routed, event, views);
+            for (audience, event, views) in out {
+                dropped |= deliver_views(&mut conns, &audience, event, views);
             }
             if dropped {
                 self.prune_inbox(&conns);
@@ -753,17 +739,17 @@ impl Hub {
     /// Like [`Hub::publish`], but only to the members of `only` who are also in the event's
     /// audience, so a narrower list (people in a call) can never widen who may see it.
     pub async fn publish_to(&self, db: &SqlitePool, event: Event, only: &HashSet<UserId>) {
-        let mut routed = match route(db, &event).await {
+        let audience = match audience_for(db, &event).await {
             Ok(a) => a,
             Err(e) => {
                 tracing::error!(error = ?e, "audience_for failed; event dropped");
                 return;
             }
         };
-        routed.audience = Audience::Users(
+        let audience = Audience::Users(
             only.iter()
                 .copied()
-                .filter(|u| routed.audience.includes(*u))
+                .filter(|u| audience.includes(*u))
                 .collect(),
         );
         // a member's `User` reaches the people they've blocked emptied (#508)
@@ -775,7 +761,7 @@ impl Hub {
             }
         };
         let mut conns = self.inner.conns.lock().unwrap();
-        if deliver_routed(&mut conns, routed, event, views) {
+        if deliver_views(&mut conns, &audience, event, views) {
             self.prune_inbox(&conns);
         }
     }
@@ -1071,7 +1057,7 @@ fn send_each(conns: &mut HashMap<ConnId, Conn>, frames: &HashMap<ConnId, ServerF
         match c.tx.try_send(frame.clone()) {
             Ok(()) => true,
             Err(mpsc::error::TrySendError::Full(_)) => {
-                tracing::warn!(conn = id, user = %c.user, "gateway client too slow; dropping");
+                tracing::warn!(conn = id, user = %c.user, protocol = c.client_version, "gateway client too slow; dropping");
                 c.kick(CLOSE_TOO_SLOW);
                 false
             }
@@ -1085,77 +1071,33 @@ fn send_each(conns: &mut HashMap<ConnId, Conn>, frames: &HashMap<ConnId, ServerF
 fn deliver(
     conns: &mut HashMap<ConnId, Conn>,
     audience: &super::audience::Audience,
-    versions: &Range<u32>,
     frame: &ServerFrame,
 ) -> bool {
-    deliver_where(
-        conns,
-        |c| audience.includes(c.user) && versions.contains(&c.client_version),
-        frame,
-    )
+    deliver_where(conns, |c| audience.includes(c.user), frame)
 }
 
-/// Deliver a routed event (`audience::route`): to the clients new enough for it, and its copy without builds channels
-/// to the older ones when it has one (#616).
-fn deliver_routed(
-    conns: &mut HashMap<ConnId, Conn>,
-    routed: super::audience::Routed,
-    event: Event,
-    views: Vec<(UserId, Event)>,
-) -> bool {
-    let builds = crate::builds::compat::BUILDS_SINCE;
-    match routed.old {
-        Some(old) => {
-            deliver_views(
-                conns,
-                &routed.audience,
-                &(routed.since.max(builds)..u32::MAX),
-                event,
-                views,
-            ) | deliver_views(conns, &routed.audience, &(0..builds), old, vec![])
-        }
-        None => deliver_views(
-            conns,
-            &routed.audience,
-            &(routed.since..u32::MAX),
-            event,
-            views,
-        ),
-    }
-}
-
-/// Queue `event` for every connection in `audience` whose client speaks a protocol in `versions`, the people in
-/// `views` getting their own copy instead (#508, [`crate::blocks::member_views`]); drop connections that can't keep up
-/// (true when any was).
+/// Queue `event` for every connection in `audience`, the people in `views` getting their own copy instead (#508,
+/// [`crate::blocks::member_views`]); drop connections that can't keep up (true when any was).
 fn deliver_views(
     conns: &mut HashMap<ConnId, Conn>,
     audience: &super::audience::Audience,
-    versions: &Range<u32>,
     event: Event,
     views: Vec<(UserId, Event)>,
 ) -> bool {
     if views.is_empty() {
-        return deliver(conns, audience, versions, &ServerFrame::Event(event));
+        return deliver(conns, audience, &ServerFrame::Event(event));
     }
     let mut dropped = false;
     let others: HashSet<UserId> = views.iter().map(|(u, _)| *u).collect();
     for (viewer, copy) in views {
         if audience.includes(viewer) {
-            dropped |= deliver_where(
-                conns,
-                |c| c.user == viewer && versions.contains(&c.client_version),
-                &ServerFrame::Event(copy),
-            );
+            dropped |= deliver_where(conns, |c| c.user == viewer, &ServerFrame::Event(copy));
         }
     }
     dropped
         | deliver_where(
             conns,
-            |c| {
-                audience.includes(c.user)
-                    && !others.contains(&c.user)
-                    && versions.contains(&c.client_version)
-            },
+            |c| audience.includes(c.user) && !others.contains(&c.user),
             &ServerFrame::Event(event),
         )
 }
@@ -1167,31 +1109,14 @@ fn deliver_where(
     frame: &ServerFrame,
 ) -> bool {
     let before = conns.len();
-    let joined = matches!(frame, ServerFrame::Event(Event::ServerJoined { .. }));
-    // what a client too old for builds channels gets instead (#616), worked out once
-    let mut old: Option<Option<Option<ServerFrame>>> = None;
     conns.retain(|id, c| {
         if !to(c) {
             return true;
         }
-        if joined && c.client_version < SERVER_JOINED_SINCE {
-            // it would skip the event and miss the server it joined: its next Ready brings it (#80)
-            c.kick(CLOSE_RESYNC);
-            return false;
-        }
-        let frame = if crate::builds::compat::speaks_builds(c.client_version) {
-            frame
-        } else {
-            match old.get_or_insert_with(|| crate::builds::compat::for_old_client(frame)) {
-                None => frame,
-                Some(Some(copy)) => &*copy,
-                Some(None) => return true,
-            }
-        };
         match c.tx.try_send(frame.clone()) {
             Ok(()) => true,
             Err(mpsc::error::TrySendError::Full(_)) => {
-                tracing::warn!(conn = id, user = %c.user, "gateway client too slow; dropping");
+                tracing::warn!(conn = id, user = %c.user, protocol = c.client_version, "gateway client too slow; dropping");
                 c.kick(CLOSE_TOO_SLOW);
                 false
             }
@@ -1214,38 +1139,6 @@ async fn run_inbox(db: SqlitePool, hub: Hub, jobs: Vec<crate::inbox::Job>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// A connection is registered with the version its Hello said (#616): no frame reaches it as a newer client's,
-    /// not even one published before its Ready is built.
-    #[test]
-    fn a_connection_speaks_its_version_from_the_moment_it_registers() {
-        use pulse_protocol::ids::{ChannelId, ServerId};
-        use pulse_protocol::rest::{Channel, ChannelKind};
-        let hub = Hub::default();
-        let alex = UserId::new();
-        let mut old = hub.try_register_as(alex, String::new(), 8, 4).unwrap();
-        let mut new = hub
-            .try_register_as(alex, String::new(), 8, pulse_protocol::PROTOCOL_VERSION)
-            .unwrap();
-        let channel = Channel {
-            id: ChannelId::new(),
-            server_id: Some(ServerId::new()),
-            kind: ChannelKind::Builds,
-            name: Some("builds".into()),
-            position: 0,
-            category_id: None,
-            icon_hash: None,
-            icon_still: None,
-            bitrate: None,
-            archived_at: None,
-        };
-        let frame = ServerFrame::Event(Event::ChannelCreated { channel });
-        let mut conns = hub.inner.conns.lock().unwrap();
-        deliver_where(&mut conns, |c| c.user == alex, &frame);
-        drop(conns);
-        assert!(new.rx.try_recv().is_ok(), "a current client hears of it");
-        assert!(old.rx.try_recv().is_err(), "a version-4 client never does");
-    }
 
     #[test]
     fn try_register_caps_connections_per_user_even_under_a_race() {

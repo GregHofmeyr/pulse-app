@@ -408,7 +408,7 @@ async fn run(mut socket: WebSocket, s: AppState, ip_key: String, app_version: Op
             return close(socket, 1011, "internal error").await;
         }
     }
-    let mut ready = match ready_for(&s.db, &s.voice, &s.streams, &s.hub, me, Some(conn)).await {
+    let ready = match ready_for(&s.db, &s.voice, &s.streams, &s.hub, me, Some(conn)).await {
         Ok(r) => r,
         Err(e) => {
             tracing::error!(error = ?e, "build_ready failed");
@@ -416,11 +416,6 @@ async fn run(mut socket: WebSocket, s: AppState, ip_key: String, app_version: Op
             return;
         }
     };
-    if !crate::builds::compat::speaks_builds(client_version) {
-        // a client from before builds channels can't read one (#616). Unreachable since MIN_CLIENT_VERSION is 5
-        // (#634); kept as belt-and-braces until a later PR lifts the protocol-4 code (see `builds::compat`).
-        crate::builds::compat::strip_ready(&mut ready);
-    }
     if !send(&mut socket, &ServerFrame::Ready(ready)).await {
         disconnected(&s, conn, me, &since).await;
         return;
