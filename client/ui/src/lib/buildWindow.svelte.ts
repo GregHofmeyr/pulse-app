@@ -14,11 +14,15 @@ import { api } from './tauri'
 export const poppedOut = $state({ messageId: null as string | null, channelId: null as string | null })
 /** Its copy, kept current by events (to make the next snapshot from). */
 let held: Message | null = null
+/** Pop outs so far: of two at once, the core shows the later in its one window (#639), so only the later is noted. */
+let opens = 0
 
-/** Pop `m` out, replacing any build already popped out. */
+/** Pop `m` out, replacing any build already popped out (in the same window). */
 export async function popOutBuild(m: Message): Promise<void> {
   if (!m.build || m.deleted) return
+  const n = ++opens
   await api.openBuildWindow(snapshotOf(m, app.state), true)
+  if (n !== opens) return
   held = m
   poppedOut.messageId = m.id
   poppedOut.channelId = m.channel_id
@@ -57,6 +61,7 @@ export function noteBuildWindowReady(): void {
 
 /** Nothing popped out (sign-out; tests). */
 export function forgetBuildWindow(): void {
+  opens++
   held = null
   poppedOut.messageId = null
   poppedOut.channelId = null

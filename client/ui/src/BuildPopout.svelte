@@ -4,8 +4,9 @@
   // build as BuildView reads it (title, media and notes, scrolling; never its comments). It never loads the app's
   // store: everything comes from the core, which keeps the snapshot the main window handed it. This window may call
   // only the three commands used here (ipc_gate.rs) and has no events, so it looks for a newer snapshot every couple of
-  // seconds. Screenshot links last an hour: asked for again every 50 minutes. The video is its link card, opening in
-  // the browser (inline playback here is #627).
+  // seconds, and at once when it's brought forward (Pop out again switches it in place: #639). Screenshot links last
+  // an hour: asked for again every 50 minutes. The video is its link card, opening in the browser (inline playback
+  // here is #627).
   import { onMount } from 'svelte'
   import BuildView from './components/BuildView.svelte'
   import Icon from './components/Icon.svelte'
@@ -66,9 +67,13 @@
     api.setBuildWindowOnTop(true).then((ok) => (canOnTop = ok === true), () => {})
     void look()
     const looks = setInterval(() => void look(), LOOK_MS)
+    // Pop out again (this build or another) brings this window forward: it looks now, not at the next tick
+    const onFocus = () => void look()
+    window.addEventListener('focus', onFocus)
     const images = setInterval(() => void fetchImages(), IMAGES_MS)
     const clock = setInterval(() => (now = Date.now()), 60_000)
     return () => {
+      window.removeEventListener('focus', onFocus)
       clearInterval(looks)
       clearInterval(images)
       clearInterval(clock)

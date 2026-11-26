@@ -53,6 +53,24 @@ describe('the build pop-out from the main window', () => {
     expect(poppedOut.messageId).toBe('M001')
   })
 
+  it('of two Pop outs at once, the later is the one noted, whichever answer comes first (#639)', async () => {
+    const answers: Array<() => void> = []
+    invoke.mockImplementation((cmd: string) => (cmd === 'open_build_window' ? new Promise<undefined>((r) => answers.push(() => r(undefined))) : Promise.resolve(undefined)))
+    const first = popOutBuild(build('M001'))
+    const second = popOutBuild(build('M002'))
+    answers[1]()
+    await second
+    answers[0]()
+    await first
+    expect(calls('open_build_window').map((a) => (a.snapshot as { message_id: string }).message_id)).toEqual(['M001', 'M002'])
+    expect(poppedOut.messageId).toBe('M002')
+    // its edits are the ones sent on
+    event({ t: 'MessageUpdated', d: { message: build('M002', { title: 'Raven endgame' }) } })
+    event({ t: 'MessageUpdated', d: { message: build('M001', { title: 'Other' }) } })
+    await settle()
+    expect(calls('update_build_window').map((a) => (a.snapshot as { message_id: string }).message_id)).toEqual(['M002'])
+  })
+
   it("its build's edit and archive are sent on; another build's are not", async () => {
     await popOutBuild(build('M001'))
     event({ t: 'MessageUpdated', d: { message: build('M001', { title: 'Raven endgame' }) } })
