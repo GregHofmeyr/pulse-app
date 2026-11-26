@@ -132,3 +132,30 @@ describe('contrast, every theme and tint', () => {
     expect(fails).toEqual([])
   })
 })
+
+describe('speaking ring colours (#651)', () => {
+  const KEYS = ['green', 'blue', 'gold', 'pink', 'cyan', 'orange', 'white', 'purple']
+
+  it('every_theme_declares_every_speak_token', () => {
+    for (const t of THEMES) for (const k of KEYS) expect(block(t.key).getPropertyValue(`--speak-${k}`).trim(), `${t.key} --speak-${k}`).not.toBe('')
+  })
+
+  it.each(VARIANTS)('every_speak_colour_reaches_3_to_1_on_its_themes_bg_1 (%s, %s)', (theme, tint) => {
+    const tk = tokens(theme, tint)
+    const fails = KEYS.map((k) => [k, contrast(tk(`--speak-${k}`), tk('--bg-1'))] as const).filter(([, c]) => c < 3)
+    expect(fails.map(([k, c]) => `${k}: ${c.toFixed(2)}`)).toEqual([])
+  })
+
+  it('green_is_todays_ring_on_dark_themes_and_white_is_ink_on_light_themes', () => {
+    for (const t of THEMES) {
+      const d = block(t.key)
+      if (t.light) {
+        expect(d.getPropertyValue('--speak-white').trim(), t.key).toBe('var(--text)')
+      } else {
+        expect(d.getPropertyValue('--speak-green').trim(), t.key).toBe('var(--ok)')
+        expect(d.getPropertyValue('--speak-white').trim(), t.key).toBe('#e8e9ed')
+      }
+    }
+  })
+})
+
