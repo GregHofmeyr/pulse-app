@@ -3624,9 +3624,14 @@ pub async fn clip_facets(
     app: AppHandle,
     core: State<'_, Core>,
     channel_id: ChannelId,
+    game: Option<GameId>,
+    author: Option<UserId>,
 ) -> Result<ClipFacets, ApiError> {
     let (api, token) = core.current()?;
-    core.check(&app, api.clip_facets(&token, channel_id).await)
+    core.check(
+        &app,
+        api.clip_facets(&token, channel_id, game, author).await,
+    )
 }
 
 #[tauri::command]

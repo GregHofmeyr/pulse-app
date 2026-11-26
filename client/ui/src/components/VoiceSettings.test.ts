@@ -439,6 +439,69 @@ describe('VoiceSettings mic test during a call', () => {
   })
 })
 
+describe('VoiceSettings mic test: hear yourself as others do (#659)', () => {
+  beforeEach(() => {
+    invoke.mockClear()
+    invoke.mockImplementation(async () => undefined)
+    localStorage.clear()
+    voice.channelId = null
+    voice.joining = null
+  })
+  const sw = () => document.querySelector<HTMLButtonElement>('button.switch[aria-label="Hear yourself as others do"]')!
+  const note = () => document.querySelector('[data-as-others-delay]')
+  const settle = async () => {
+    for (let i = 0; i < 3; i++) await Promise.resolve()
+    flushSync()
+  }
+
+  it('off by default; turning it on saves it and notes the added delay', async () => {
+    const c = mount(VoiceSettings, { target: document.body })
+    try {
+      flushSync()
+      expect(sw().getAttribute('aria-pressed')).toBe('false')
+      expect(note()).toBeNull()
+      sw().click()
+      await settle()
+      expect(sw().getAttribute('aria-pressed')).toBe('true')
+      expect(note()?.textContent).toMatch(/delay/)
+      expect(localStorage.getItem('pulse.audio')).toContain('"mic_test_as_others_hear":true')
+    } finally {
+      unmount(c)
+      document.body.innerHTML = ''
+    }
+  })
+
+  it('is remembered: saved on, it opens on', () => {
+    localStorage.setItem('pulse.audio', JSON.stringify({ mic_test_as_others_hear: true }))
+    const c = mount(VoiceSettings, { target: document.body })
+    try {
+      flushSync()
+      expect(sw().getAttribute('aria-pressed')).toBe('true')
+    } finally {
+      unmount(c)
+      document.body.innerHTML = ''
+    }
+  })
+
+  it('switched during a test, the test restarts with it', async () => {
+    const c = mount(VoiceSettings, { target: document.body })
+    try {
+      flushSync()
+      document.querySelector<HTMLButtonElement>('.check button')!.click()
+      await settle()
+      invoke.mockClear()
+      sw().click()
+      await settle()
+      const starts = invoke.mock.calls.filter(([cmd]) => cmd === 'start_mic_test')
+      expect(invoke.mock.calls.some(([cmd]) => cmd === 'stop_mic_test')).toBe(true)
+      expect(JSON.stringify(starts.at(-1)?.[1])).toContain('"mic_test_as_others_hear":true')
+    } finally {
+      unmount(c)
+      document.body.innerHTML = ''
+    }
+  })
+})
+
 describe('VoiceSettings record a mic sample (#583)', () => {
   beforeEach(() => {
     invoke.mockClear()

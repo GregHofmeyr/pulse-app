@@ -1,8 +1,30 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { clickOutside, modal } from './actions'
+import { clickOutside, modal, ownedBy } from './actions'
 
 describe('clickOutside', () => {
+  it("a press in a popover moved out to the page counts as inside the menu holding its button (#643)", async () => {
+    const menu = document.createElement('div')
+    const button = document.createElement('button')
+    menu.append(button)
+    const picker = document.createElement('div')
+    picker.innerHTML = '<span>day</span>'
+    const outside = document.createElement('div')
+    document.body.append(menu, picker, outside)
+    const cb = vi.fn()
+    const a = clickOutside(menu, cb)
+    const own = ownedBy(picker, button)
+    await new Promise((r) => setTimeout(r, 0))
+    picker.querySelector('span')!.dispatchEvent(new Event('pointerdown', { bubbles: true }))
+    expect(cb).not.toHaveBeenCalled()
+    outside.dispatchEvent(new Event('pointerdown', { bubbles: true }))
+    expect(cb).toHaveBeenCalledTimes(1)
+    own.destroy()
+    picker.dispatchEvent(new Event('pointerdown', { bubbles: true }))
+    expect(cb).toHaveBeenCalledTimes(2)
+    a.destroy()
+  })
+
   it('fires for presses outside and Escape, not inside', async () => {
     const inside = document.createElement('div')
     const outside = document.createElement('div')

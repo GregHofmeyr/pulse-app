@@ -100,15 +100,27 @@ export function dropBuildFeed(s: AppState, key: string): AppState {
   return { ...s, buildFeeds: rest }
 }
 
-const facetsKey = (channelId: string, archived: boolean) => `${channelId}|${archived ? 1 : 0}`
-
-/** A channel's per-game counts as last fetched, with or without archived builds. */
-export function buildFacetsOf(s: AppState, channelId: string, archived: boolean): BuildFacets | undefined {
-  return s.buildFacets[facetsKey(channelId, archived)]
+/** The counts' key: the channel, Show archived, and a search's words (#664; trimmed, none for no search). */
+const facetsKey = (channelId: string, archived: boolean, q = '') => {
+  const words = q.trim()
+  return `${channelId}|${archived ? 1 : 0}${words ? `|${words}` : ''}`
 }
 
-export function setBuildFacets(s: AppState, channelId: string, archived: boolean, f: BuildFacets): AppState {
-  return { ...s, buildFacets: { ...s.buildFacets, [facetsKey(channelId, archived)]: f } }
+/** A channel's per-game counts as last fetched, with or without archived builds, and under a search's words. */
+export function buildFacetsOf(s: AppState, channelId: string, archived: boolean, q = ''): BuildFacets | undefined {
+  return s.buildFacets[facetsKey(channelId, archived, q)]
+}
+
+export function setBuildFacets(s: AppState, channelId: string, archived: boolean, f: BuildFacets, q = ''): AppState {
+  return { ...s, buildFacets: { ...s.buildFacets, [facetsKey(channelId, archived, q)]: f } }
+}
+
+/** One search's counts thrown away (its words changed: one set per query would pile up). */
+export function dropSearchFacets(s: AppState, channelId: string, archived: boolean, q: string): AppState {
+  const k = facetsKey(channelId, archived, q)
+  if (!q.trim() || !(k in s.buildFacets)) return s
+  const { [k]: _gone, ...rest } = s.buildFacets
+  return { ...s, buildFacets: rest }
 }
 
 /** `m` (a build as an event carries it, with no one's seen point or star) with yours from `old`, a copy of yours. */
@@ -260,14 +272,12 @@ function starred(s: AppState, channel: string, ids: string[], favourite: boolean
 /** Whether you starred a build (absent: from an older server, not starred). */
 export const isFavourite = (m: Message): boolean => !!m.build?.favourite
 
-/** A channel's counts thrown away, both with and without archived builds, so the next look fetches them fresh (after
- * any change to its builds, whether its view is open or not). */
+/** A channel's counts thrown away, with and without archived builds and under any search, so the next look fetches
+ * them fresh (after any change to its builds, whether its view is open or not). */
 export function dropBuildFacets(s: AppState, channelId: string): AppState {
-  const a = facetsKey(channelId, false)
-  const b = facetsKey(channelId, true)
-  if (!(a in s.buildFacets) && !(b in s.buildFacets)) return s
-  const { [a]: _a, [b]: _b, ...rest } = s.buildFacets
-  return { ...s, buildFacets: rest }
+  const prefix = `${channelId}|`
+  if (!Object.keys(s.buildFacets).some((k) => k.startsWith(prefix))) return s
+  return { ...s, buildFacets: Object.fromEntries(Object.entries(s.buildFacets).filter(([k]) => !k.startsWith(prefix))) }
 }
 
 /** The build feeds and counts after a gateway event (`applyEvent` calls it for builds and their deletes). */

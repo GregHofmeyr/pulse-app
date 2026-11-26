@@ -14,6 +14,34 @@ function trackToggles() {
 }
 trackToggles()
 
+/** Popovers moved out to the page (`portal`), each with the button it hangs off. */
+const owners = new WeakMap<Element, Element>()
+
+/** Marks a popover moved out to the page (e.g. the DatePicker) as `anchor`'s: a press in it counts as a press on
+ *  `anchor` for `clickOutside`, so picking a day doesn't close the form the day field sits in (#643). */
+export function ownedBy(node: HTMLElement, anchor: Element) {
+  owners.set(node, anchor)
+  return {
+    update(next: Element) {
+      owners.set(node, next)
+    },
+    destroy() {
+      owners.delete(node)
+    },
+  }
+}
+
+/** Whether `t` is in `node`, or in a popover owned by something in it (followed through nested popovers). */
+function within(node: Element, t: Element | null): boolean {
+  for (let hops = 0; t && hops < 8; hops++) {
+    if (node.contains(t)) return true
+    let p: Element | null = t
+    while (p && !owners.has(p)) p = p.parentElement
+    t = p ? owners.get(p)! : null
+  }
+  return false
+}
+
 /** Calls `onOutside` on any pointer press outside `node` (or Escape), with the event that did it.
  *  A press on the `[data-menu-toggle]` that opened it is ignored: that button toggles the menu itself. A press on any
  *  other toggle closes it like any outside press, so only one menu is open at a time (#192). */
@@ -22,7 +50,7 @@ export function clickOutside(node: HTMLElement, onOutside: (e: Event) => void) {
   const own = pressedToggle
   const down = (e: PointerEvent) => {
     const t = e.target as Element
-    if (node.contains(t)) return
+    if (within(node, t)) return
     if (own && own.contains(t)) return
     cb(e)
   }

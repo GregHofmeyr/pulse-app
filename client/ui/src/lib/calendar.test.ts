@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { addDays, addMonths, clampDay, dayStartIso, monthGrid, parseDay, shortDay, toDay } from './calendar'
+import { addDays, addMonths, clampDay, dayStartIso, mediumDay, monthGrid, parseDay, shortDay, toDay } from './calendar'
 
 describe('calendar', () => {
   it('a day is YYYY-MM-DD in local time, both ways', () => {
@@ -40,5 +40,6 @@ describe('calendar', () => {
 
   it('a short label: day and month', () => {
     expect(shortDay('2026-11-01')).toBe('1 Nov')
+    expect(mediumDay('2026-11-01')).toBe('1 Nov 2026')
   })
 })

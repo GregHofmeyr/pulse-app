@@ -659,7 +659,8 @@ export const api = {
   /** Newest first, 30 a page; `before` pages back. */
   listClips: (channelId: string, before?: string, game?: string, author?: string) =>
     invoke<Message[]>('list_clips', { channelId, before: before ?? null, game: game ?? null, author: author ?? null }),
-  clipFacets: (channelId: string) => invoke<ClipFacets>('clip_facets', { channelId }),
+  /** A clips channel's counts, each side narrowed by the other side's pick (#664): `author` the games, `game` the people. */
+  clipFacets: (channelId: string, game?: string, author?: string) => invoke<ClipFacets>('clip_facets', { channelId, game, author }),
   setClipView: (channelId: string, view: ClipView) => invoke<void>('set_clip_view', { channelId, view }),
   /** A page of a builds channel's builds (30), newest first by when saved; `before` pages back; `favourite`: only your
    *  starred ones (#617). */
@@ -677,7 +678,8 @@ export const api = {
       before: before ?? null,
     }),
   getBuild: (messageId: string) => invoke<Message>('get_build', { messageId }),
-  buildFacets: (channelId: string, archived = false) => invoke<BuildFacets>('build_facets', { channelId, archived }),
+  /** A builds channel's counts per game; `q` counts only the builds its words find (#664). */
+  buildFacets: (channelId: string, archived = false, q?: string) => invoke<BuildFacets>('build_facets', { channelId, archived, q: q?.trim() || undefined }),
   setBuildArchived: (messageId: string, archived: boolean) =>
     invoke<Message>('set_build_archived', { messageId, archived }),
   /** `dry_run` lists what it would archive without archiving. */

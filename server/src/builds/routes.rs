@@ -261,12 +261,12 @@ struct ListQuery {
 }
 
 /// The search index's query for `q`'s words (`None`: no words, nothing to narrow by).
-fn words(q: Option<&str>) -> Option<String> {
+pub(super) fn words(q: Option<&str>) -> Option<String> {
     crate::search::text::fts_query(&crate::search::text::terms(q?))
 }
 
 /// Narrows `qb` (over `builds b`) to builds whose message matches `fts` in the search index.
-fn push_match(qb: &mut sqlx::QueryBuilder<sqlx::Sqlite>, fts: String) {
+pub(super) fn push_match(qb: &mut sqlx::QueryBuilder<sqlx::Sqlite>, fts: String) {
     qb.push(
         " AND b.message_id IN (SELECT d.message_id FROM search_docs d
            WHERE d.doc IN (SELECT rowid FROM message_search WHERE message_search MATCH ",

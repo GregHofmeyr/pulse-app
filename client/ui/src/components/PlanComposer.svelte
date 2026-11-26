@@ -14,7 +14,9 @@
   // isn't over. `/plan Braai at kim's` opens it with the title filled in. Its creator's Edit plan opens the same
   // form, filled from the plan, with Save changes.
   import { onMount, tick, untrack } from 'svelte'
+  import DateField from './DateField.svelte'
   import { clickOutside } from '../lib/actions'
+  import { toDay } from '../lib/calendar'
   import { PLAN_LIMITS, defaultStart, endToIso, fieldsToIso, isoToFields, planReady } from '../lib/plan'
   import { editPlan, postPlan } from '../lib/plans.svelte'
   import { popoverStyle } from '../lib/reactions'
@@ -93,7 +95,7 @@
   </div>
   <div class="body">
     <div class="row">
-      <label class="field"><span class="menu-label">Day</span><input class="input input-sm" type="date" bind:value={date} aria-label="Day" /></label>
+      <div class="field"><span class="menu-label" aria-hidden="true">Day</span><DateField bind:value={date} label="Day" min={toDay(new Date())} /></div>
       <label class="field"><span class="menu-label">Time</span><input class="input input-sm" type="time" bind:value={time} aria-label="Time" /></label>
       <label class="field"><span class="menu-label">Ends</span><input class="input input-sm" type="time" bind:value={ends} aria-label="Ends (optional)" /></label>
     </div>

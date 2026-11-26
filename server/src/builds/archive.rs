@@ -474,10 +474,13 @@ async fn delete_many(
 struct FacetsQuery {
     #[serde(default)]
     archived: bool,
+    /// The list's search words (#664): counts only the builds the search finds, as `GET /channels/{id}/builds` does.
+    q: Option<String>,
 }
 
 /// `GET /channels/{id}/builds/facets`: the channel's live builds counted per game (most first), and in all (`total`
-/// counts the ones with no game too). Archived ones only with `archived=true`.
+/// counts the ones with no game too). Archived ones only with `archived=true`; `q` counts only the builds matching
+/// its words, so a game's count is what picking it would show under that search.
 async fn facets(
     State(s): State<AppState>,
     AuthUser(me): AuthUser,
@@ -485,28 +488,27 @@ async fn facets(
     Query(q): Query<FacetsQuery>,
 ) -> AppResult<Json<BuildFacets>> {
     builds_channel(&s, me, id).await?;
-    let archived = if q.archived {
-        ""
-    } else {
-        " AND b.archived_at IS NULL"
+    let fts = super::routes::words(q.q.as_deref());
+    let narrow = |qb: &mut sqlx::QueryBuilder<sqlx::Sqlite>| {
+        qb.push(" WHERE b.channel_id = ").push_bind(id.to_string());
+        if !q.archived {
+            qb.push(" AND b.archived_at IS NULL");
+        }
+        if let Some(fts) = fts.clone() {
+            super::routes::push_match(qb, fts);
+        }
     };
-    let total: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
-        "SELECT COUNT(*) FROM builds b JOIN messages m ON m.id = b.message_id AND m.deleted_at IS NULL
-         WHERE b.channel_id = ?{archived}"
-    )))
-    .bind(id.to_string())
-    .fetch_one(&s.db)
-    .await?;
-    let games: Vec<(String, i64)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
-        "SELECT b.game_id, COUNT(*) AS n FROM builds b
-         JOIN messages m ON m.id = b.message_id AND m.deleted_at IS NULL
-         JOIN games g ON g.id = b.game_id
-         WHERE b.channel_id = ?{archived}
-         GROUP BY b.game_id ORDER BY n DESC, g.name_key, g.id"
-    )))
-    .bind(id.to_string())
-    .fetch_all(&s.db)
-    .await?;
+    const FROM: &str =
+        " FROM builds b JOIN messages m ON m.id = b.message_id AND m.deleted_at IS NULL";
+    let mut qb = sqlx::QueryBuilder::new(format!("SELECT COUNT(*){FROM}"));
+    narrow(&mut qb);
+    let total: i64 = qb.build_query_scalar().fetch_one(&s.db).await?;
+    let mut qb = sqlx::QueryBuilder::new(format!(
+        "SELECT b.game_id, COUNT(*) AS n{FROM} JOIN games g ON g.id = b.game_id"
+    ));
+    narrow(&mut qb);
+    qb.push(" GROUP BY b.game_id ORDER BY n DESC, g.name_key, g.id");
+    let games: Vec<(String, i64)> = qb.build_query_as().fetch_all(&s.db).await?;
     Ok(Json(BuildFacets {
         total: total as u32,
         games: games

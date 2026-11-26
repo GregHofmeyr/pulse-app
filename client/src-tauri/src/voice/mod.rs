@@ -19,6 +19,7 @@ pub mod mixer;
 pub mod mutedtalk;
 pub mod netreact;
 pub mod netstats;
+pub mod opusloop;
 pub mod playout;
 pub mod processor;
 pub mod rejoin;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildFeedKey, buildThumb, refreshedBuild, unsureBuilds, isArchived, isQuickDrop, loadBuildPage, matchesBuildFilter, openBuildFeed, buildFeedFailed, setBuildFacets, buildFacetsOf } from './builds'
+import { buildFeedKey, buildThumb, refreshedBuild, unsureBuilds, isArchived, isQuickDrop, loadBuildPage, matchesBuildFilter, openBuildFeed, buildFeedFailed, setBuildFacets, buildFacetsOf, dropSearchFacets } from './builds'
 import { applyEvent, applyReady, emptyState, type AppState } from './state'
 import type { Message } from './protocol/Message'
 import type { Build } from './protocol/Build'
@@ -211,9 +211,9 @@ describe('build feeds', () => {
     expect(s.buildFacets).toEqual({})
   })
 
-  it('a build created, updated, deleted or bulk-archived drops both of its channel\'s counts', () => {
+  it('a build created, updated, deleted or bulk-archived drops all of its channel\'s counts, a search\'s too', () => {
     const counts = { total: 1, games: [{ game_id: 'G1', count: 1 }] }
-    const counted = () => setBuildFacets(setBuildFacets(setBuildFacets(withFeeds([build('M1')]), 'B1', false, counts), 'B1', true, counts), 'B2', false, counts)
+    const counted = () => setBuildFacets(setBuildFacets(setBuildFacets(withFeeds([build('M1')]), 'B1', false, counts), 'B1', true, counts, 'raven'), 'B2', false, counts)
     const events = [
       created(build('M2')),
       updated(build('M1', { title: 'Raven bunny v2' })),
@@ -222,13 +222,26 @@ describe('build feeds', () => {
     ]
     for (const e of events) {
       const s = applyEvent(counted(), e as never, 0)
-      expect([e.t, buildFacetsOf(s, 'B1', false), buildFacetsOf(s, 'B1', true)]).toEqual([e.t, undefined, undefined])
+      expect([e.t, buildFacetsOf(s, 'B1', false), buildFacetsOf(s, 'B1', true, 'raven')]).toEqual([e.t, undefined, undefined])
       // another channel's counts stay
       expect(buildFacetsOf(s, 'B2', false)?.total).toBe(1)
     }
     // a comment on a build doesn't change the counts
     const s = applyEvent(counted(), created({ ...build('R1'), build: undefined, thread_root_id: 'M1', author_id: 'U3' }), 0)
     expect(buildFacetsOf(s, 'B1', false)?.total).toBe(1)
+  })
+
+  it('counts are kept per search (#664): trimmed words, none for blank, one search dropped alone', () => {
+    const counts = (n: number) => ({ total: n, games: [] })
+    let s = setBuildFacets(setBuildFacets(withFeeds([]), 'B1', false, counts(3)), 'B1', false, counts(1), ' raven ')
+    expect(buildFacetsOf(s, 'B1', false)?.total).toBe(3)
+    expect(buildFacetsOf(s, 'B1', false, '  ')?.total).toBe(3)
+    expect(buildFacetsOf(s, 'B1', false, 'raven')?.total).toBe(1)
+    expect(buildFacetsOf(s, 'B1', true, 'raven')).toBeUndefined()
+    // a blank search drops nothing; a search drops only its own
+    expect(dropSearchFacets(s, 'B1', false, ' ')).toBe(s)
+    s = dropSearchFacets(s, 'B1', false, 'raven')
+    expect(Object.keys(s.buildFacets)).toEqual(['B1|0'])
   })
 
   it('keys differ per filter, and an empty part is unset', () => {

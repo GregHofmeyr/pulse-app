@@ -314,11 +314,13 @@ export type AudioConfig = {
   even_out_voices: boolean
   /** #590: the mic's tone stage after noise suppression (low-cut, low-mid trim, presence); on by default. */
   voice_clarity_eq: boolean
+  /** #659: the mic test's loopback through the receive side first (Opus round trip, the leveller); off by default. */
+  mic_test_as_others_hear: boolean
 }
 export const defaultAudioConfig: AudioConfig = {
   input: null, output: null, input_gain_pct: 100, sensitivity: 0.02, echo_mode: 'auto',
   noise_suppression: 'strong', auto_sensitivity: true, auto_gain: false, even_out_voices: true,
-  voice_clarity_eq: true,
+  voice_clarity_eq: true, mic_test_as_others_hear: false,
 }
 /** Settings saved before levels existed carried `noise_suppress: boolean`; before #76, `echo_cancel: boolean` (off by
  *  hand stays Off, the old default on becomes Auto). */
