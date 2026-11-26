@@ -247,7 +247,7 @@ town's weather (#451). Change it and `just deploy`; places already looked up kee
 - Build inputs are pinned too. When bumping the Rust version, change it in three places together: `rust-toolchain.toml`
   (CI, the Windows release and local builds) and the `rust:<version>-bookworm@sha256:…` line in `server.Dockerfile`.
   Dependabot opens PRs for each (rust-toolchain, docker); the digest is the multi-arch index digest. The Tauri CLI is
-  an exact devDependency of `client/ui` (`@tauri-apps/cli` in its `package.json`, at the `tauri` crate's version):
+  an exact devDependency of `client/ui` (`@tauri-apps/cli` in its `package.json`, on the `tauri` crate's minor version):
   the Windows release runs that one, so bump the two together. GitHub Actions are
   pinned to commit SHAs with a `# vX.Y.Z` comment, and `ci.yml` checks the LLVM apt key against its published fingerprint.
 - Node and pnpm are pinned to exact versions (`node-version` / `version` of the setup actions) in `ci.yml` and
