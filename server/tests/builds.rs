@@ -444,9 +444,23 @@ async fn a_version_4_ready_leaves_builds_channels_out() {
     );
     // what a version-4 client reads it as: no kind it can't parse
     assert!(!serde_json::to_string(&old).unwrap().contains("\"builds\""));
+}
 
-    let (_, new) = hello_as(&app, &alex, pulse_protocol::PROTOCOL_VERSION).await;
-    assert!(new.channels.iter().any(|c| c.id == ch.id));
+#[tokio::test]
+async fn a_current_ready_has_the_builds_channel() {
+    let app = spawn().await;
+    let (_, alex) = register(&app, "alex").await;
+    let s = create_server(&app, &alex, "Main").await;
+    let ch = create_builds(&app, &alex, s.id).await;
+
+    let (_, ready) = hello_as(&app, &alex, pulse_protocol::PROTOCOL_VERSION).await;
+    assert!(
+        ready
+            .channels
+            .iter()
+            .any(|c| c.id == ch.id && c.kind == ChannelKind::Builds)
+    );
+    assert!(ready.read_states.iter().any(|r| r.channel_id == ch.id));
 }
 
 #[tokio::test]
@@ -459,17 +473,9 @@ async fn a_version_4_client_hears_nothing_of_a_builds_channel() {
     assert_eq!(join_server(&app, &sam, s.id).await.status(), 200);
     let text = general(&app, &alex, s.id).await;
     let (mut old, _) = hello_as(&app, &sam, OLD).await;
-    let mut new = hello(&app, &sam).await;
 
-    let ch = create_builds(&app, &alex, s.id).await;
+    create_builds(&app, &alex, s.id).await;
     send(&app, &alex, text.id, "after").await;
-    let got_new = events_until(&mut new, "after").await;
-    assert!(
-        got_new
-            .iter()
-            .any(|e| matches!(e, Event::ChannelCreated { channel } if channel.id == ch.id)),
-        "a new client hears of it"
-    );
     let got_old = events_until(&mut old, "after").await;
     assert!(
         !got_old
@@ -481,6 +487,27 @@ async fn a_version_4_client_hears_nothing_of_a_builds_channel() {
         !got_old
             .iter()
             .any(|e| serde_json::to_string(e).unwrap().contains("\"builds\""))
+    );
+}
+
+#[tokio::test]
+async fn a_current_client_hears_of_a_new_builds_channel() {
+    let app = spawn().await;
+    let (_, alex) = register(&app, "alex").await;
+    let (_, sam) = register(&app, "sam").await;
+    let s = create_server(&app, &alex, "Main").await;
+    assert_eq!(join_server(&app, &sam, s.id).await.status(), 200);
+    let text = general(&app, &alex, s.id).await;
+    let mut new = hello(&app, &sam).await;
+
+    let ch = create_builds(&app, &alex, s.id).await;
+    send(&app, &alex, text.id, "after").await;
+    let got = events_until(&mut new, "after").await;
+    assert!(
+        got.iter().any(
+            |e| matches!(e, Event::ChannelCreated { channel } if channel.id == ch.id && channel.kind == ChannelKind::Builds)
+        ),
+        "{got:?}"
     );
 }
 
@@ -1748,16 +1775,10 @@ fn names(e: &Event, id: pulse_protocol::ids::ChannelId) -> bool {
     serde_json::to_string(e).unwrap().contains(&id.to_string())
 }
 
-#[tokio::test]
-#[ignore = "protocol 4 is refused at the gateway since #634; goes with builds::compat in a later PR"]
-async fn a_version_4_client_gets_none_of_its_own_events_about_builds() {
-    let w = world().await;
-    let text = general(&w.app, &w.alex.1, w.server).await;
-    let m = build_ok(&w.app, &w.alex.1, w.ch.id, json!({ "title": "Raven crit" })).await;
-    let (mut old, _) = hello_as(&w.app, &w.sam.1, OLD).await;
-    let mut new = hello(&w.app, &w.sam.1).await;
-
-    // sam's comment, then alex's mention of sam: an inbox item for sam
+/// What sam does with alex's build in `w.ch` (`text`: the server's text channel), each giving sam an event naming the
+/// builds channel: a comment and alex's mention of sam (an inbox item, waited for on `sync`, a current connection), a
+/// read point and thread seen point, a bookmark, a reminder, and sam's own channel order with the builds channel first.
+async fn sam_uses_a_build(w: &World, text: &Channel, m: &Message, sync: &mut Socket) {
     let c = post_json(
         &w.app,
         &w.sam.1,
@@ -1774,12 +1795,11 @@ async fn a_version_4_client_gets_none_of_its_own_events_about_builds() {
     )
     .await;
     assert_eq!(r.status(), 200);
-    wait_for(&mut new, "InboxItemAdded", |e| match e {
+    wait_for(sync, "InboxItemAdded", |e| match e {
         Event::InboxItemAdded { .. } => Some(()),
         _ => None,
     })
     .await;
-    // sam reads the channel and the thread, bookmarks the build and sets a reminder on it
     let r = post_json(
         &w.app,
         &w.sam.1,
@@ -1816,7 +1836,6 @@ async fn a_version_4_client_gets_none_of_its_own_events_about_builds() {
     )
     .await;
     assert!(r.status().is_success(), "reminder {}", r.status());
-    // and puts the builds channel first in their own order
     let r = w
         .app
         .http
@@ -1827,9 +1846,18 @@ async fn a_version_4_client_gets_none_of_its_own_events_about_builds() {
         .await
         .unwrap();
     assert!(r.status().is_success(), "order {}", r.status());
+}
 
+#[tokio::test]
+async fn a_current_client_gets_its_own_events_about_builds() {
+    let w = world().await;
+    let text = general(&w.app, &w.alex.1, w.server).await;
+    let m = build_ok(&w.app, &w.alex.1, w.ch.id, json!({ "title": "Raven crit" })).await;
+    let mut new = hello(&w.app, &w.sam.1).await;
+
+    sam_uses_a_build(&w, &text, &m, &mut new).await;
     send(&w.app, &w.alex.1, text.id, "after").await;
-    let got_new = events_until(&mut new, "after").await;
+    let got = events_until(&mut new, "after").await;
     for want in [
         "ReadStateUpdated",
         "ThreadSeen",
@@ -1838,12 +1866,25 @@ async fn a_version_4_client_gets_none_of_its_own_events_about_builds() {
         "ChannelOrderChanged",
     ] {
         assert!(
-            got_new
-                .iter()
+            got.iter()
                 .any(|e| serde_json::to_string(e).unwrap().contains(want) && names(e, w.ch.id)),
             "a current client gets its {want}"
         );
     }
+}
+
+#[tokio::test]
+#[ignore = "protocol 4 is refused at the gateway since #634; goes with builds::compat in a later PR"]
+async fn a_version_4_client_gets_none_of_its_own_events_about_builds() {
+    let w = world().await;
+    let text = general(&w.app, &w.alex.1, w.server).await;
+    let m = build_ok(&w.app, &w.alex.1, w.ch.id, json!({ "title": "Raven crit" })).await;
+    let (mut old, _) = hello_as(&w.app, &w.sam.1, OLD).await;
+    // a current connection only to know when the inbox item has gone out
+    let mut sync = hello(&w.app, &w.sam.1).await;
+
+    sam_uses_a_build(&w, &text, &m, &mut sync).await;
+    send(&w.app, &w.alex.1, text.id, "after").await;
     let got_old = events_until(&mut old, "after").await;
     let leaked: Vec<_> = got_old.iter().filter(|e| names(e, w.ch.id)).collect();
     assert!(leaked.is_empty(), "{leaked:?}");
