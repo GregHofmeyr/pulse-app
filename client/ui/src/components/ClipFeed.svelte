@@ -288,7 +288,9 @@
 </div>
 
 <style>
-  .feed { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; }
+  /* a size container: the wall's columns follow the feed's own width (the filters panel or replies beside it), not the
+     window's */
+  .feed { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; container: clip-feed / inline-size; }
   .feed.list { padding: 12px 0 8px; }
   /* few clips sit at the bottom, like messages */
   .list .items { margin-top: auto; display: flex; flex-direction: column; }
@@ -298,8 +300,11 @@
   .newline::before, .newline::after { content: ''; flex: 1; height: 1px; background: var(--danger); opacity: .6; }
   .pending-row { padding: 6px 18px 6px 70px; max-width: 520px; }
   .grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; padding: 16px 18px 8px; align-items: start; }
-  @media (max-width: 899.98px) {
+  @container clip-feed (max-width: 679.98px) {
     .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+  @container clip-feed (max-width: 419.98px) {
+    .grid { grid-template-columns: minmax(0, 1fr); }
   }
   .error { margin: 8px 18px; color: var(--danger-text); font-size: 13px; }
   /* a jumped-to clip (#120): a fading highlight, or a static outline under reduced motion, as a jumped-to message */

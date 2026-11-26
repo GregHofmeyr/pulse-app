@@ -6,7 +6,7 @@
   import Segmented from './Segmented.svelte'
   import type { BuildView } from '../lib/buildPrefs'
 
-  let { title, count, q, onQ, view, onView, panel, onPanel, onAdd }: {
+  let { title, count, q, onQ, view, onView, panel, onPanel, panelId, onAdd }: {
     title: string
     /** Builds in view (null until counted). */
     count: number | null
@@ -17,6 +17,8 @@
     onView: (v: BuildView) => void
     panel?: boolean
     onPanel?: () => void
+    /** The panel's id, for the toggle's `aria-controls` (#663: a collapsible region's toggle, as Clips'). */
+    panelId?: string
     /** "+ Add build" (#618): opens quick add. */
     onAdd?: () => void
   } = $props()
@@ -44,7 +46,7 @@
   <Segmented label="View" size="sm" options={[{ value: 'gallery', label: 'Gallery' }, { value: 'list', label: 'List' }]} value={view} onchange={onView} />
   {#if onPanel}
     <button type="button" class="icon-btn hbtn" class:on={panel} aria-label={panel ? 'Hide games panel' : 'Show games panel'} data-tip={panel ? 'Hide panel' : 'Show panel'}
-      aria-pressed={panel} onclick={onPanel}><Icon name="panelRight" size={17} /></button>
+      aria-expanded={!!panel} aria-controls={panel ? panelId : undefined} onclick={onPanel}><Icon name="panelRight" size={17} /></button>
   {/if}
 </div>
 

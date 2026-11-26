@@ -333,9 +333,15 @@ describe('BuildsPanel', () => {
     const toggle = document.querySelector<HTMLButtonElement>('.builds-head button[aria-label="Hide games panel"]')!
     // the toggle is the header's rightmost control
     expect(toggle.parentElement!.lastElementChild).toBe(toggle)
+    // a collapsible region's toggle (#663): expanded, pointing at the panel; not a pressed button
+    expect(toggle.getAttribute('aria-expanded')).toBe('true')
+    expect(toggle.hasAttribute('aria-pressed')).toBe(false)
+    expect(document.getElementById(toggle.getAttribute('aria-controls')!)).toBe(panel())
     toggle.click()
     flushSync()
     expect(panel()).toBeNull()
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    expect(toggle.hasAttribute('aria-controls')).toBe(false) // never points at nothing
     unmount(cmp!)
     await show()
     expect(panel()).toBeNull()

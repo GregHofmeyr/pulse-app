@@ -26,11 +26,10 @@
   const view = $derived(clipView(app.state, channelId))
 
   // --- the filters panel (#663): open the first time, then as you left it in this channel (this device) ---
+  // A clip's replies take the right side while open, so the panel steps aside (not a choice to close it); the header
+  // is told what's on screen. Its toggle then closes the replies and shows the panel, keeping the focus on itself
+  // (`panelShown`, `togglePanel` below the replies).
   let panel = $state(untrack(() => clipPanelOpen(channelId)))
-  function togglePanel() {
-    panel = !panel
-    setClipPanelOpen(channelId, panel)
-  }
   const panelId = $derived(`clips-panel-${channelId}`)
 
   // --- the panel's counts: loaded on open (and after a reconnect clears them), then a second after clip changes ---
@@ -87,15 +86,29 @@
     repliesOpener = at instanceof HTMLElement && chan?.contains(at) ? at : null
     repliesOpen = m
   }
-  async function closeReplies() {
+  /** Closes the replies panel; `refocus` puts the focus back on what opened it (else it stays where it is). */
+  async function closeReplies(refocus = true) {
     const id = repliesOpen?.id
     const opener = repliesOpener
     repliesOpen = null
     repliesOpener = null
+    if (!refocus) return
     await tick()
     const back = (opener?.isConnected ? opener : null) ?? chan?.querySelector<HTMLElement>(`[data-clip-id="${id}"] button`)
     back?.focus()
   }
+  // --- the panel beside the replies (see the panel's note above) ---
+  const panelShown = $derived(panel && !repliesRoot)
+  function togglePanel() {
+    if (repliesRoot) {
+      void closeReplies(false)
+      if (!panel) setClipPanelOpen(channelId, (panel = true))
+      return
+    }
+    panel = !panel
+    setClipPanelOpen(channelId, panel)
+  }
+
   // A search result asked for one of this channel's clips: its panel shows the clip and its replies.
   $effect(() => {
     const r = ui.openClip
@@ -262,19 +275,19 @@
 
 <div class="chan" class:with-replies={!!repliesRoot} bind:this={chan}>
   <ClipsHeader {channelId} {serverId} {filter} onFilter={(f) => (filter = f)} {view} onShare={share} onOpenPinned={openReplies}
-    {panel} onPanel={togglePanel} {panelId} />
+    panel={panelShown} onPanel={togglePanel} {panelId} />
   <div class="body">
     <div class="main">
       <ClipFeed {channelId} {filter} layout={view} onOpenReplies={openReplies} {unsentReplies} {pending}
         jumpTo={jumpTarget} onJumpMissed={openReplies} />
     </div>
-    {#if panel && !repliesRoot}
+    {#if panelShown}
       <ClipsPanel {serverId} id={panelId} facets={app.state.clipFacets[channelId]} {filter} onFilter={(f) => (filter = f)} />
     {/if}
   </div>
   {#if repliesRoot}
     {#key repliesRoot.id}
-      <RepliesPanel root={repliesRoot} {serverId} onClose={closeReplies} />
+      <RepliesPanel root={repliesRoot} {serverId} onClose={() => closeReplies()} />
     {/key}
   {/if}
   {#if dragging}<div class="drop-zone" aria-hidden="true"><span>Drop a video to share it</span></div>{/if}

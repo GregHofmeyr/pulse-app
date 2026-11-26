@@ -27,12 +27,15 @@
   } = $props()
 
   const registry = $derived(app.state.games[serverId] ?? [])
-  // a game the registry doesn't know yet has no row until it arrives
-  const rows = $derived(
-    (games ?? [])
-      .map((g) => ({ id: g.game_id, count: g.count, name: registry.find((x) => x.id === g.game_id)?.name }))
-      .filter((g): g is { id: string; count: number; name: string } => !!g.name),
-  )
+  // a game the registry doesn't know yet has no row until it arrives; the picked game always keeps one (count 0 once
+  // the counts say it has none, no number before they're loaded), so something always shows as picked
+  const rows = $derived.by(() => {
+    const known = (games ?? [])
+      .map((g) => ({ id: g.game_id, count: g.count as number | null, name: registry.find((x) => x.id === g.game_id)?.name }))
+      .filter((g): g is { id: string; count: number | null; name: string } => !!g.name)
+    if (!selected || known.some((g) => g.id === selected)) return known
+    return [...known, { id: selected, count: games ? 0 : null, name: registry.find((x) => x.id === selected)?.name ?? 'Game' }]
+  })
 </script>
 
 <aside class="filter-panel {cls}" aria-label={label} {id}>

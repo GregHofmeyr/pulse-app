@@ -7,8 +7,10 @@
   import { app } from '../lib/store.svelte'
   import type { BuildFacets } from '../lib/protocol/BuildFacets'
 
-  let { channelId, serverId, facets, game, onGame, archived, onArchived }: {
+  let { channelId, serverId, id, facets, game, onGame, archived, onArchived }: {
     channelId: string
+    /** For the header toggle's `aria-controls`. */
+    id?: string
     serverId: string
     facets: BuildFacets | undefined
     game: string | undefined
@@ -20,7 +22,7 @@
   const games = $derived(app.state.games[serverId] ?? [])
 </script>
 
-<GameFilterPanel class="builds-panel" {serverId} games={facets?.games} total={facets?.total} selected={game} onSelect={onGame}>
+<GameFilterPanel class="builds-panel" {id} {serverId} games={facets?.games} total={facets?.total} selected={game} onSelect={onGame}>
   <section>
     <label class="check">
       <input type="checkbox" role="switch" class="switch" checked={archived} onchange={(e) => onArchived(e.currentTarget.checked)} />

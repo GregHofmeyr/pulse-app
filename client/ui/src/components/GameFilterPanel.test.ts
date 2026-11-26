@@ -74,6 +74,21 @@ describe('GameFilterPanel (#663)', () => {
     expect(p.onSelect).toHaveBeenLastCalledWith(undefined)
   })
 
+  it('a picked game whose row is gone keeps one, with count 0, still pressed (a game the registry lacks reads "Game")', () => {
+    const p = panel({ selected: 'G1', games: [{ game_id: 'G2', count: 4 }] })
+    expect(rows()).toEqual([['All games', '7'], ['Rocket League', '4'], ['Apex', '0']])
+    expect(row('Apex').getAttribute('aria-pressed')).toBe('true')
+    p.selected = 'G7'
+    flushSync()
+    expect(rows()).toEqual([['All games', '7'], ['Rocket League', '4'], ['Game', '0']])
+    expect(row('Game').getAttribute('aria-pressed')).toBe('true')
+    // counts not loaded yet: the row shows, without a number
+    p.games = undefined
+    p.total = undefined
+    flushSync()
+    expect(rows()).toEqual([['All games', ''], ['Game', '']])
+  })
+
   it('no counts yet (or a total the server did not send): "All games" shows no number, never a guess', () => {
     panel({ games: undefined, total: undefined })
     expect(rows()).toEqual([['All games', '']])

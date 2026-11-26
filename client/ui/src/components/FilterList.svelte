@@ -9,7 +9,8 @@
     allLabel: string
     /** The "all" row's count; nothing shows while unknown (never a guess). */
     allCount: number | null | undefined
-    rows: { id: string; name: string; count: number }[]
+    /** A null count shows no number (not loaded yet). */
+    rows: { id: string; name: string; count: number | null }[]
     selected: string | undefined
     onSelect: (id: string | undefined) => void
   } = $props()
@@ -25,7 +26,7 @@
     </button>
     {#each rows as r (r.id)}
       <button type="button" aria-pressed={selected === r.id} onclick={() => onSelect(r.id)}>
-        <span class="name">{r.name}</span><span class="n">{r.count}</span>
+        <span class="name">{r.name}</span><span class="n">{r.count ?? ''}</span>
       </button>
     {/each}
   </div>

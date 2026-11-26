@@ -19,7 +19,13 @@
     onFilter: (f: ClipFilter) => void
   } = $props()
 
-  const people = $derived((facets?.authors ?? []).map((a) => ({ id: a.user_id, count: a.count, name: displayName(app.state, serverId, a.user_id) })))
+  // the picked person always keeps a row (count 0 once the counts say they have none), so something shows as picked
+  const people = $derived.by(() => {
+    const rows: { id: string; count: number | null; name: string }[] = (facets?.authors ?? []).map((a) => ({ id: a.user_id, count: a.count, name: displayName(app.state, serverId, a.user_id) }))
+    const picked = filter.author
+    if (!picked || rows.some((r) => r.id === picked)) return rows
+    return [...rows, { id: picked, count: facets ? 0 : null, name: displayName(app.state, serverId, picked) }]
+  })
 </script>
 
 <GameFilterPanel class="clips-panel" {id} label="Filter clips" {serverId} games={facets?.games} total={facets?.total} selected={filter.game}
