@@ -42,6 +42,7 @@ beforeEach(() => {
   invoke.mockReset()
   invoke.mockImplementation(async (cmd: string, args?: unknown) => {
     if (cmd === 'build_window_snapshot') return current
+    if (cmd === 'set_build_window_on_top') return true
     if (cmd === 'build_window_image_urls') {
       const id = (args as { messageId: string }).messageId
       return [{ id: 'A1', url: `https://x.r2.cloudflarestorage.com/${id}/A1?n=${calls('build_window_image_urls').length}`, expires_at: null }]
@@ -100,17 +101,45 @@ describe('BuildPopout', () => {
     expect(text()).toContain('ARCHIVED')
   })
 
-  it('the on-top toggle calls set_build_window_on_top', async () => {
+  it('the on-top switch says what it is, and each click calls set_build_window_on_top', async () => {
     await show()
+    // asked once as it opens, re-stating the opening state: whether this window can be kept on top at all (QPMKJE)
+    expect(calls('set_build_window_on_top')).toEqual([{ on: true }])
     const toggle = document.querySelector<HTMLButtonElement>('button.on-top')!
+    // a labelled switch, not a bare pin icon whose clicks show nothing
+    expect(toggle.textContent?.trim()).toBe('On top')
     expect(toggle.getAttribute('aria-pressed')).toBe('true')
     toggle.click()
     await flush()
-    expect(calls('set_build_window_on_top')).toEqual([{ on: false }])
+    expect(calls('set_build_window_on_top')).toEqual([{ on: true }, { on: false }])
     expect(toggle.getAttribute('aria-pressed')).toBe('false')
     toggle.click()
     await flush()
-    expect(calls('set_build_window_on_top')).toEqual([{ on: false }, { on: true }])
+    expect(calls('set_build_window_on_top')).toEqual([{ on: true }, { on: false }, { on: true }])
+    expect(toggle.getAttribute('aria-pressed')).toBe('true')
+  })
+
+  it('where the window cannot be kept on top (Wayland) there is no switch (QPMKJE)', async () => {
+    const base = invoke.getMockImplementation()!
+    invoke.mockImplementation(async (cmd: string, args?: unknown) => (cmd === 'set_build_window_on_top' ? false : base(cmd, args)))
+    await show()
+    expect(calls('set_build_window_on_top')).toEqual([{ on: true }])
+    expect(document.querySelector('button.on-top')).toBeNull()
+    expect(document.querySelector('.build-popout .bar .title')?.textContent).toBe('Bunny crit')
+  })
+
+  it('a switch that fails says so and keeps its state (never a silent no-op)', async () => {
+    await show()
+    const base = invoke.getMockImplementation()!
+    invoke.mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd === 'set_build_window_on_top') throw 'The pop-out is closed.'
+      return base(cmd, args)
+    })
+    const toggle = document.querySelector<HTMLButtonElement>('button.on-top')!
+    toggle.click()
+    await flush()
+    expect(toggle.getAttribute('aria-pressed')).toBe('true')
+    expect(document.querySelector('.build-popout [role=alert]')?.textContent).toContain("Couldn't change that")
   })
 
   it('with nothing to show it says the build is gone', async () => {

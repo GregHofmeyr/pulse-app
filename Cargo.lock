@@ -5344,6 +5344,7 @@ dependencies = [
  "cpal",
  "deep_filter",
  "futures",
+ "gtk",
  "image",
  "keyring",
  "libc",
