@@ -3,11 +3,18 @@ import type { AuthorCount } from "./AuthorCount";
 import type { GameCount } from "./GameCount";
 
 /**
- * `GET /channels/{id}/clips/facets`: a clips channel's filter panel, clip counts per game and per author.
+ * `GET /channels/{id}/clips/facets`: a clips channel's filter panel, clip counts per game and per author. Each side
+ * is counted under the other side's filter (#664): `?author=` narrows `games` and `total`, `?game=` narrows
+ * `authors` and `authors_total`. With neither, every count is the whole channel's.
  */
 export type ClipFacets = { games: Array<GameCount>, authors: Array<AuthorCount>, 
 /**
- * Every live clip here, those with no game too: the panel's "All games" (#663). Missing from a server older
- * than that, which the app shows as no count rather than a guess.
+ * Every live clip here (by `author` if asked), those with no game too: the panel's "All games" (#663). Missing
+ * from a server older than that, which the app shows as no count rather than a guess.
  */
-total?: number, };
+total?: number, 
+/**
+ * Every live clip here of `game`, whoever shared it: the panel's "Everyone" (#664). Only sent when a filter was
+ * asked for; missing, it's `total` (no filter, or a server older than #664 that counts the whole channel).
+ */
+authors_total?: number, };

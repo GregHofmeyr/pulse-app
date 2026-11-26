@@ -503,6 +503,66 @@ async fn facets_count_games_and_respect_archived() {
     assert_eq!(r.status(), 404);
 }
 
+/// The list's search narrows the counts too (#664), so a game's count is what picking it would show.
+#[tokio::test]
+async fn facets_follow_the_search() {
+    let w = world().await;
+    let tfd = w.game("The First Descendant").await;
+    let wf = w.game("Warframe").await;
+    w.build(
+        &w.alex.1,
+        json!({ "title": "Raven gley", "game_id": tfd.id }),
+    )
+    .await;
+    w.build(&w.alex.1, json!({ "title": "Bunny", "game_id": tfd.id }))
+        .await;
+    let old = w
+        .build(&w.alex.1, json!({ "title": "Raven old", "game_id": wf.id }))
+        .await;
+    w.build(&w.alex.1, json!({ "title": "Raven, no game" }))
+        .await;
+    w.build(&w.alex.1, json!({ "title": "Saryn", "game_id": wf.id }))
+        .await;
+    assert_eq!(w.archive(&w.alex.1, old.id, true).await.status(), 200);
+    let (app, sam, ch) = (&w.app, &w.sam.1, w.ch);
+    let facets = |query: &'static str| {
+        let path = format!("/channels/{ch}/builds/facets{query}");
+        async move { get_json::<BuildFacets>(app, sam, &path).await }
+    };
+    let counts = |f: &BuildFacets| {
+        f.games
+            .iter()
+            .map(|g| (g.game_id, g.count))
+            .collect::<Vec<_>>()
+    };
+    let f = facets("?q=raven").await;
+    assert_eq!(f.total, 2);
+    assert_eq!(counts(&f), vec![(tfd.id, 1)]);
+    let f = facets("?q=raven&archived=true").await;
+    assert_eq!(f.total, 3);
+    assert_eq!(counts(&f), vec![(tfd.id, 1), (wf.id, 1)]);
+    // nothing found: nothing counted
+    let f = facets("?q=zzzz").await;
+    assert_eq!((f.total, f.games.len()), (0, 0));
+    // blank words narrow nothing: the same as no search
+    let all = facets("").await;
+    assert_eq!(facets("?q=%20").await, all);
+    assert_eq!(all.total, 4);
+    assert_eq!(counts(&all), vec![(tfd.id, 2), (wf.id, 1)]);
+    let r = w
+        .app
+        .http
+        .get(
+            w.app
+                .url(&format!("/channels/{}/builds/facets?q=raven", w.ch)),
+        )
+        .bearer_auth(&w.kim)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 404);
+}
+
 /// Your own build is yours to delete after you leave the server, as any message of yours is (#418); archiving it is
 /// for members.
 #[tokio::test]

@@ -624,42 +624,59 @@ async fn feed(
     ))
 }
 
-/// Clip counts per game and per author, and in all (with no game too), live clips only.
+#[derive(Deserialize)]
+struct FacetsQuery {
+    game: Option<GameId>,
+    author: Option<UserId>,
+}
+
+/// Clip counts per game and per author, and in all (with no game too), live clips only. Each side is counted under
+/// the other side's filter (#664), so a count is what picking that row would show: `author` narrows the games and
+/// `total`, `game` the authors and `authors_total` (sent only when a filter was asked for).
 async fn facets(
     State(s): State<AppState>,
     AuthUser(me): AuthUser,
     Path(id): Path<ChannelId>,
+    Query(q): Query<FacetsQuery>,
 ) -> AppResult<Json<ClipFacets>> {
     channel_for(&s.db, me, id).await?;
-    let total: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM clips c
-         JOIN messages m ON m.id = c.message_id
-         WHERE m.channel_id = ? AND m.deleted_at IS NULL",
-    )
-    .bind(id.to_string())
-    .fetch_one(&s.db)
-    .await?;
-    let games: Vec<(String, i64)> = sqlx::query_as(
-        "SELECT c.game_id, COUNT(*) AS n FROM clips c
-         JOIN messages m ON m.id = c.message_id
-         JOIN games g ON g.id = c.game_id
-         WHERE m.channel_id = ? AND m.deleted_at IS NULL
-         GROUP BY c.game_id ORDER BY n DESC, g.name_key, g.id",
-    )
-    .bind(id.to_string())
-    .fetch_all(&s.db)
-    .await?;
-    let authors: Vec<(String, i64)> = sqlx::query_as(
-        "SELECT m.author_id, COUNT(*) AS n FROM clips c
-         JOIN messages m ON m.id = c.message_id
-         WHERE m.channel_id = ? AND m.deleted_at IS NULL AND m.author_id IS NOT NULL
-         GROUP BY m.author_id ORDER BY n DESC, m.author_id",
-    )
-    .bind(id.to_string())
-    .fetch_all(&s.db)
-    .await?;
+    // the live clips of this channel, narrowed by an author or a game
+    let base = |qb: &mut sqlx::QueryBuilder<sqlx::Sqlite>,
+                author: Option<UserId>,
+                game: Option<GameId>| {
+        qb.push(" WHERE m.channel_id = ").push_bind(id.to_string());
+        qb.push(" AND m.deleted_at IS NULL");
+        if let Some(a) = author {
+            qb.push(" AND m.author_id = ").push_bind(a.to_string());
+        }
+        if let Some(g) = game {
+            qb.push(" AND c.game_id = ").push_bind(g.to_string());
+        }
+    };
+    const FROM: &str = " FROM clips c JOIN messages m ON m.id = c.message_id";
+    let mut qb = sqlx::QueryBuilder::new(format!("SELECT COUNT(*){FROM}"));
+    base(&mut qb, q.author, None);
+    let total: i64 = qb.build_query_scalar().fetch_one(&s.db).await?;
+    let authors_total: Option<i64> = if q.author.is_some() || q.game.is_some() {
+        let mut qb = sqlx::QueryBuilder::new(format!("SELECT COUNT(*){FROM}"));
+        base(&mut qb, None, q.game);
+        Some(qb.build_query_scalar().fetch_one(&s.db).await?)
+    } else {
+        None
+    };
+    let mut qb = sqlx::QueryBuilder::new(format!(
+        "SELECT c.game_id, COUNT(*) AS n{FROM} JOIN games g ON g.id = c.game_id"
+    ));
+    base(&mut qb, q.author, None);
+    qb.push(" GROUP BY c.game_id ORDER BY n DESC, g.name_key, g.id");
+    let games: Vec<(String, i64)> = qb.build_query_as().fetch_all(&s.db).await?;
+    let mut qb = sqlx::QueryBuilder::new(format!("SELECT m.author_id, COUNT(*) AS n{FROM}"));
+    base(&mut qb, None, q.game);
+    qb.push(" AND m.author_id IS NOT NULL GROUP BY m.author_id ORDER BY n DESC, m.author_id");
+    let authors: Vec<(String, i64)> = qb.build_query_as().fetch_all(&s.db).await?;
     Ok(Json(ClipFacets {
         total: Some(total as u32),
+        authors_total: authors_total.map(|n| n as u32),
         games: games
             .into_iter()
             .map(|(g, n)| {
