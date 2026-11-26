@@ -76,6 +76,15 @@ pub struct User {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub typing_text: Option<String>,
+    /// The speaking ring's style (#651); absent: Classic (and from older servers; older clients
+    /// ignore it).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub ring_style: Option<String>,
+    /// The speaking ring's colour (#651); absent: green.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub ring_color: Option<String>,
 }
 
 /// How a name is drawn: a bundled font and 0 (default), 1 (solid) or 2 (gradient, first to
@@ -328,6 +337,16 @@ pub struct UpdateProfileRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub typing_text: Option<String>,
+    /// The new speaking ring style (#651): `"classic"` is the default; absent keeps the current
+    /// one (older clients don't send it).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub ring_style: Option<String>,
+    /// The new speaking ring colour (#651): `"green"` is the default; absent keeps the current
+    /// one (older clients don't send it).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub ring_color: Option<String>,
 }
 
 /// `PUT /servers/{id}/members/{user}/nickname` and `PUT /me/private-nicknames/{user}`: `None`
@@ -4203,6 +4222,8 @@ mod tests {
                         avatar_still: None,
                         style: Default::default(),
                         typing_text: None,
+                        ring_style: None,
+                        ring_color: None,
                     },
                 }
             ),

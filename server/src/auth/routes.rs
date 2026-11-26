@@ -219,6 +219,8 @@ async fn finish_register(
         avatar_still: None,
         style: Default::default(),
         typing_text: None,
+        ring_style: None,
+        ring_color: None,
     };
     s.hub
         .publish(&s.db, Event::UserCreated { user: user.clone() })

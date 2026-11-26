@@ -497,6 +497,8 @@ fn request() -> UpdateProfileRequest {
         display_name: None,
         glow: None,
         typing_text: None,
+        ring_style: None,
+        ring_color: None,
     }
 }
 
@@ -554,6 +556,8 @@ async fn saves_a_whole_profile_and_tells_who_knows_them() {
         display_name: None,
         glow: None,
         typing_text: None,
+        ring_style: None,
+        ring_color: None,
     };
     let r = put_profile(&app, &alex, &req).await;
     assert_eq!(r.status(), 200);
@@ -691,6 +695,109 @@ async fn bad_typing_text_is_refused() {
             .as_deref(),
         Some("yapping")
     );
+}
+
+/// #651: the speaking ring is saved, read back everywhere a user is (the profile, `/me`, Ready's
+/// people, the ProfileUpdated event), kept when a save leaves it out, and reset by the default
+/// keys, which then go out as absent.
+#[tokio::test]
+async fn speaking_ring_is_saved_kept_and_reset() {
+    let app = spawn().await;
+    let (alex_id, alex) = register(&app, "alex").await;
+    let (_, sam) = register(&app, "sam").await;
+    acquaint(&app, &alex, &[&sam]).await;
+    let mut sam_ws = connected(&app, &sam).await;
+
+    let mut req = request();
+    req.ring_style = Some("bars".into());
+    req.ring_color = Some("purple".into());
+    let p: Profile = put_profile(&app, &alex, &req).await.json().await.unwrap();
+    assert_eq!(p.user.ring_style.as_deref(), Some("bars"));
+    assert_eq!(p.user.ring_color.as_deref(), Some("purple"));
+    match profile_event(&mut sam_ws).await {
+        Event::ProfileUpdated { user, .. } => {
+            assert_eq!(user.ring_style.as_deref(), Some("bars"));
+            assert_eq!(user.ring_color.as_deref(), Some("purple"));
+        }
+        _ => unreachable!(),
+    }
+    let me: User = get_json(&app, &alex, "/me").await;
+    assert_eq!(me.ring_style.as_deref(), Some("bars"));
+    assert_eq!(me.ring_color.as_deref(), Some("purple"));
+    let ready = ready_of(&app, &sam).await;
+    let seen = &ready
+        .people
+        .iter()
+        .find(|p| p.user.id == alex_id)
+        .unwrap()
+        .user;
+    assert_eq!(seen.ring_style.as_deref(), Some("bars"));
+    assert_eq!(seen.ring_color.as_deref(), Some("purple"));
+
+    // an older client's save (no fields) keeps them
+    req.ring_style = None;
+    req.ring_color = None;
+    let p: Profile = put_profile(&app, &alex, &req).await.json().await.unwrap();
+    assert_eq!(p.user.ring_style.as_deref(), Some("bars"));
+    assert_eq!(p.user.ring_color.as_deref(), Some("purple"));
+
+    // Classic and green are the default: stored as nothing, and absent on the wire
+    req.ring_style = Some("classic".into());
+    req.ring_color = Some("green".into());
+    let r = put_profile(&app, &alex, &req).await;
+    let body: serde_json::Value = r.json().await.unwrap();
+    assert!(body["user"].get("ring_style").is_none(), "{body}");
+    assert!(body["user"].get("ring_color").is_none(), "{body}");
+    let p = profile_of(&app, &alex, alex_id).await;
+    assert_eq!(p.user.ring_style, None);
+    assert_eq!(p.user.ring_color, None);
+}
+
+/// #651: every key in the server's lists is accepted.
+#[tokio::test]
+async fn each_ring_key_is_accepted() {
+    let app = spawn().await;
+    let (_, alex) = register(&app, "alex").await;
+    for style in pulse_server::profiles::RING_STYLES {
+        let mut req = request();
+        req.ring_style = Some(style.into());
+        assert_eq!(
+            put_profile(&app, &alex, &req).await.status(),
+            200,
+            "{style}"
+        );
+    }
+    for color in pulse_server::profiles::RING_COLORS {
+        let mut req = request();
+        req.ring_color = Some(color.into());
+        assert_eq!(
+            put_profile(&app, &alex, &req).await.status(),
+            200,
+            "{color}"
+        );
+    }
+}
+
+/// #651: a key the server doesn't know is refused, and the refused save changes nothing.
+#[tokio::test]
+async fn an_unknown_ring_key_is_refused() {
+    let app = spawn().await;
+    let (alex_id, alex) = register(&app, "alex").await;
+    let mut req = request();
+    req.ring_style = Some("orbit".into());
+    req.ring_color = Some("gold".into());
+    assert_eq!(put_profile(&app, &alex, &req).await.status(), 200);
+
+    let mut bad = request();
+    bad.ring_style = Some("sparkle".into());
+    refused(&app, &alex, &bad, "Unknown speaking ring.").await;
+    let mut bad = request();
+    bad.ring_color = Some("red".into());
+    refused(&app, &alex, &bad, "Unknown ring colour.").await;
+
+    let p = profile_of(&app, &alex, alex_id).await;
+    assert_eq!(p.user.ring_style.as_deref(), Some("orbit"));
+    assert_eq!(p.user.ring_color.as_deref(), Some("gold"));
 }
 
 #[tokio::test]

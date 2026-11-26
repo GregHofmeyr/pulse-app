@@ -992,7 +992,7 @@ pub async fn restore_session(
         .and_then(|r| r.ok().map(|b| b.clone()));
     crate::startup::mark("restore_end");
     match decided {
-        Some(Boot::Ready(user)) => Ok(Restored::Ready(user)),
+        Some(Boot::Ready(user)) => Ok(Restored::Ready(*user)),
         Some(Boot::LoggedOut) => Ok(Restored::LoggedOut), // forward() already cleared the stored session
         // Turned away (too many devices / attempts) but signed in: leave the session and its
         // gateway running. The UI sees the refusal in `pulse://conn`, shows it, and opens the
@@ -4287,6 +4287,8 @@ mod tests {
             avatar_still: None,
             style: Default::default(),
             typing_text: None,
+            ring_style: None,
+            ring_color: None,
         };
         assert!(j(Restored::Ready(u)).starts_with(r#"{"status":"ready","user":{"#));
     }

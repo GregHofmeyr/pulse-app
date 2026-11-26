@@ -149,7 +149,8 @@ pub enum Boot {
         failing_since: Option<std::time::Instant>,
         grace: Duration,
     },
-    Ready(pulse_protocol::rest::User),
+    /// Boxed: `User` is far bigger than the other verdicts.
+    Ready(Box<pulse_protocol::rest::User>),
     LoggedOut,
     UpdateRequired,
     /// The server turned us away (too many devices / attempts). It's reachable and we stay
@@ -185,7 +186,7 @@ impl Boot {
             return;
         };
         *self = match u {
-            GatewayUpdate::Ready(r) => Boot::Ready(r.me.clone()),
+            GatewayUpdate::Ready(r) => Boot::Ready(Box::new(r.me.clone())),
             GatewayUpdate::Connection(ConnState::LoggedOut) => Boot::LoggedOut,
             GatewayUpdate::Connection(ConnState::UpdateRequired) => Boot::UpdateRequired,
             GatewayUpdate::Connection(
@@ -1146,6 +1147,8 @@ mod tests {
                             avatar_still: None,
                             style: Default::default(),
                             typing_text: None,
+                            ring_style: None,
+                            ring_color: None,
                         },
                         servers: vec![],
                         channels: vec![],
