@@ -5,7 +5,7 @@
   // what's here instead. Its row slides in (app.css .slide-in) with its field tinted the accent, focused, ready for a paste.
   import { onMount, tick } from 'svelte'
   import Icon from './Icon.svelte'
-  import { buildGameName, buildShots } from '../lib/builds'
+  import { BUILD_LIMITS, buildGameName, buildShots } from '../lib/builds'
   import { classifyPaste, classifyText, type BuildPaste, type QuickPrefill } from '../lib/buildPaste'
   import { app } from '../lib/store.svelte'
   import { api, errorText, type StagedFile } from '../lib/tauri'
@@ -170,7 +170,7 @@
       </span>
     {/if}
     <input bind:this={input} class="input quick-input" type="text" aria-label="Quick add a build" placeholder="Paste a link or an image, or type a title, then press Enter"
-      maxlength="2048" bind:value onpaste={onPaste} onkeydown={key} />
+      maxlength={BUILD_LIMITS.linkChars} bind:value onpaste={onPaste} onkeydown={key} />
     <button type="button" class="btn btn-primary" disabled={staging || (!value.trim() && !shot)} onclick={() => void save()}>Save</button>
     <button type="button" class="btn btn-quiet details" onclick={details}>Add details</button>
     <button type="button" class="icon-btn icon-btn-sm" aria-label="Close quick add" onclick={close}><Icon name="x" size={14} /></button>

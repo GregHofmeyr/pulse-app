@@ -1012,5 +1012,5 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.4; }
 .settings-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
 .settings-list-item { display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 6px 10px; border-radius: var(--radius-md); background: var(--bg-2); }
 
-/* A load in progress (components/Loading.svelte) and an empty list: quiet, left-aligned, the same size. */
-.loading, .empty-note { margin: 0; color: var(--text-3); font-size: 13px; }
+/* A load in progress (components/Loading.svelte): quiet, left-aligned. */
+.loading { margin: 0; color: var(--text-3); font-size: 13px; }

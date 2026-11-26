@@ -49,7 +49,6 @@
 
   let raw = $state('')
   let active = $state(0)
-  let input = $state<HTMLInputElement>()
 
   const places = $derived(placesFrom(app.state))
   const ctx = $derived(context())
@@ -256,7 +255,7 @@
     <div class="bar">
       <Icon name="search" size={18} />
       <!-- svelte-ignore a11y_autofocus -->
-      <input bind:this={input} bind:value={raw} class="field" type="text" role="combobox" autofocus autocomplete="off" spellcheck="false"
+      <input bind:value={raw} class="field" type="text" role="combobox" autofocus autocomplete="off" spellcheck="false"
         aria-label="Jump to" aria-autocomplete="list" aria-expanded={flat.length > 0} aria-controls={peeked ? 'qs-list qs-peek' : 'qs-list'}
         aria-activedescendant={flat.length ? optId(active) : undefined}
         placeholder="Jump to a server, channel or person, > for actions, builds: for builds" onkeydown={keys} />

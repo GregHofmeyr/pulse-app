@@ -1,7 +1,7 @@
 // Blocking a person (#474), the pure part: how someone you've blocked shows in the message list, replies, reactions
 // and voice rows.
 import { describe, expect, it } from 'vitest'
-import { blockedCountText, blockedLabel, blockedReplyText, blockOf, isBlocked, isHidden, listRows, shownCount } from './blocks'
+import { blockedCountText, blockedReplyText, blockOf, isBlocked, isHidden, listRows, shownCount } from './blocks'
 import type { Message } from './protocol/Message'
 
 const msg = (id: string, author: string | null, kind: Message['kind'] = 'normal'): Message =>
@@ -40,15 +40,12 @@ describe('blocks', () => {
     expect(listRows({ blocks: [] }, [one])).toEqual([{ kind: 'message', message: one, index: 0 }])
   })
 
-  it('says what a reply to them, a run of theirs and their name read as', () => {
+  it('says what a reply to them and a run of theirs read as', () => {
     expect(blockedReplyText(s, 'SAM')).toBe('Replying to a blocked message')
     expect(blockedReplyText(s, 'KIM')).toBe("Replying to a message you can't see")
     expect(blockedReplyText(s, 'JO')).toBeNull()
     expect(blockedCountText(1)).toBe('1 blocked message')
     expect(blockedCountText(3)).toBe('3 blocked messages')
-    expect(blockedLabel(s, 'SAM')).toBe('Blocked person')
-    expect(blockedLabel(s, 'KIM')).toBe('')
-    expect(blockedLabel(s, 'JO')).toBeNull()
   })
 
   it('a reaction count leaves out the people you hide, and only them (#508)', () => {

@@ -16,6 +16,7 @@ import type { ServerLayout } from './protocol/ServerLayout'
 import type { ClipFacets } from './protocol/ClipFacets'
 import type { BuildFacets } from './protocol/BuildFacets'
 import { buildsOnEvent, withMyBuildView, type BuildFeed } from './builds'
+import { NO_CUSTOM_STATUS } from './customStatus'
 import type { ClipView } from './protocol/ClipView'
 import type { CustomEmoji } from './protocol/CustomEmoji'
 import type { Sound } from './protocol/Sound'
@@ -301,7 +302,7 @@ function readyState(s: AppState, r: Ready): AppState {
     // absent from older servers: online, hidden from nobody
     myStatus: r.status ?? { status: 'online', dnd_until: null },
     // absent from older servers: none
-    myCustomStatus: r.my_custom_status ?? { current: null, until: null, recent: [] },
+    myCustomStatus: r.my_custom_status ?? NO_CUSTOM_STATUS,
     appearOfflineTo: r.appear_offline_to ?? [],
     liveNotify: r.live_notify ?? [],
     // absent from older servers: the usual order

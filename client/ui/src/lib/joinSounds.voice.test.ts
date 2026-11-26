@@ -23,7 +23,7 @@ vi.mock('@tauri-apps/api/event', () => ({
 
 import { app, startListening } from './store.svelte'
 import { emptyState, type AppState } from './state'
-import { startVoiceListening, voice } from './voice.svelte'
+import { startVoiceListening } from './voice.svelte'
 import { reloadMixer, setNotch } from './mixer.svelte'
 import { joinSounds, setJoinSoundMute } from './joinSounds.svelte'
 import { soundboard } from './soundboard.svelte'

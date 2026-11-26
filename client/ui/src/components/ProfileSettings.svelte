@@ -275,7 +275,6 @@
 
   // The custom card theme's two pickers, in a popover by the + tile (#467)
   let themePop = $state(false)
-  let plusTile = $state<HTMLElement>()
   function openCustomTheme() {
     customTheme = true
     themePop = true
@@ -474,7 +473,7 @@
                 <button type="button" role="radio" class="mini-card" aria-label={p.label} data-tip={p.label} aria-checked={themeKey === p.key} tabindex={themeKey === p.key ? 0 : -1}
                   style={Object.entries(cardVars(p.top, p.bottom)).map(([k, v]) => `${k}: ${v}`).join('; ')} onclick={() => setTheme(p.top, p.bottom)}>{@render miniCard()}</button>
               {/each}
-              <button bind:this={plusTile} type="button" role="radio" class="mini-card custom-tile" class:custom={themeKey === null} aria-label="Custom" data-tip="Custom colours" data-menu-toggle
+              <button type="button" role="radio" class="mini-card custom-tile" class:custom={themeKey === null} aria-label="Custom" data-tip="Custom colours" data-menu-toggle
                 aria-checked={themeKey === null} tabindex={themeKey === null ? 0 : -1}
                 style={themeKey === null ? Object.entries(cardVars(draft.themeTop, draft.themeBottom)).map(([k, v]) => `${k}: ${v}`).join('; ') : undefined}
                 onclick={() => (themePop && themeKey === null ? (themePop = false) : openCustomTheme())}>

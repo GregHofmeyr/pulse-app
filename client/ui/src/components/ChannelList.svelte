@@ -12,7 +12,7 @@
   import type { Category } from '../lib/protocol/Category'
   import { app, clock, ui } from '../lib/store.svelte'
   import { isBlocked } from '../lib/blocks'
-  import { resetPersonalOrder, savePersonalOrder } from '../lib/channelOrder.svelte'
+  import { hasPersonalOrder, resetPersonalOrder, savePersonalOrder } from '../lib/channelOrder.svelte'
   import { callRoster, isMember, serverVoiceTip, type Occupant } from '../lib/selectors'
   import { stageShareIn } from '../lib/state'
   import { stageCard } from '../lib/stageShare'
@@ -82,7 +82,7 @@
     return draft && l.live ? applyOrder(l, draft) : l
   })
   /** Your own order is in force (#304): moves change only yours, never the server's layout. */
-  const personal = $derived(!!app.state.channelOrders[serverId] && layout.live)
+  const personal = $derived(hasPersonalOrder(serverId) && layout.live)
   /** Save a move to your own order; a refusal says why (the list goes back). */
   const savePersonal = (next: Order) => savePersonalOrder(serverId, next).catch((e: unknown) => (ui.notice = errorText(e)))
   const resetPersonal = () => void resetPersonalOrder(serverId).catch((e: unknown) => (ui.notice = errorText(e)))

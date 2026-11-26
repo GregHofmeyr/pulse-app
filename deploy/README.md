@@ -245,14 +245,16 @@ town's weather (#451). Change it and `just deploy`; places already looked up kee
 - Releases run one at a time (the workflow's concurrency group). When pushes to `main` land back to back, GitHub keeps
   only the newest waiting run, so a middle commit can end up with no image at all: deploy the newer one.
 - Build inputs are pinned too. When bumping the Rust version, change it in three places together: `rust-toolchain.toml`
-  (CI, the Windows release and local builds) and the `rust:<version>-bookworm@sha256:…` line in `server.Dockerfile`.
+  (CI, the Windows release and local builds), the `rust:<version>-bookworm@sha256:…` line in `server.Dockerfile`, and
+  the version quoted under "Pinned build inputs" in `SECURITY.md`.
   Dependabot opens PRs for each (rust-toolchain, docker); the digest is the multi-arch index digest. The Tauri CLI is
   an exact devDependency of `client/ui` (`@tauri-apps/cli` in its `package.json`, on the `tauri` crate's minor version):
   the Windows release runs that one, so bump the two together. GitHub Actions are
   pinned to commit SHAs with a `# vX.Y.Z` comment, and `ci.yml` checks the LLVM apt key against its published fingerprint.
 - Node and pnpm are pinned to exact versions (`node-version` / `version` of the setup actions) in `ci.yml` and
-  `release-windows.yml`. Dependabot doesn't bump those inputs: to bump, take the newest release of the same major
-  (`https://nodejs.org/dist/index.json`, `npm view pnpm@<major> version`), change it in both workflows, and let CI run.
+  `release-windows.yml`; pnpm's is also the `packageManager` field of `client/ui/package.json`. Dependabot doesn't bump
+  those: to bump, take the newest release of the same major (`https://nodejs.org/dist/index.json`,
+  `npm view pnpm@<major> version`), change it in both workflows (and `packageManager` for pnpm), and let CI run.
 - Bumping LiveKit or Caddy: Dependabot opens a PR for new tags (`.github/dependabot.yml`). To do it by hand,
   take the digest of the multi-arch **index**, not of one platform: `docker manifest inspect <image>:<tag> -v`, or
   `HEAD /v2/<repo>/manifests/<tag>` on the registry with the OCI index and manifest-list `Accept` headers and read

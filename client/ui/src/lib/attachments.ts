@@ -8,7 +8,6 @@ export const MAX_FILES = 10
 export const MAX_BYTES = 50 * 1024 * 1024
 
 export const TOO_MANY = `Up to ${MAX_FILES} files per message.`
-export const TOO_BIG = 'Files can be up to 50 MB.'
 
 /** "820 KB", "1.4 MB", "2.1 GB" (powers of 1024, as the limits are). */
 export function formatSize(bytes: number): string {
