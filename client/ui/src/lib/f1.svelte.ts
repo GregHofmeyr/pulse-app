@@ -9,8 +9,6 @@ import { setF1Predictions } from './state'
 import { app } from './store.svelte'
 import { f1Cmd } from './tauri'
 
-export { f1Prefs, setF1RaceWeekends } from './f1Prefs.svelte'
-
 /** How old a server's status may get before a banner asks again. */
 export const STATUS_TTL_MS = 10 * 60_000
 

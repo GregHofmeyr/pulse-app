@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { flushSync, mount, tick, unmount } from 'svelte'
+import { flushSync, mount, unmount } from 'svelte'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Message } from '../lib/protocol/Message'
 import type { QuoteLine } from '../lib/protocol/QuoteLine'

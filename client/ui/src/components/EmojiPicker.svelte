@@ -32,7 +32,6 @@
   let navigated = $state(false)
   let root: HTMLDivElement | null = null
   let searchEl: HTMLInputElement
-  let scroller: HTMLDivElement
 
   function setTone(t: Tone) {
     tone = t
@@ -242,7 +241,7 @@
         </button>
       {/each}
     </nav>
-    <div class="grid" bind:this={scroller}>
+    <div class="grid">
       {#if results}
         {#if results.length === 0}
           <p class="none">No emoji found</p>

@@ -15,7 +15,7 @@
   import ReactionRow from './ReactionRow.svelte'
   import VoterStack from './VoterStack.svelte'
   import { modal } from '../lib/actions'
-  import { mediaUrl, reactionKey, type Std } from '../lib/emoji'
+  import { reactionKey, type Std } from '../lib/emoji'
   import { isMenuKey, menuPoint, personMenuAt, type PersonMenuAt } from '../lib/participantMenu'
   import { messagePerson } from '../lib/messagePerson'
   import PersonMenu from './PersonMenu.svelte'

@@ -39,11 +39,6 @@ export function buildFeedKey(channelId: string, f: BuildFilter): string {
   return JSON.stringify([channelId, n.game ?? '', n.archived ? 1 : 0, n.q ?? '', ...(n.favourite ? [1] : [])])
 }
 
-/** A channel's feed for a filter, if started. */
-export function buildFeedOf(s: AppState, channelId: string, f: BuildFilter): BuildFeed | undefined {
-  return s.buildFeeds[buildFeedKey(channelId, f)]
-}
-
 /** Whether a build belongs in a feed with this filter, by its game, archived state and your star (a feed with words is
  * fetched again rather than matched here). */
 export function matchesBuildFilter(m: Message, f: BuildFilter): boolean {
