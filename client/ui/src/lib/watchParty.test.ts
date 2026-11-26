@@ -106,6 +106,9 @@ describe('Twitch in the party (#459)', () => {
     expect(partyMediaOf(card('channel:alex'))).toEqual({ source: 'twitch_channel', id: 'alex' })
     expect(partyMediaOf(card('Clip1'))).toEqual({ source: 'twitch_clip', id: 'Clip1' })
     expect(partyMediaOf(card('video:x'))).toBeNull()
+    const yt = (provider_id: string) => ({ provider: 'youtube', provider_id }) as LinkEmbed
+    expect(partyMediaOf(yt('dQw4w9WgXcQ'))).toEqual({ source: 'youtube', id: 'dQw4w9WgXcQ' })
+    expect(partyMediaOf(yt('x'))).toBeNull()
     const o = 'https://pulsechat.co.za'
     expect(partyPlayerSrc(o, { source: 'twitch_video', id: '123' }, 90)).toBe(`${o}/embed/twitch/video%3A123?party=1&start=90`)
     expect(partyPlayerSrc(o, { source: 'twitch_channel', id: 'alex' }, 90)).toBe(`${o}/embed/twitch/channel%3Aalex?party=1`)

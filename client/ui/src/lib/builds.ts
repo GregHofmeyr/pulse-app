@@ -8,8 +8,8 @@ import type { Event } from './protocol/Event'
 import type { Message } from './protocol/Message'
 import { build_limits } from './protocol/limits'
 
-/** The server's `build_limits` (generated into protocol/limits.ts, #415). Characters as the server counts them (code
- *  points). */
+/** The server's `build_limits` (generated into protocol/limits.ts, #415). The server counts code points; inputs capped
+ *  with `maxlength` count UTF-16 units, so the client is only ever stricter. */
 export const BUILD_LIMITS = {
   titleChars: build_limits.TITLE_CHARS,
   notesChars: build_limits.NOTES_CHARS,
