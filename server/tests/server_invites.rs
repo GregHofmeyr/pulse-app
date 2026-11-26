@@ -636,20 +636,6 @@ async fn a_ban_removes_them_revokes_their_invite_and_refuses_accepts() {
 }
 
 #[tokio::test]
-async fn the_open_join_lets_nobody_in_banned_or_not() {
-    let w = world().await;
-    let ban = format!("/servers/{}/bans/{}", w.server, w.sam.0);
-    assert_eq!(put(&w.app, &w.alex.1, &ban).await.status(), 204);
-    let join = format!("/servers/{}/join", w.server);
-    for t in [&w.sam.1, &w.kim.1] {
-        let r = post_json(&w.app, t, &join, json!({})).await;
-        assert_eq!(r.status(), 403, "servers are invite-only (#80)");
-    }
-    assert!(!is_member(&w.app, w.server, w.sam.0).await);
-    assert!(!is_member(&w.app, w.server, w.kim.0).await);
-}
-
-#[tokio::test]
 async fn a_preview_shows_counts_and_only_faces_the_viewer_knows() {
     let w = world().await;
     // kim shares a DM with sam; jo knows nobody

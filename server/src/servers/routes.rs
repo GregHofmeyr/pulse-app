@@ -32,7 +32,6 @@ pub fn router() -> Router<AppState> {
             axum::routing::delete(super::deleted::delete),
         )
         .route("/servers/{id}/restore", post(super::deleted::restore))
-        .route("/servers/{id}/join", post(join))
         .route(
             "/servers/{id}/channels",
             get(list_channels).post(create_channel),
@@ -394,15 +393,6 @@ async fn list_servers(
             .filter(|x| mine.contains(&x.id))
             .collect(),
     ))
-}
-
-/// What the old open Join says now (#80): servers are invite-only. Clients from before it show this text.
-pub const INVITE_ONLY: &str = "Servers are invite-only now. Ask someone for an invite.";
-
-/// `POST /servers/{id}/join`: gone (#80). Servers are invite-only (`POST /invites/{code}/accept`); an older client's
-/// Join gets [`INVITE_ONLY`] for any server, there or not, so it learns nothing.
-async fn join(_: AuthUser, Path(_): Path<ServerId>) -> AppError {
-    AppError::ForbiddenMsg(INVITE_ONLY.into())
 }
 
 /// What [`add_member_in`] did, for [`announce_joined`] once the transaction commits.

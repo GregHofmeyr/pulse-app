@@ -543,8 +543,6 @@ const WRITES: &[&str] = &[
     "POST /servers/{id}/games",
     "PUT /servers/{id}/icon",
     "POST /servers/{id}/invites",
-    // the old open Join: refuses everyone with the same words (#80)
-    "POST /servers/{id}/join",
     "DELETE /servers/{id}/join-sound",
     "PUT /servers/{id}/join-sound",
     "PUT /servers/{id}/layout",

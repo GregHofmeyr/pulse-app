@@ -48,8 +48,6 @@ pub fn binary(db_url: &str, bind: std::net::SocketAddr) -> Command {
         // Nothing listens on port 1: LiveKit is "down" (ignored until S4 reads it).
         .env("PULSE_LIVEKIT_API_URL", "http://127.0.0.1:1")
         .env("RUST_LOG", "warn")
-        // the tests' sockets send no app version: the straggler rescue would turn them away
-        .env("PULSE_UPDATE_RESCUE", "off")
         // A developer's own key must not leak into a test; tests that want one pass it.
         .env_remove("PULSE_TOTP_KEY")
         .env_remove("PULSE_CLIPS_S3_ENDPOINT")

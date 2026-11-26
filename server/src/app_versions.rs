@@ -6,7 +6,7 @@ use pulse_protocol::ids::UserId;
 use sqlx::SqlitePool;
 
 use crate::db::now;
-use crate::updates::{PLATFORM_HEADER, VERSION_HEADER};
+use crate::updates::VERSION_HEADER;
 
 /// The app's own version from its `X-Pulse-Version` header: up to 32 of `0-9 A-Z a-z . + -`, `None` when absent
 /// or anything else (it's stored and printed, so nothing odd gets in).
@@ -17,60 +17,6 @@ pub fn header_version(headers: &HeaderMap) -> Option<String> {
         && v.bytes()
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'+' | b'-'));
     ok.then(|| v.to_string())
-}
-
-/// The app's platform from its `X-Pulse-Platform` header (0.2.18 on), lower case: up to 16 of `a-z 0-9 _ -`,
-/// `None` when absent or anything else.
-pub fn header_platform(headers: &HeaderMap) -> Option<String> {
-    let v = headers
-        .get(PLATFORM_HEADER)?
-        .to_str()
-        .ok()?
-        .trim()
-        .to_ascii_lowercase();
-    let ok = !v.is_empty()
-        && v.len() <= 16
-        && v.bytes()
-            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'));
-    ok.then_some(v)
-}
-
-/// The straggler rescue: whether the gateway closes this connect with 4005 (update required) so the app reaches its
-/// forced update screen. Only apps that say no version (every app before 0.2.17), and never one that says it isn't
-/// Windows (no updater there). Apps before 0.2.18 say no platform, so a Linux build without the version header is
-/// turned away too until it's rebuilt. The gateway also checks a Windows update is published
-/// ([`windows_update_published`]) before it turns anyone away.
-///
-/// Superseded since #634: [`crate::gateway::socket::MIN_CLIENT_VERSION`] 5 turns away every app before 0.2.20 (all of
-/// them speak protocol 4 or older), whatever its headers, platform or the manifest. Kept until it goes with the
-/// protocol-4 compat code.
-pub fn needs_rescue(enabled: bool, version: Option<&str>, platform: Option<&str>) -> bool {
-    enabled && version.is_none() && platform.is_none_or(|p| p == "windows")
-}
-
-/// Whether `latest.json` publishes a Windows update the old updater can take: a version and a `windows-x86_64` entry
-/// with an installer URL and a signature. The rescue only turns an app away to update when there is one: without it
-/// the forced update screen would have nothing to install and the app would be locked out.
-pub fn manifest_has_windows_update(bytes: &[u8]) -> bool {
-    let Ok(v) = serde_json::from_slice::<serde_json::Value>(bytes) else {
-        return false;
-    };
-    let text = |x: Option<&serde_json::Value>| {
-        x.and_then(|x| x.as_str())
-            .is_some_and(|s| !s.trim().is_empty())
-    };
-    let win = v.get("platforms").and_then(|p| p.get("windows-x86_64"));
-    text(v.get("version"))
-        && text(win.and_then(|w| w.get("url")))
-        && text(win.and_then(|w| w.get("signature")))
-}
-
-/// [`manifest_has_windows_update`] for the manifest in `updates_dir` (none, or unreadable: no).
-pub async fn windows_update_published(updates_dir: &std::path::Path) -> bool {
-    match tokio::fs::read(updates_dir.join("latest.json")).await {
-        Ok(bytes) => manifest_has_windows_update(&bytes),
-        Err(_) => false,
-    }
 }
 
 /// `X.Y.Z` as numbers; anything after a `-` or `+` is ignored. `None` when it isn't three numbers.
@@ -277,50 +223,6 @@ mod tests {
         for bad in ["", "0.2 17", "0.2.17;drop", &"9".repeat(33)] {
             h.insert(VERSION_HEADER, bad.parse().unwrap());
             assert_eq!(header_version(&h), None, "{bad}");
-        }
-    }
-
-    #[test]
-    fn header_platform_takes_a_plain_name() {
-        let mut h = HeaderMap::new();
-        assert_eq!(header_platform(&h), None);
-        h.insert(PLATFORM_HEADER, " Windows ".parse().unwrap());
-        assert_eq!(header_platform(&h).as_deref(), Some("windows"));
-        for bad in ["", "lin ux", "linux;x", &"a".repeat(17)] {
-            h.insert(PLATFORM_HEADER, bad.parse().unwrap());
-            assert_eq!(header_platform(&h), None, "{bad}");
-        }
-    }
-
-    #[test]
-    fn rescue_only_for_unversioned_apps_that_can_update() {
-        assert!(needs_rescue(true, None, None));
-        assert!(needs_rescue(true, None, Some("windows")));
-        assert!(!needs_rescue(true, None, Some("linux")));
-        assert!(!needs_rescue(true, None, Some("macos")));
-        assert!(!needs_rescue(true, Some("0.2.17"), None));
-        assert!(!needs_rescue(true, Some("0.2.18"), Some("windows")));
-        assert!(!needs_rescue(false, None, None));
-    }
-
-    #[test]
-    fn only_a_windows_manifest_with_an_installer_counts_as_published() {
-        let ok = br#"{"version":"0.2.19","platforms":{"windows-x86_64":{"url":"https://example.invalid/updates/Pulse_0.2.19_x64-setup.exe","signature":"SIG"}}}"#;
-        assert!(manifest_has_windows_update(ok));
-        for bad in [
-            &br#"{"version":"0.2.19","platforms":{}}"#[..],
-            br#"{"platforms":{"windows-x86_64":{"url":"u","signature":"s"}}}"#,
-            br#"{"version":"0.2.19","platforms":{"windows-x86_64":{"url":"u"}}}"#,
-            br#"{"version":"0.2.19","platforms":{"windows-x86_64":{"url":"","signature":"s"}}}"#,
-            br#"{"version":"0.2.19","platforms":{"linux-x86_64":{"url":"u","signature":"s"}}}"#,
-            b"{nope",
-            b"",
-        ] {
-            assert!(
-                !manifest_has_windows_update(bad),
-                "{}",
-                String::from_utf8_lossy(bad)
-            );
         }
     }
 

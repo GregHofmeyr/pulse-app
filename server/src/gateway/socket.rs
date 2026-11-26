@@ -49,15 +49,9 @@ pub async fn handler(
     }
     // the app's own version (#534), sent beside Hello by apps from 0.2.17; `None` from older ones
     let app_version = crate::app_versions::header_version(&headers);
-    // an app from before 0.2.17 (no version) is told to update once it signs in: the straggler rescue
-    let rescue = crate::app_versions::needs_rescue(
-        s.cfg.update_rescue,
-        app_version.as_deref(),
-        crate::app_versions::header_platform(&headers).as_deref(),
-    );
     ws.max_message_size(MAX_CLIENT_FRAME)
         .max_frame_size(MAX_CLIENT_FRAME)
-        .on_upgrade(move |socket| run(socket, s, ip_key, app_version, rescue))
+        .on_upgrade(move |socket| run(socket, s, ip_key, app_version))
 }
 
 async fn close(mut socket: WebSocket, code: u16, reason: &'static str) {
@@ -358,13 +352,7 @@ fn only_mine<T>(
         .collect()
 }
 
-async fn run(
-    mut socket: WebSocket,
-    s: AppState,
-    ip_key: String,
-    app_version: Option<String>,
-    rescue: bool,
-) {
+async fn run(mut socket: WebSocket, s: AppState, ip_key: String, app_version: Option<String>) {
     let (me, token_hash, client_version) = match authenticate(&mut socket, &s).await {
         Auth::Ok(u, h, v) => {
             s.limits.gateway_ip.refund(&ip_key);
@@ -386,17 +374,6 @@ async fn run(
             return close(socket, 1011, "internal error").await;
         }
     };
-    // Only with a Windows update published: with nothing to install, the forced update screen would lock it out.
-    // Superseded by MIN_CLIENT_VERSION 5 (#634): every app before 0.2.17 speaks protocol 4 or older and is turned away
-    // above. This block can go with the protocol-4 compat code (`builds::compat`) in a later PR.
-    if rescue && crate::app_versions::windows_update_published(&s.cfg.updates_dir).await {
-        // After the session check, so a signed-out app gets 4001 and the login screen first; signed in, its forced
-        // update screen asks for the manifest with this session. It stops reconnecting on 4005.
-        tracing::info!(user = %me, "gateway: an app from before 0.2.17; asking it to update");
-        let db = s.db.clone();
-        tokio::spawn(async move { crate::app_versions::record_connect(&db, me, None).await });
-        return close(socket, CLOSE_UPDATE_REQUIRED, "update required").await;
-    }
     // Register before building Ready so no event between the snapshot and the stream is lost.
     // Over the per-user cap: refuse this one, never kick an existing connection.
     let Some(reg) = s.hub.try_register_as(

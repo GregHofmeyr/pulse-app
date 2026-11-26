@@ -518,7 +518,7 @@ from the backups in R2 and the password manager. Have NordPass open: the backup 
    | `R2_ACCOUNT_ID`, `R2_BUCKET`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` | NordPass (or a new backups token, section 8 step 2) |
    | `BACKUP_PING_URL` | NordPass / healthchecks.io (optional) |
    | `CLIPS_R2_BUCKET`, `CLIPS_R2_ACCESS_KEY_ID`, `CLIPS_R2_SECRET_ACCESS_KEY` | NordPass (or a new clips token, section 9 step 2) |
-   | `PULSE_LAUNCH_DATE`, `PULSE_INVITE_DECOY`, `PULSE_UPDATE_RESCUE`, `PULSE_PLANS_COUNTRY` | NordPass copy of the old `.env` (empty is the default) |
+   | `PULSE_LAUNCH_DATE`, `PULSE_INVITE_DECOY`, `PULSE_PLANS_COUNTRY` | NordPass copy of the old `.env` (empty is the default) |
    | `GIPHY_API_KEY`, `PULSE_STEAM_API_KEY`, `PULSE_DEADLOCK_API_KEY`, `PULSE_API_SPORTS_KEY` | NordPass (optional; or new keys from each site, section 6) |
 
    The R2 values have to be in before step 5: the restore fetches the backups through the server.

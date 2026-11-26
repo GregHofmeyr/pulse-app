@@ -301,7 +301,7 @@ async fn showcase_order_persists_and_defaults_to_rarest() {
 }
 
 #[tokio::test]
-async fn seen_marks_all() {
+async fn seen_needs_the_list_the_case_showed() {
     let app = spawn().await;
     let (alex_id, alex) = register(&app, "alex").await;
     let (_, sam) = register(&app, "sam").await;
@@ -313,7 +313,7 @@ async fn seen_marks_all() {
     let (_, p) = profile(&app, &sam, alex_id).await;
     assert!(p.badges.iter().all(|b| b.seen), "sam sees alex's [NEW]");
 
-    // An older client posts no body: everything is seen, as before (#129).
+    // No body (only clients from before #129 sent none): refused, and nothing is seen.
     let r = app
         .http
         .post(app.url("/me/badges/seen"))
@@ -321,10 +321,10 @@ async fn seen_marks_all() {
         .send()
         .await
         .unwrap();
-    assert_eq!(r.status(), 204);
+    assert!(r.status().is_client_error(), "{}", r.status());
     let (_, p) = profile(&app, &alex, alex_id).await;
     assert_eq!(p.badges.len(), 2);
-    assert!(p.badges.iter().all(|b| b.seen));
+    assert!(p.badges.iter().all(|b| !b.seen));
 }
 
 /// #129: the case says which badges (at which tier) it showed; one earned after it loaded, or a

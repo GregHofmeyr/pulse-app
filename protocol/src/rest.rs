@@ -271,7 +271,6 @@ pub struct SeenBadge {
 
 /// `POST /me/badges/seen`: the badges your trophy case showed [NEW]. Only those, at those tiers,
 /// stop being [NEW]: one earned (or a tier reached) after the case loaded stays [NEW] (#129).
-/// No body at all (older clients) marks everything seen.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct MarkBadgesSeenRequest {
     pub badges: Vec<SeenBadge>,
