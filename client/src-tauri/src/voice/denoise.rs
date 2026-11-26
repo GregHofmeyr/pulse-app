@@ -13,6 +13,10 @@ const I16_SCALE: f32 = 32767.0;
 #[serde(rename_all = "snake_case")]
 pub enum NsLevel {
     Off,
+    /// DeepFilterNet's bundled model (Strong's) held to a gentle cut, [`DF_LIGHT_ATTEN_LIM_DB`] (#601): for mics that
+    /// already clean up their own sound (SteelSeries Sonar, NVIDIA Broadcast), where Strong's 24 dB carves the voice.
+    /// Strong's CPU; steps down to Standard like Strong does.
+    Light,
     Standard,
     #[default]
     Strong,
@@ -22,9 +26,9 @@ pub enum NsLevel {
 }
 
 impl NsLevel {
-    /// Runs DeepFilterNet (Strong or Strong (low delay)).
+    /// Runs DeepFilterNet (Light, Strong or Strong (low delay)).
     pub fn is_deep_filter(self) -> bool {
-        matches!(self, Self::Strong | Self::StrongLowDelay)
+        matches!(self, Self::Light | Self::Strong | Self::StrongLowDelay)
     }
 }
 
@@ -137,6 +141,10 @@ pub struct DeepFilter {
 /// gaps between words (#586).
 pub const DF_ATTEN_LIM_DB: f32 = 24.0;
 
+/// Light's limit (#601): about a quarter of the amplitude cut, enough to take the hiss and hum a virtual mic leaves
+/// without touching the voice it has already cleaned.
+pub const DF_LIGHT_ATTEN_LIM_DB: f32 = 12.0;
+
 /// DeepFilterNet's runtime settings (#586). The model's local-SNR estimate lives in [-15, 35] dB (`lsnr_min` /
 /// `lsnr_max` in both models' config.ini), and libDF picks a stage per 10 ms frame from it with no hysteresis:
 /// below `min_db_thresh` a zero mask, above `max_db_erb_thresh` the raw input, above `max_db_df_thresh` the ERB mask
@@ -146,9 +154,9 @@ pub const DF_ATTEN_LIM_DB: f32 = 24.0;
 /// noise-only frames get the model's own mask, bounded by the attenuation limit, rather than a hard zero. Costs the
 /// two decoders on every frame (they were skipped on clean frames before). The post-filter stays off: it deepens
 /// attenuation in low-SNR bins, the opposite of what an already-cleaned mic needs.
-fn runtime_params() -> df::tract::RuntimeParams {
+fn runtime_params(atten_lim_db: f32) -> df::tract::RuntimeParams {
     df::tract::RuntimeParams::default_with_ch(1)
-        .with_atten_lim(DF_ATTEN_LIM_DB)
+        .with_atten_lim(atten_lim_db)
         .with_thresholds(-15.0, 35.0, 35.0)
         .with_post_filter(0.0)
 }
@@ -189,18 +197,28 @@ impl Dither {
 impl DeepFilter {
     /// Strong: loads the bundled model (a few hundred ms; call off the audio path).
     pub fn new() -> anyhow::Result<Self> {
-        Self::load(|| Ok(df::tract::DfParams::default()))
+        Self::load(DF_ATTEN_LIM_DB, || Ok(df::tract::DfParams::default()))
+    }
+
+    /// Light (#601): the bundled model, limited to [`DF_LIGHT_ATTEN_LIM_DB`].
+    pub fn light() -> anyhow::Result<Self> {
+        Self::load(DF_LIGHT_ATTEN_LIM_DB, || Ok(df::tract::DfParams::default()))
     }
 
     /// Strong (low delay): the downloaded model's bytes (a `.tar.gz` as libDF ships it; `crate::models` has already
     /// checked its hash). Slower to load than Strong; call off the audio path.
     pub fn low_delay(model: &[u8]) -> anyhow::Result<Self> {
-        Self::load(|| df::tract::DfParams::from_bytes(model).context("reading the model"))
+        Self::load(DF_ATTEN_LIM_DB, || {
+            df::tract::DfParams::from_bytes(model).context("reading the model")
+        })
     }
 
-    fn load(params: impl FnOnce() -> anyhow::Result<df::tract::DfParams>) -> anyhow::Result<Self> {
+    fn load(
+        atten_lim_db: f32,
+        params: impl FnOnce() -> anyhow::Result<df::tract::DfParams>,
+    ) -> anyhow::Result<Self> {
         let df = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            df::tract::DfTract::new(params()?, &runtime_params())
+            df::tract::DfTract::new(params()?, &runtime_params(atten_lim_db))
         }))
         .map_err(|_| anyhow!("DeepFilterNet panicked while loading its model"))?
         .context("loading DeepFilterNet")?;
@@ -252,11 +270,13 @@ impl Denoiser for DeepFilter {
     }
 }
 
-/// An engine that's instant to build: Strong (and low delay) start on RNNoise until the model has loaded.
+/// An engine that's instant to build: Light, Strong (and low delay) start on RNNoise until the model has loaded.
 pub fn make_fast(level: NsLevel) -> Box<dyn Denoiser> {
     match level {
         NsLevel::Off => Box::new(Passthrough),
-        NsLevel::Standard | NsLevel::Strong | NsLevel::StrongLowDelay => Box::new(Rnnoise::new()),
+        NsLevel::Light | NsLevel::Standard | NsLevel::Strong | NsLevel::StrongLowDelay => {
+            Box::new(Rnnoise::new())
+        }
     }
 }
 
@@ -345,6 +365,7 @@ mod tests {
     fn levels_keep_their_saved_names() {
         for (level, name) in [
             (NsLevel::Off, "off"),
+            (NsLevel::Light, "light"),
             (NsLevel::Standard, "standard"),
             (NsLevel::Strong, "strong"),
             (NsLevel::StrongLowDelay, "strong_low_delay"),
@@ -359,6 +380,7 @@ mod tests {
             "the default stays Strong"
         );
         assert!(NsLevel::StrongLowDelay.is_deep_filter() && NsLevel::Strong.is_deep_filter());
+        assert!(NsLevel::Light.is_deep_filter());
         assert!(!NsLevel::Standard.is_deep_filter() && !NsLevel::Off.is_deep_filter());
     }
 
@@ -525,10 +547,48 @@ mod tests {
         }
     }
 
+    /// Light (#601) runs with its own, gentler limit: steady noise is still cut, but by no more than
+    /// DF_LIGHT_ATTEN_LIM_DB, well short of what Strong takes from the same noise.
+    #[test]
+    fn light_cut_is_bounded_by_its_own_attenuation_limit() {
+        let input = noise(48_000 * 3, 0.05);
+        let (light, _) = run(&mut DeepFilter::light().unwrap(), &input);
+        let (strong, _) = run(&mut DeepFilter::new().unwrap(), &input);
+        let light_cut = level_db(&input) - level_db(&light);
+        let strong_cut = level_db(&input) - level_db(&strong);
+        assert!(
+            (6.0..=DF_LIGHT_ATTEN_LIM_DB + 1.0).contains(&light_cut),
+            "light cut {light_cut:.1} dB"
+        );
+        assert!(
+            strong_cut >= light_cut + 6.0,
+            "strong {strong_cut:.1} dB vs light {light_cut:.1} dB"
+        );
+    }
+
+    /// Light keeps the voice and Strong's delay (same model, so the gate's pre-roll is the same).
+    #[test]
+    fn light_keeps_speech_and_strongs_delay() {
+        let input = speech();
+        let mut d = DeepFilter::light().unwrap();
+        let (out, _) = run(&mut d, &input);
+        let change = level_db(&out) - level_db(&input[..out.len()]);
+        assert!(
+            change.abs() <= 3.0,
+            "light: speech level changed {change:.1} dB"
+        );
+        assert_eq!(d.gate_lead_blocks(), 2);
+        assert_eq!(
+            lag_blocks(&mut DeepFilter::light().unwrap()),
+            3,
+            "Light: 30 ms"
+        );
+    }
+
     #[test]
     fn make_fast_never_loads_the_big_model() {
         assert!(make_fast(NsLevel::Off).process(&mut [0.0; FRAME]).is_none());
-        for level in [NsLevel::Strong, NsLevel::StrongLowDelay] {
+        for level in [NsLevel::Light, NsLevel::Strong, NsLevel::StrongLowDelay] {
             assert!(make_fast(level).process(&mut [0.0; FRAME]).is_some());
         }
     }
