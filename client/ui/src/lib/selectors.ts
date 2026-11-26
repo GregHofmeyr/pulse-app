@@ -4,6 +4,7 @@ import type { StreamInfo } from './protocol/StreamInfo'
 import type { User } from './protocol/User'
 import type { Member } from './protocol/Member'
 import type { AppState } from './state'
+import type { Typer } from './typingLine'
 import type { Message } from './protocol/Message'
 import type { Mentionable } from './mentions'
 import { isHidden } from './blocks'
@@ -115,9 +116,15 @@ export function callRoster(s: AppState, serverId: string | null, channelId: stri
 }
 
 export function typingNames(s: AppState, serverId: string | null, channelId: string, now: number): string[] {
+  return typingPeople(s, serverId, channelId, now).map((t) => t.name)
+}
+
+/** Who is typing in `channelId` now, in the order they started, each with their name here and their typing text (#652)
+ *  from the user already held (a member, a person, a cached profile): nothing is fetched for it. */
+export function typingPeople(s: AppState, serverId: string | null, channelId: string, now: number): Typer[] {
   return Object.entries(s.typing[channelId] ?? {})
     .filter(([user, until]) => until > now && user !== s.me?.id && !isHidden(s, user))
-    .map(([user]) => displayName(s, serverId, user))
+    .map(([id]) => ({ id, name: displayName(s, serverId, id), custom: userOf(s, id)?.typing_text?.trim() || null }))
 }
 
 /** `prev` when `next` has the same items in the same order, else `next`: keeps a derived list's

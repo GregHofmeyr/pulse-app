@@ -32,7 +32,9 @@ describe('Zalgo names are clipped to their own line (#209)', () => {
   // Names written as plain text (not through Name.svelte) carry the utility.
   const plain: [string, RegExp][] = [
     ['components/MemberList.svelte', /<small class="name-clip">\{base\}<\/small>/],
-    ['components/TextChannel.svelte', /<strong class="name-clip">\{typers\.join/],
+    ['components/TypingIndicator.svelte', /<strong class="name-clip">\{line\.names\}<\/strong>/],
+    ['components/ProfileSettings.svelte', /<span class="typing-who name-clip">\{typingName\}<\/span>/],
+    ['components/ProfileSettings.svelte', /<strong class="name-clip">\{typingName\}<\/strong> is/],
     ['components/Composer.svelte', /Replying to <strong class="name-clip">\{replyingTo\}<\/strong>/],
     ['components/CallRingPopover.svelte', /<strong class="name-clip">\{caller\}<\/strong>/],
     ['components/CallRingPopover.svelte', /<span class="name-clip">\{caller\}<\/span> is calling/],

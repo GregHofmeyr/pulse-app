@@ -85,6 +85,9 @@ export type AppState = {
   messages: Record<string, Message[]> // channelId -> oldest..newest
   pending: Record<string, Pending[]> // channelId -> unsent
   typing: Record<string, Record<string, number>> // channelId -> userId -> expiresAt (ms)
+  /** channelId -> userId -> when their message last landed (ms), held for TYPING_STOP_GUARD_MS (#652): a Typing of theirs
+   *  arriving within that is one sent before the message that overtook it, and brings no ghost indicator back. */
+  typingStops: Record<string, Record<string, number>>
   /** The channel whose messages view is open (the shell's active channel, `setShownChannel`), if known. Live messages for
    *  any other channel are kept to what leaving it keeps (`trimHistory`), so a channel never opened in a session that
    *  runs for days doesn't hold every message ever posted there. Absent (unknown): nothing is trimmed. */
@@ -225,9 +228,12 @@ export type History = {
 export const MISSED_CAP = 200
 
 export const TYPING_TTL_MS = 6000
+/** How long after someone's message a Typing from them is taken as stale (sent before it, delivered after). Their client
+ *  signals at most every 3 s, so a real new start is at worst shown one signal late. */
+export const TYPING_STOP_GUARD_MS = 1000
 
 export function emptyState(): AppState {
-  return { me: null, servers: [], channels: {}, members: {}, dmMembers: {}, voice: {}, messages: {}, pending: {}, typing: {}, history: {}, conn: 'connecting', people: {}, myStatus: { status: 'online', dnd_until: null }, myCustomStatus: { current: null, until: null, recent: [] }, appearOfflineTo: [], liveNotify: [], serverOrder: [], dmLayout: { categories: [], placements: [] }, personDnd: [], activityHidden: [], myServerStatuses: [], blocks: [], invitesRev: {}, bansRev: {}, inboxFilters: [], channelOrders: {}, planReminders: true, calls: {}, profiles: {}, roleColors: {}, privateNicks: {}, reads: {}, mutes: [], notifyLevels: [], hidden: {}, latest: {}, streams: {}, customEmoji: {}, frequentEmoji: [], sounds: {}, soundFavourites: [], frequentSounds: [], serverVoice: {}, threads: {}, threadStart: {}, threadSeen: {}, goneReplies: {}, openRoot: null, qoty: {}, speakerLinks: {}, games: {}, clipViews: {}, clipFeeds: {}, clipFacets: {}, buildFeeds: {}, buildFacets: {}, clipJobs: {}, layouts: {}, pins: {}, stageShares: {}, watchParties: {} }
+  return { me: null, servers: [], channels: {}, members: {}, dmMembers: {}, voice: {}, messages: {}, pending: {}, typing: {}, typingStops: {}, history: {}, conn: 'connecting', people: {}, myStatus: { status: 'online', dnd_until: null }, myCustomStatus: { current: null, until: null, recent: [] }, appearOfflineTo: [], liveNotify: [], serverOrder: [], dmLayout: { categories: [], placements: [] }, personDnd: [], activityHidden: [], myServerStatuses: [], blocks: [], invitesRev: {}, bansRev: {}, inboxFilters: [], channelOrders: {}, planReminders: true, calls: {}, profiles: {}, roleColors: {}, privateNicks: {}, reads: {}, mutes: [], notifyLevels: [], hidden: {}, latest: {}, streams: {}, customEmoji: {}, frequentEmoji: [], sounds: {}, soundFavourites: [], frequentSounds: [], serverVoice: {}, threads: {}, threadStart: {}, threadSeen: {}, goneReplies: {}, openRoot: null, qoty: {}, speakerLinks: {}, games: {}, clipViews: {}, clipFeeds: {}, clipFacets: {}, buildFeeds: {}, buildFacets: {}, clipJobs: {}, layouts: {}, pins: {}, stageShares: {}, watchParties: {} }
 }
 
 /** `all` with `m` in force, or without that person's entry once neither is (#140). */
@@ -288,6 +294,7 @@ function readyState(s: AppState, r: Ready): AppState {
     messages,
     pending,
     typing: {},
+    typingStops: {},
     // Anything may have happened while we were away: refetch the latest page when a channel is viewed.
     history,
     conn: 'connected',
@@ -803,7 +810,7 @@ export function maxIdOf(...ids: (string | null | undefined)[]): string {
 }
 
 /** A reply was created. Seen before (the outbox and the gateway both deliver it) it only refreshes the copy. */
-function replyCreated(s: AppState, m: Message, nonce: string | null): AppState {
+function replyCreated(s: AppState, m: Message, nonce: string | null, now: number): AppState {
   const root = m.thread_root_id!
   const c = m.channel_id
   // A thread that isn't held can't say whether it has this reply. Replies arrive newest last, except
@@ -827,7 +834,7 @@ function replyCreated(s: AppState, m: Message, nonce: string | null): AppState {
     ...s,
     threads: keep ? { ...s.threads, [root]: upsertMessage(s.threads[root], m) } : s.threads,
     pending: nonce ? { ...s.pending, [c]: (s.pending[c] ?? []).filter((p) => p.nonce !== nonce) } : s.pending,
-    typing: withoutTyping(s, c, m.author_id),
+    ...withoutTyping(s, c, m.author_id, now),
     // Replies are never unread; only a mention of me counts (until the thread is opened).
     reads: mentioned ? { ...s.reads, [c]: { ...read, mentions: read.mentions + 1 } } : s.reads,
   }
@@ -906,10 +913,19 @@ function dropFromFeeds(feeds: AppState['clipFeeds'], channel: string, id: string
   return next
 }
 
-function withoutTyping(s: AppState, channel: string, user: string | null): AppState['typing'] {
-  if (!user || !s.typing[channel]?.[user]) return s.typing
-  const { [user]: _gone, ...rest } = s.typing[channel]
-  return { ...s.typing, [channel]: rest }
+/** `user`'s message landed in `channel` at `now`: their indicator goes, and a Typing of theirs that arrives in the next
+ *  TYPING_STOP_GUARD_MS is ignored (#652). Stops older than that are dropped as one is added, so the memory stays small.
+ *  Not for my own messages: my typing is never shown. */
+function withoutTyping(s: AppState, channel: string, user: string | null, now: number): Pick<AppState, 'typing' | 'typingStops'> {
+  if (!user || user === s.me?.id) return { typing: s.typing, typingStops: s.typingStops }
+  const held = s.typing[channel]
+  let typing = s.typing
+  if (held?.[user]) {
+    const { [user]: _gone, ...rest } = held
+    typing = { ...s.typing, [channel]: rest }
+  }
+  const recent = Object.fromEntries(Object.entries(s.typingStops[channel] ?? {}).filter(([u, at]) => u !== user && now - at < TYPING_STOP_GUARD_MS))
+  return { typing, typingStops: { ...s.typingStops, [channel]: { ...recent, [user]: now } } }
 }
 
 /** Cache an opened profile. */
@@ -1027,6 +1043,7 @@ function dropChannel(s: AppState, c: string): AppState {
     hidden: drop(s.hidden),
     pending: drop(s.pending),
     typing: drop(s.typing),
+    typingStops: drop(s.typingStops),
     history: drop(s.history),
     clipViews: drop(s.clipViews),
     clipFacets: drop(s.clipFacets),
@@ -1049,7 +1066,7 @@ function membersWithoutJoinSound(members: AppState['members'], server: string, s
 export function applyEvent(s: AppState, e: Event, now: number): AppState {
   switch (e.t) {
     case 'MessageCreated': {
-      if (e.d.message.thread_root_id) return replyCreated(s, e.d.message, e.d.nonce)
+      if (e.d.message.thread_root_id) return replyCreated(s, e.d.message, e.d.nonce, now)
       const { message: m, nonce } = e.d
       const c = m.channel_id
       const feeds = m.clip ? clipCreated(s, m) : m.build ? buildsOnEvent(s, e) : s
@@ -1072,7 +1089,7 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
         messages: m.clip || m.build || detached(s, c) ? s.messages : { ...s.messages, [c]: upsertMessage(s.messages[c], withHeldPoll(withMyQuoteState(m, undefined, s.me?.id), heldCopy(s.messages[c], m.id))) },
         history: m.clip || m.build ? s.history : detached(s, c) ? { ...s.history, [c]: withMissed(s.history[c], m.id) } : s.history,
         pending: nonce ? { ...s.pending, [c]: (s.pending[c] ?? []).filter((p) => p.nonce !== nonce) } : s.pending,
-        typing: withoutTyping(s, c, m.author_id),
+        ...withoutTyping(s, c, m.author_id, now),
         latest: s.channels[c]?.server_id === null ? { ...s.latest, [c]: m } : s.latest,
         hidden,
         reads: counts
@@ -1290,6 +1307,9 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
     }
     case 'Typing': {
       const { channel_id: c, user_id: u } = e.d
+      // sent before their message, delivered after it: no ghost indicator for a message already in (#652)
+      const stopped = s.typingStops[c]?.[u]
+      if (stopped !== undefined && now - stopped < TYPING_STOP_GUARD_MS) return s
       // Indicators that ran out in this chat go now (nothing else removes one whose author never sent).
       const held = s.typing[c] ?? {}
       let live = held
