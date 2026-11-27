@@ -59,7 +59,7 @@ pub fn new_code() -> String {
     // ThreadRng is !Send: keep it out of the async state machine.
     let mut rng = rand::rng();
     (0..CODE_LEN)
-        .map(|_| ALPHABET[rand::Rng::random_range(&mut rng, 0..ALPHABET.len())] as char)
+        .map(|_| ALPHABET[rand::RngExt::random_range(&mut rng, 0..ALPHABET.len())] as char)
         .collect()
 }
 

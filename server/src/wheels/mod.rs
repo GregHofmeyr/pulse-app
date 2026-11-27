@@ -6,7 +6,7 @@ pub mod routes;
 
 use pulse_protocol::ids::{ServerId, UserId};
 use pulse_protocol::rest::{Wheel, WheelScope, wheel_limits, wheel_palettes};
-use rand::Rng;
+use rand::RngExt;
 use sqlx::SqlitePool;
 
 use crate::error::{AppError, AppResult};
@@ -187,7 +187,7 @@ pub fn spinnable(options: &[String]) -> AppResult<()> {
 
 /// The server's draw for a wheel of `n` slices: the winner, uniformly, and the wheel's final clockwise rotation
 /// (degrees in [0, 360)) that puts the pointer 10-90 % of the way across the winner's slice, never on an edge.
-pub fn draw(n: usize, rng: &mut impl Rng) -> (usize, f64) {
+pub fn draw(n: usize, rng: &mut impl RngExt) -> (usize, f64) {
     let winner = rng.random_range(0..n);
     let seg = 360.0 / n as f64;
     let at = seg * (winner as f64 + rng.random_range(0.1..0.9));
@@ -198,7 +198,7 @@ pub fn draw(n: usize, rng: &mut impl Rng) -> (usize, f64) {
 /// [`draw`] for a weighted wheel (#259): option `i` wins with probability `weights[i]` / their sum (one whole-number
 /// draw over the sum, so it is exact), and the angle lands 10-90 % of the way across its slice, which covers the
 /// same share of the turn. No weights: [`draw`].
-pub fn draw_weighted(n: usize, weights: Option<&[u32]>, rng: &mut impl Rng) -> (usize, f64) {
+pub fn draw_weighted(n: usize, weights: Option<&[u32]>, rng: &mut impl RngExt) -> (usize, f64) {
     let Some(w) = weights.filter(|w| w.len() == n) else {
         return draw(n, rng);
     };
