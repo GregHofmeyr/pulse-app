@@ -684,6 +684,7 @@ async fn a_blocked_viewer_gets_the_blockers_face_emptied() {
             typing_text: Some("cooking".into()),
             ring_style: Some("orbit".into()),
             ring_color: Some("gold".into()),
+            card_stats: None,
         })
         .send()
         .await

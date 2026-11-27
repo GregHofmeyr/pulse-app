@@ -16,7 +16,7 @@ describe('Zalgo names are clipped to their own line (#209)', () => {
 
   it('Name.svelte, every styled name, clips to its line box', () => {
     const name = src('components/Name.svelte')
-    expect(name).toMatch(/\.name \{[^}]*overflow: hidden;/)
+    expect(name).toMatch(/\.name \{[^}]*overflow: (hidden|clip);/)
     expect(name).toMatch(/\.name \{[^}]*line-height: calc\(1\.4em/)
   })
 
@@ -33,8 +33,8 @@ describe('Zalgo names are clipped to their own line (#209)', () => {
   const plain: [string, RegExp][] = [
     ['components/MemberList.svelte', /<small class="name-clip">\{base\}<\/small>/],
     ['components/TypingIndicator.svelte', /<strong class="name-clip">\{l\.names\}<\/strong>/],
-    ['components/ProfileSettings.svelte', /<span class="typing-who name-clip">\{typingName\}<\/span>/],
-    ['components/ProfileSettings.svelte', /<strong class="name-clip">\{typingName\}<\/strong> is/],
+    ['components/profileEditor/TypingSection.svelte', /<span class="typing-who name-clip">\{name\}<\/span>/],
+    ['components/profileEditor/TypingSection.svelte', /<strong class="name-clip">\{name\}<\/strong> is/],
     ['components/Composer.svelte', /Replying to <strong class="name-clip">\{replyingTo\}<\/strong>/],
     ['components/CallRingPopover.svelte', /<strong class="name-clip">\{caller\}<\/strong>/],
     ['components/CallRingPopover.svelte', /<span class="name-clip">\{caller\}<\/span> is calling/],

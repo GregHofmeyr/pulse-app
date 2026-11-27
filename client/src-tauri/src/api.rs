@@ -6464,6 +6464,7 @@ mod tests {
                     typing_text: None,
                     ring_style: None,
                     ring_color: None,
+                    card_stats: None,
                 },
             )
             .await

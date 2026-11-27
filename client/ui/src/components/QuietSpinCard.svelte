@@ -63,7 +63,7 @@
   }
 </script>
 
-{#snippet who()}{#if spin.spinner_id}<Name userId={spin.spinner_id} {serverId} />{:else}Someone{/if}{/snippet}
+{#snippet who()}{#if spin.spinner_id}<Name userId={spin.spinner_id} {serverId} flow />{:else}Someone{/if}{/snippet}
 
 <div class="wheel-card quiet-card" role="group" aria-label="Quiet spin" out:exitFade
   onmouseenter={() => (hovered = true)} onmouseleave={() => (hovered = false)}

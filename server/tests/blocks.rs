@@ -311,6 +311,7 @@ async fn a_blocked_viewer_never_gets_your_typing_text() {
         typing_text: Some(text.into()),
         ring_style: None,
         ring_color: None,
+        card_stats: None,
     };
     let put = |body: UpdateProfileRequest| {
         app.http
@@ -393,6 +394,7 @@ async fn a_blocked_viewer_never_gets_your_speaking_ring() {
         typing_text: None,
         ring_style: Some(style.into()),
         ring_color: Some(color.into()),
+        card_stats: None,
     };
     let put = |body: UpdateProfileRequest| {
         app.http

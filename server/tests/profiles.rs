@@ -496,6 +496,7 @@ fn request() -> UpdateProfileRequest {
         typing_text: None,
         ring_style: None,
         ring_color: None,
+        card_stats: None,
     }
 }
 
@@ -555,6 +556,7 @@ async fn saves_a_whole_profile_and_tells_who_knows_them() {
         typing_text: None,
         ring_style: None,
         ring_color: None,
+        card_stats: None,
     };
     let r = put_profile(&app, &alex, &req).await;
     assert_eq!(r.status(), 200);
@@ -1055,4 +1057,166 @@ async fn card_glow_is_saved_and_older_clients_keep_it() {
     req.glow = Some(true);
     assert_eq!(put_profile(&app, &alex, &req).await.status(), 200);
     assert!(profile_of(&app, &sam, alex_id).await.card.glow);
+}
+
+fn keys(v: &[&str]) -> Option<Vec<String>> {
+    Some(v.iter().map(|k| k.to_string()).collect())
+}
+
+async fn stored_card_stats(app: &TestApp, id: pulse_protocol::ids::UserId) -> Option<String> {
+    sqlx::query_scalar("SELECT card_stats FROM users WHERE id = ?")
+        .bind(id.to_string())
+        .fetch_one(&app.db)
+        .await
+        .unwrap()
+}
+
+async fn link_steam(app: &TestApp, id: pulse_protocol::ids::UserId, share: bool) {
+    sqlx::query(
+        "INSERT INTO steam_links (user_id, steam_id, linked_at, backfill, share_achievements, completion_rate, \
+           perfect_games, share_hours, recent_minutes, recent_at) \
+         VALUES (?, '76500000000000001', ?, 'done', ?, 0.8, 3, ?, 300, ?)",
+    )
+    .bind(id.to_string())
+    .bind(pulse_server::db::now())
+    .bind(share)
+    .bind(share)
+    .bind(pulse_server::db::now())
+    .execute(&app.db)
+    .await
+    .unwrap();
+}
+
+/// #727: nothing saved means every stat shows, in the default order.
+#[tokio::test]
+async fn card_stats_default_is_null_and_all_shown() {
+    let app = spawn().await;
+    let (alex_id, alex) = register(&app, "alex").await;
+    assert_eq!(stored_card_stats(&app, alex_id).await, None);
+    let p = profile_of(&app, &alex, alex_id).await;
+    assert_eq!(p.stats.shown, None);
+    let body: serde_json::Value = get_json(&app, &alex, &format!("/users/{alex_id}/profile")).await;
+    assert!(body["stats"].get("shown").is_none(), "{body}");
+}
+
+#[tokio::test]
+async fn save_card_stats_order_and_subset() {
+    let app = spawn().await;
+    let (alex_id, alex) = register(&app, "alex").await;
+    let mut req = request();
+    req.card_stats = keys(&["voice", "member_since"]);
+    assert_eq!(put_profile(&app, &alex, &req).await.status(), 200);
+    assert_eq!(
+        stored_card_stats(&app, alex_id).await.as_deref(),
+        Some(r#"["voice","member_since"]"#)
+    );
+    let p = profile_of(&app, &alex, alex_id).await;
+    assert_eq!(p.stats.shown, keys(&["voice", "member_since"]));
+    // an empty list hides them all
+    req.card_stats = Some(vec![]);
+    assert_eq!(put_profile(&app, &alex, &req).await.status(), 200);
+    let p = profile_of(&app, &alex, alex_id).await;
+    assert_eq!(p.stats.shown, Some(vec![]));
+}
+
+#[tokio::test]
+async fn default_list_stores_null() {
+    let app = spawn().await;
+    let (alex_id, alex) = register(&app, "alex").await;
+    let mut req = request();
+    req.card_stats = keys(&["voice"]);
+    put_profile(&app, &alex, &req).await;
+    assert!(stored_card_stats(&app, alex_id).await.is_some());
+    req.card_stats = keys(&pulse_server::profiles::CARD_STATS);
+    assert_eq!(put_profile(&app, &alex, &req).await.status(), 200);
+    assert_eq!(stored_card_stats(&app, alex_id).await, None);
+    assert_eq!(profile_of(&app, &alex, alex_id).await.stats.shown, None);
+}
+
+#[tokio::test]
+async fn unknown_or_duplicate_key_rejected() {
+    let app = spawn().await;
+    let (alex_id, alex) = register(&app, "alex").await;
+    let mut req = request();
+    req.card_stats = keys(&["voice"]);
+    put_profile(&app, &alex, &req).await;
+    let mut bad = request();
+    bad.card_stats = keys(&["voice", "sparkles"]);
+    refused(&app, &alex, &bad, "Unknown card stat.").await;
+    bad.card_stats = keys(&["voice", "voice"]);
+    refused(&app, &alex, &bad, "A card stat can be listed once.").await;
+    assert_eq!(
+        stored_card_stats(&app, alex_id).await.as_deref(),
+        Some(r#"["voice"]"#)
+    );
+}
+
+#[tokio::test]
+async fn hidden_stats_neutral_for_others() {
+    let app = spawn().await;
+    let (alex_id, alex) = register(&app, "alex").await;
+    let (_, sam) = register(&app, "sam").await;
+    acquaint(&app, &alex, &[&sam]).await;
+    let c = general(&app, &alex, create_server(&app, &alex, "A").await.id).await;
+    exec(
+        &app,
+        "INSERT INTO voice_sessions (id, user_id, channel_id, joined_at, left_at) VALUES (?, ?, ?, ?, ?)",
+        &["s1", &alex_id.to_string(), &c.id.to_string(), &ago(7200), &ago(3600)],
+    )
+    .await;
+    link_steam(&app, alex_id, true).await;
+    let mut req = request();
+    req.card_stats = keys(&["steam_recent"]);
+    assert_eq!(put_profile(&app, &alex, &req).await.status(), 200);
+
+    let body: serde_json::Value = get_json(&app, &sam, &format!("/users/{alex_id}/profile")).await;
+    let seen = &body["stats"];
+    assert_eq!(seen["voice_seconds"], 0, "{body}");
+    assert_eq!(seen["member_since"], "", "{body}");
+    assert!(seen.get("steam_completion").is_none(), "{body}");
+    assert!(seen.get("steam_perfect_games").is_none(), "{body}");
+    assert_eq!(seen["steam_recent_minutes"], 300, "{body}");
+    assert_eq!(seen["shown"], serde_json::json!(["steam_recent"]), "{body}");
+
+    let own = profile_of(&app, &alex, alex_id).await;
+    assert!(
+        own.stats.voice_seconds >= 3500,
+        "{}",
+        own.stats.voice_seconds
+    );
+    assert!(!own.stats.member_since.is_empty());
+    assert_eq!(own.stats.steam_completion, Some(0.8));
+    assert_eq!(own.stats.shown, keys(&["steam_recent"]));
+}
+
+/// A Steam stat only shows while they share it, whatever the setting says.
+#[tokio::test]
+async fn steam_stat_shown_only_while_shared_even_if_on() {
+    let app = spawn().await;
+    let (alex_id, alex) = register(&app, "alex").await;
+    let (_, sam) = register(&app, "sam").await;
+    acquaint(&app, &alex, &[&sam]).await;
+    link_steam(&app, alex_id, false).await;
+    let mut req = request();
+    req.card_stats = keys(&["steam_completion", "steam_recent"]);
+    put_profile(&app, &alex, &req).await;
+    let p = profile_of(&app, &sam, alex_id).await;
+    assert_eq!(p.stats.steam_completion, None);
+    assert_eq!(p.stats.steam_recent_minutes, None);
+    assert_eq!(p.stats.shown, keys(&["steam_completion", "steam_recent"]));
+}
+
+#[tokio::test]
+async fn absent_field_keeps_setting() {
+    let app = spawn().await;
+    let (alex_id, alex) = register(&app, "alex").await;
+    let mut req = request();
+    req.card_stats = keys(&["member_since"]);
+    put_profile(&app, &alex, &req).await;
+    req.card_stats = None;
+    assert_eq!(put_profile(&app, &alex, &req).await.status(), 200);
+    assert_eq!(
+        profile_of(&app, &alex, alex_id).await.stats.shown,
+        keys(&["member_since"])
+    );
 }

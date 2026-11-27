@@ -1,15 +1,17 @@
 // The bundled name fonts (plan reconciliation 9, six more in #142). `key` equals the server's NAME_FONTS;
 // `scale` is the per-font size factor so names line up. A null key means the app font.
-export type NameFont = { key: string; label: string; family: string; weight: number; scale: number }
+export type NameFont = { key: string; label: string; family: string; weight: number; scale: number; tall?: boolean }
+/** Vertical room (em) a tall font gets round its name, so ascenders, swashes and descenders never clip (#727). */
+export const TALL_NAME_PAD = 0.24
 
 const stack = (family: string) => `'${family}', 'Onest', system-ui, sans-serif`
 
 export const NAME_FONTS: NameFont[] = [
-  { key: 'cormorant-garamond', label: 'Elegant', family: stack('Cormorant Garamond'), weight: 600, scale: 1.15 },
+  { key: 'cormorant-garamond', label: 'Elegant', family: stack('Cormorant Garamond'), weight: 600, scale: 1.15, tall: true },
   { key: 'fredoka', label: 'Rounded', family: stack('Fredoka'), weight: 500, scale: 1.0 },
   { key: 'press-start-2p', label: 'Pixel', family: stack('Press Start 2P'), weight: 400, scale: 0.68 },
-  { key: 'pacifico', label: 'Script', family: stack('Pacifico'), weight: 400, scale: 0.95 },
-  { key: 'caveat', label: 'Handwritten', family: stack('Caveat'), weight: 600, scale: 1.2 },
+  { key: 'pacifico', label: 'Script', family: stack('Pacifico'), weight: 400, scale: 0.95, tall: true },
+  { key: 'caveat', label: 'Handwritten', family: stack('Caveat'), weight: 600, scale: 1.2, tall: true },
   { key: 'space-grotesk', label: 'Grotesque', family: stack('Space Grotesk'), weight: 600, scale: 1.0 },
   { key: 'bricolage-grotesque', label: 'Quirky', family: stack('Bricolage Grotesque'), weight: 600, scale: 1.0 },
   { key: 'orbitron', label: 'Techy', family: stack('Orbitron'), weight: 600, scale: 0.86 },
@@ -18,7 +20,7 @@ export const NAME_FONTS: NameFont[] = [
   { key: 'silkscreen', label: '8-bit', family: stack('Silkscreen'), weight: 400, scale: 0.85 },
   { key: 'audiowide', label: 'Racing', family: stack('Audiowide'), weight: 400, scale: 0.92 },
   { key: 'righteous', label: 'Retro', family: stack('Righteous'), weight: 400, scale: 1.0 },
-  { key: 'kaushan-script', label: 'Brush', family: stack('Kaushan Script'), weight: 400, scale: 1.1 },
+  { key: 'kaushan-script', label: 'Brush', family: stack('Kaushan Script'), weight: 400, scale: 1.1, tall: true },
   { key: 'black-ops-one', label: 'Stencil', family: stack('Black Ops One'), weight: 400, scale: 0.92 },
 ]
 

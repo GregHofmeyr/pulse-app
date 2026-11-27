@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { flushSync, mount, tick, unmount } from 'svelte'
+import { createRawSnippet, flushSync, mount, tick, unmount } from 'svelte'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { fakeMatchMedia, FakeIntersectionObserver } from '../lib/testMotion'
 
@@ -227,6 +227,25 @@ describe('ProfileCard', () => {
     unmount(cmp!)
     const el = show({ stats: { ...stats, steam_recent_minutes: 1290 } })
     expect(el.querySelector('[data-steam-hours]')!.textContent).toBe('Steam, 2 weeks21.5 h')
+  })
+
+  it('profile_card_renders_only_shown_in_order (#727)', () => {
+    // a hidden stat's neutral 0 / "" never shows; the rows follow `shown`
+    const el = show({ stats: { ...stats, voice_seconds: 0, member_since: '', steam_completion: 50, steam_perfect_games: 1, steam_recent_minutes: 600, shown: ['steam_recent', 'steam_completion'] } })
+    expect([...el.querySelectorAll('.info dt')].map((d) => d.textContent)).toEqual(['Steam, 2 weeks', 'Steam'])
+    expect(el.querySelector('.info')!.textContent).not.toContain('Member since')
+    expect(el.querySelector('.info')!.textContent).not.toContain('Voice')
+    unmount(cmp!)
+    // all hidden: no empty panel
+    expect(show({ stats: { ...stats, voice_seconds: 0, member_since: '', shown: [] } }).querySelector('.info')).toBeNull()
+    unmount(cmp!)
+    // shown but nothing to show yet (no Steam data): no blank row
+    expect(show({ stats: { ...stats, shown: ['voice', 'steam_completion'] } }).querySelectorAll('.info dt')).toHaveLength(1)
+  })
+
+  it('old_server_without_shown_shows_today_default (#727)', () => {
+    const el = show({ stats: { ...stats, steam_completion: 62.5, steam_perfect_games: 2, steam_recent_minutes: 1290 } })
+    expect([...el.querySelectorAll('.info dt')].map((d) => d.textContent)).toEqual(['Member since', 'Voice', 'Steam', 'Steam, 2 weeks'])
   })
 
   it('Join (#381): on their Playing panel and in the card\'s right-click menu, even with no nickname items', () => {
@@ -803,5 +822,29 @@ describe('ProfileCardPopover', () => {
     outside.dispatchEvent(new Event('pointerdown', { bubbles: true }))
     flushSync()
     expect(profileUi.card).toBeNull()
+  })
+})
+
+describe('ProfileCard editable (#727)', () => {
+  const snip = (html: string) => createRawSnippet(() => ({ render: () => html }))
+  it('renders the given slots in place of the read-only name, pronouns and bio', () => {
+    const el = show({
+      preview: true,
+      card: card({ pronouns: 'they/them', bio: 'read only bio' }),
+      editable: { name: snip('<input data-slot="name" />'), pronouns: snip('<input data-slot="pronouns" />'), bio: snip('<div data-slot="bio"></div>') },
+    })
+    for (const s of ['name', 'pronouns', 'bio']) expect(el.querySelector(`[data-slot=${s}]`)).not.toBeNull()
+    expect(el.textContent).not.toContain('they/them')
+    expect(el.textContent).not.toContain('read only bio')
+    expect(el.querySelector('.name')).toBeNull()
+    expect(el.querySelector('.handle')!.textContent).toContain('@sam')
+  })
+  it('the avatar and banner slots replace the pencil veils', () => {
+    const el = show({
+      preview: true,
+      editable: { name: snip('<i></i>'), pronouns: snip('<i></i>'), bio: snip('<i></i>'), avatar: snip('<b data-slot="avatar"></b>'), banner: snip('<b data-slot="banner"></b>') },
+    })
+    expect(el.querySelector('.ring [data-slot=avatar]')).not.toBeNull()
+    expect(el.querySelector('.banner [data-slot=banner]')).not.toBeNull()
   })
 })

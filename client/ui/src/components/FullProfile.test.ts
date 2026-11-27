@@ -72,6 +72,21 @@ describe('FullProfile', () => {
     expect(calls('get_profile')).toHaveLength(0) // cached: no refetch
   })
 
+  it('hides the stat rows the owner switched off', () => {
+    show(profile({ stats: { ...profile().stats, shown: ['steam_completion'] } }))
+    const s = panel('Stats')!.textContent!
+    expect(s).not.toContain('Voice')
+    expect(s).not.toContain('Member since')
+    expect(s).not.toContain('Invalid Date')
+  })
+
+  it('shows only the voice row when only voice is shown', () => {
+    show(profile({ stats: { ...profile().stats, shown: ['voice'] } }))
+    const s = panel('Stats')!.textContent!
+    expect(s).toContain('Voice')
+    expect(s).not.toContain('Member since')
+  })
+
   it('shows the most-used reaction and times renamed when set', () => {
     show(profile({ stats: { ...profile().stats, top_reaction: '🔥', times_renamed: 3 } }))
     const s = panel('Stats')!

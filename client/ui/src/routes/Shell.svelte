@@ -16,6 +16,8 @@
   import BuildsChannel from '../components/BuildsChannel.svelte'
   import Settings, { type Section } from '../components/Settings.svelte'
   import FullProfile from '../components/FullProfile.svelte'
+  import ProfileEditor from '../components/profileEditor/ProfileEditor.svelte'
+  import { openProfileEditor, profileEditor } from '../lib/profileEditor.svelte'
   import NicknameDialog from '../components/NicknameDialog.svelte'
   import CustomStatusDialog from '../components/CustomStatusDialog.svelte'
   import ServerMenu from '../components/ServerMenu.svelte'
@@ -578,12 +580,12 @@
     if (app.state.conn !== 'connected' || ownCached) return
     untrack(() => loadProfile(me.id).catch(() => {}))
   })
-  // Edit profile on your own card asked for Settings → Profile.
+  // Edit profile on your own card asks for the profile editor.
   $effect(() => {
     if (!profileUi.edit) return
     untrack(() => {
       profileUi.edit = false
-      openSettings('profile')
+      openProfileEditor()
     })
   })
   // Settings on your own card (#168).
@@ -828,6 +830,7 @@
       leave: () => voiceApi.leave(),
       goLive: () => { if (voice.channelId) void pickSource(voice.channelId) },
       openSettings: (section) => openSettings(section),
+      openProfileEditor: (section) => openProfileEditor(section),
       openNotes: s.me && !(notesId(s) && !s.hidden[notesId(s)!]) ? () => void messageUser(s.me!.id) : undefined,
       openInbox: () => openInbox(),
     }
@@ -1019,6 +1022,7 @@
 {#if notesOpen}<PatchNotes notes={patchNotes} previous={previousPatchNotes} onClose={() => (notesOpen = false)} />{/if}
 <!-- Profiles: the quick card (one at a time), and the full profile's place (Task 12 renders it here) -->
 <ProfileCardPopover />
+{#if profileEditor.open}<ProfileEditor />{/if}
 {#if profileUi.full}<FullProfile userId={profileUi.full.userId} serverId={profileUi.full.serverId} onClose={closeFull} />{/if}
 {#if profileUi.rename}<NicknameDialog target={profileUi.rename} onClose={closeRename} />{/if}
 {#if profileUi.customStatus}<CustomStatusDialog onClose={closeCustomStatus} />{/if}

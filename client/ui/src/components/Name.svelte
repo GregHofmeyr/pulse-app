@@ -9,7 +9,7 @@
 
   import type { User } from '../lib/protocol/User'
 
-  let { userId, serverId, text, interactive = true, size = 'normal', user, surface = 'chat', bg, play = false }: {
+  let { userId, serverId, text, interactive = true, size = 'normal', user, surface = 'chat', bg, play = false, flow = false }: {
     userId: string
     serverId: string | null
     text?: string
@@ -24,6 +24,8 @@
     /** Its name effect plays (#468): in the profile editor and while a full profile is open. Elsewhere it is still,
      *  and plays only while the name is hovered. */
     play?: boolean
+    /** The name sits inside running text, not a row of its own: its padding gives the glyphs paint room without growing the line (#727). */
+    flow?: boolean
   } = $props()
 
   const resolved = $derived(resolveNameStyle(user ?? userOf(app.state, userId), { roleColor: roleColorFor(app.state, serverId, userId), showStyles: appearance.showNameStyles, ...nameOpts(surface), ...(bg ? { bg } : {}) }))
@@ -42,25 +44,28 @@
 {/snippet}
 
 {#if interactive}
-  <button type="button" class="name" class:card={size === 'card'} class:fx-play={play} data-fx={fx} style={css} onclick={(e) => openCard(userId, serverId, e.currentTarget)}>{@render content()}</button>
+  <button type="button" class="name" class:card={size === 'card'} class:flow class:fx-play={play} data-fx={fx} style={css} onclick={(e) => openCard(userId, serverId, e.currentTarget)}>{@render content()}</button>
 {:else}
-  <span class="name" class:card={size === 'card'} class:fx-play={play} data-fx={fx} style={css}>{@render content()}</span>
+  <span class="name" class:card={size === 'card'} class:flow class:fx-play={play} data-fx={fx} style={css}>{@render content()}</span>
 {/if}
 
 <style>
   /* The font scale evens out the fonts; the line height stays at the parent's, so rows keep their height.
      fit-content: a stretching parent (a flex column) would widen the box, and a gradient spans the box, not the text. */
-  .name { display: inline-block; width: fit-content; font-size: calc(1em * var(--name-scale, 1)); line-height: calc(1.4em / var(--name-scale, 1)); vertical-align: bottom; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .name { display: inline-block; width: fit-content; font-size: calc(1em * var(--name-scale, 1)); line-height: calc(1.4em / var(--name-scale, 1)); vertical-align: bottom; max-width: 100%; white-space: nowrap;
+    /* never clips (#727): room above and below inside the box (a tall font sets --name-pad), and glows, strokes and bounces
+       are clipped a little further out than the box. Rows that hold a name grow by it (min-height), a few px. */
+    padding-block: var(--name-pad, .14em); overflow: clip; overflow-clip-margin: .35em; text-overflow: ellipsis; }
   /* line height in the card's own em: still the parent's 1.4 */
+  .name.flow { margin-block: calc(-1 * var(--name-pad, .14em)); }
   .name.card { font-size: calc(1.15em * var(--name-scale, 1)); line-height: calc(1.4em / (1.15 * var(--name-scale, 1))); }
-  button.name { background: none; border: 0; padding: 0; margin: 0; font-family: inherit; font-weight: inherit; color: inherit; cursor: pointer; text-align: left; }
+  button.name { background: none; border: 0; padding-inline: 0; margin-inline: 0; font-family: inherit; font-weight: inherit; color: inherit; cursor: pointer; text-align: left; }
   button.name:hover { text-decoration: underline; }
 
   /* ---- Name effects (#468): a still look everywhere; the moving one plays on hover, or with .fx-play (the editor,
      a full profile). The colours come from lib/nameEffects.ts as --fx-*: the name's own colour where it has one,
      else the text colour it sits in. ---- */
-  /* glows, strokes and bounces reach past the text: clipped a little further out than the box, never cut at it */
-  .name[data-fx] { position: relative; overflow: clip; overflow-clip-margin: .35em; }
+  .name[data-fx] { position: relative; }
   button.name[data-fx]:hover { text-decoration: none; }
 
   .name[data-fx='neon'] { text-shadow: 0 0 1px var(--fx-hi), 0 0 5px var(--fx-a, currentColor), 0 0 12px var(--fx-glow, currentColor); }

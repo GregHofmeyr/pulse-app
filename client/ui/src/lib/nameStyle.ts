@@ -1,7 +1,7 @@
 // The one name-style resolver (plan reconciliations 7, 11, 12). The lightening rule has a twin in
 // server/src/profiles/colors.rs; both must give identical results.
 import { contrast, isDark, luminance, parseHex, readable, toHex, type Rgb } from './color'
-import { fontByKey, type NameFont } from './nameFonts'
+import { fontByKey, TALL_NAME_PAD, type NameFont } from './nameFonts'
 import { effectByKey, effectCss, type NameEffect } from './nameEffects'
 import type { User } from './protocol/User'
 
@@ -73,8 +73,10 @@ export type ResolvedName = { font: NameFont | null; paint: Paint; effect?: NameE
  *  else without (a mention pill). */
 export function nameCss(r: ResolvedName, effects = false): string {
   const parts: string[] = []
-  if (r.font) parts.push(`font-family: ${r.font.family}`, `font-weight: ${r.font.weight}`, `--name-scale: ${r.font.scale}`)
-  else parts.push('--name-scale: 1')
+  if (r.font) {
+    parts.push(`font-family: ${r.font.family}`, `font-weight: ${r.font.weight}`, `--name-scale: ${r.font.scale}`)
+    if (r.font.tall) parts.push(`--name-pad: ${TALL_NAME_PAD}em`)
+  } else parts.push('--name-scale: 1')
   const fx = effects && r.effect ? effectCss(r.effect, r.paint) : null
   if (r.paint.kind === 'solid') parts.push(`color: ${r.paint.color}`)
   else if (r.paint.kind === 'gradient' && !fx?.replacesPaint) {

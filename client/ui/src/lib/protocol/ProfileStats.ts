@@ -14,4 +14,10 @@ steam_perfect_games?: number,
  * Minutes played in Steam games over the last two weeks (#383). Only while they share Steam hours and once
  * the server has read them.
  */
-steam_recent_minutes?: number, };
+steam_recent_minutes?: number, 
+/**
+ * The stats the owner's card shows, keys in order (#727). Absent: no choice saved (every stat shows), or an
+ * older server. A hidden stat's value never leaves the server: `voice_seconds` goes out as 0 and
+ * `member_since` as "" (both stay required for older clients), the Steam stats as absent.
+ */
+shown?: Array<string>, };

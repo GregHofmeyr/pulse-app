@@ -7,6 +7,7 @@
 
 import type { IconName } from '../components/Icon.svelte'
 import type { Section } from '../components/Settings.svelte'
+import type { EditorSection } from './profileEditor.svelte'
 import type { Sound } from './protocol/Sound'
 import { matchScore, WORD_START } from './quickSwitch'
 
@@ -29,6 +30,8 @@ export interface ActionContext {
   leave: () => void
   goLive: () => void
   openSettings: (section: Section) => void
+  /** Open the profile editor (#727) on a section: Profile is Looks, Appearance is App appearance. */
+  openProfileEditor: (section: EditorSection) => void
   /** Open your notes to self (#308), making them; only until they exist (then they're listed as a place). */
   openNotes?: () => void
   /** Open the inbox (#306). */
@@ -54,8 +57,6 @@ export interface QuickAction {
 type Source = (ctx: ActionContext) => QuickAction[]
 
 const SETTINGS: { section: Section; label: string; keywords?: string[] }[] = [
-  { section: 'profile', label: 'Profile' },
-  { section: 'appearance', label: 'Appearance', keywords: ['theme'] },
   { section: 'voice', label: 'Voice & Audio', keywords: ['microphone', 'mic', 'audio', 'output'] },
   { section: 'keybinds', label: 'Keybinds', keywords: ['shortcuts', 'hotkeys'] },
   { section: 'chat', label: 'Chat' },
@@ -93,6 +94,9 @@ export const SOURCES: Source[] = [
   // settings, and each of its pages
   () => [
     { id: 'settings', label: 'Open Settings', icon: 'gear', keywords: ['preferences', 'options'], run: (c) => c.openSettings('voice') },
+    // Profile and Appearance live in the profile editor now (#727)
+    { id: 'settings:profile', label: 'Settings: Profile', name: 'Profile', icon: 'gear' as const, run: (c: ActionContext) => c.openProfileEditor('looks') },
+    { id: 'settings:appearance', label: 'Settings: Appearance', name: 'Appearance', icon: 'gear' as const, keywords: ['theme'], run: (c: ActionContext) => c.openProfileEditor('appearance') },
     ...SETTINGS.map((p) => ({ id: `settings:${p.section}`, label: `Settings: ${p.label}`, name: p.label, icon: 'gear' as const, keywords: p.keywords, run: (c: ActionContext) => c.openSettings(p.section) })),
   ],
 ]

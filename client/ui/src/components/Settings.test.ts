@@ -2,25 +2,12 @@
 import { flushSync, mount, unmount } from 'svelte'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-// Only the profile pane asks for anything: your profile.
-vi.mock('@tauri-apps/api/core', () => ({
-  invoke: async (cmd: string) =>
-    cmd === 'get_profile'
-      ? {
-        user: { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } },
-        card: { banner_hash: null, banner_still: null, theme_top: '#3a3d46', theme_bottom: '#16171b', pronouns: null, bio: null },
-        stats: { voice_seconds: 0, member_since: '2026-10-03T00:00:00Z', top_reaction: null, times_renamed: 0 },
-        badges: [],
-        name_archive: [],
-      }
-      : undefined,
-}))
+vi.mock('@tauri-apps/api/core', () => ({ invoke: async () => undefined }))
 
 import Settings from './Settings.svelte'
+import { closeProfileEditor, profileEditor } from '../lib/profileEditor.svelte'
 import { motion, setAnimateMode } from '../lib/animate.svelte'
 import { previews, setShowPreviews } from '../lib/linkPreviews.svelte'
-import { app, resetState } from '../lib/store.svelte'
-import { emptyState } from '../lib/state'
 
 let cmp: ReturnType<typeof mount> | undefined
 beforeEach(() => {
@@ -121,16 +108,12 @@ describe('Settings dialog', () => {
 })
 
 describe('Settings sections', () => {
-  it('Profile and Appearance sections are listed first', () => {
+  it('Profile is listed first (it opens the editor), the default is still Voice & Audio', () => {
     cmp = mount(Settings, { target: document.body, props: { onClose: () => {} } })
     flushSync()
     const labels = [...document.querySelectorAll('nav button')].map((b) => b.textContent)
-    expect(labels.slice(0, 2)).toEqual(['Profile', 'Appearance'])
-    // the default is still Voice & Audio
+    expect(labels.slice(0, 2)).toEqual(['Profile', 'Voice & Audio'])
     expect(document.querySelector('nav button[aria-current=page]')!.textContent).toBe('Voice & Audio')
-    ;([...document.querySelectorAll('nav button')][1] as HTMLButtonElement).click()
-    flushSync()
-    expect(document.querySelector('input[role=switch]')).not.toBeNull()
   })
 })
 
@@ -152,76 +135,46 @@ describe('Settings: Log out (#168)', () => {
   })
 })
 
-describe('Settings: leaving the profile editor', () => {
-  const alex = { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
-  const confirmText = 'Discard your profile changes?'
-  const byText = (t: string) => [...document.querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent?.trim() === t)!
-  const esc = () => document.activeElement!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+describe('Settings: Profile and Appearance (#727)', () => {
+  const navLabels = () => [...document.querySelectorAll('nav button')].map((b) => b.textContent?.trim())
 
-  async function openDirty(onClose = vi.fn()) {
-    resetState()
-    app.state = { ...emptyState(), me: alex, people: { U1: { user: alex, online: true, last_seen_at: null } } } as never
-    cmp = mount(Settings, { target: document.body, props: { onClose, section: 'profile' } })
-    await vi.waitFor(() => {
-      flushSync()
-      if (!document.querySelector('.preview .card')) throw new Error('not loaded')
-    })
-    const berry = [...document.querySelectorAll<HTMLButtonElement>('[role=radiogroup][aria-label="Card theme"] [role=radio]')].find((b) => b.getAttribute('aria-label') === 'Berry')!
-    berry.click()
+  it('no_appearance_entry', () => {
+    cmp = mount(Settings, { target: document.body, props: { onClose: () => {}, section: 'voice' } })
     flushSync()
-    return onClose
-  }
+    expect(navLabels()).not.toContain('Appearance')
+    expect(navLabels()).toContain('Profile')
+  })
+
+  it('profile_entry_opens_editor_and_closes_settings', async () => {
+    closeProfileEditor()
+    const onClose = vi.fn()
+    cmp = mount(Settings, { target: document.body, props: { onClose, section: 'voice' } })
+    flushSync()
+    ;([...document.querySelectorAll('nav button')].find((b) => b.textContent?.trim() === 'Profile') as HTMLButtonElement).click()
+    flushSync()
+    await Promise.resolve()
+    expect(onClose).toHaveBeenCalledTimes(1)
+    expect(profileEditor.open).toBe(true)
+    expect(profileEditor.section).toBe('looks')
+    closeProfileEditor()
+  })
+})
+
+describe('Settings: closing (#727)', () => {
+  // the profile guard moved to the profile editor with the Profile page: every way out of Settings just closes
   const ways: [string, () => void][] = [
     ['close button', () => document.querySelector<HTMLButtonElement>('button[aria-label="Close settings"]')!.click()],
     ['backdrop', () => document.querySelector<HTMLElement>('[data-backdrop]')!.click()],
-    ['Escape', esc],
-    ['another section', () => byText('Chat').click()],
+    ['Escape', () => document.activeElement!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))],
   ]
-
-  it('every way out asks when dirty', async () => {
-    for (const [what, leave] of ways) {
-      const onClose = await openDirty()
-      leave()
-      flushSync()
-      expect(document.body.textContent, what).toContain(confirmText)
-      expect(onClose, what).not.toHaveBeenCalled()
-      // Keep editing stays, draft and all
-      byText('Keep editing').click()
-      flushSync()
-      expect(document.body.textContent, what).not.toContain(confirmText)
-      expect(document.querySelector('nav button[aria-current=page]')!.textContent, what).toBe('Profile')
-      expect(document.body.textContent, what).toContain('Unsaved changes')
-      // asked again, Discard leaves
-      leave()
-      flushSync()
-      byText('Discard').click()
-      flushSync()
-      if (what === 'another section') {
-        expect(onClose, what).not.toHaveBeenCalled()
-        expect(document.querySelector('nav button[aria-current=page]')!.textContent, what).toBe('Chat')
-        // nothing left to ask about: Escape now just closes
-        esc()
-        expect(onClose, what).toHaveBeenCalledTimes(1)
-      } else {
-        expect(onClose, what).toHaveBeenCalledTimes(1)
-      }
-      unmount(cmp!)
-      cmp = undefined
-      document.body.innerHTML = ''
-    }
-  })
-
-  it('a clean profile pane leaves without asking', async () => {
-    resetState()
-    app.state = { ...emptyState(), me: alex } as never
+  it.each(ways)('%s closes without asking', (_what, leave) => {
     const onClose = vi.fn()
-    cmp = mount(Settings, { target: document.body, props: { onClose, section: 'profile' } })
-    await vi.waitFor(() => {
-      flushSync()
-      if (!document.querySelector('.preview .card')) throw new Error('not loaded')
-    })
-    esc()
+    cmp = mount(Settings, { target: document.body, props: { onClose, section: 'voice' } })
+    flushSync()
+    leave()
+    flushSync()
     expect(onClose).toHaveBeenCalledTimes(1)
-    expect(document.body.textContent).not.toContain(confirmText)
+    expect(document.body.textContent).not.toContain('Discard your profile changes?')
   })
 })
+

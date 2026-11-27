@@ -68,6 +68,8 @@ describe('motion', () => {
     // the joining spinners, and their slower turn under reduced motion
     'components/ChannelList.svelte': /^(spin |2\.4s$)/,
     'components/UserTile.svelte': /^(spin |2\.4s$)/,
+    // the upload spinner on a picture in the profile editor (#727), the same
+    'components/profileEditor/ImageMenu.svelte': /^(spin |2\.4s$)/,
     // the update download whose size isn't known (#82): a bar that slides at its own speed, like a spinner
     'routes/Updating.svelte': /^slide /,
     // a download whose size isn't known (#205): its ring's arc turns at a spinner's speed (still under reduced motion)

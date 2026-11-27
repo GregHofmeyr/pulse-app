@@ -289,6 +289,9 @@ town's weather (#451). Change it and `just deploy`; places already looked up kee
                          DELETE FROM _sqlx_migrations WHERE version = 39; COMMIT;"
   ```
   (the example undoes `0039`; roll back newest first, one migration at a time).
+  - `0087_card_stats.sql` adds one nullable column: `ALTER TABLE users DROP COLUMN card_stats; DELETE FROM
+    _sqlx_migrations WHERE version = 87;` in one transaction, server stopped, before 86. (The saved choice of card
+    stats is lost; every card shows all its stats again.)
   - `0086_revoke_departed_makers_invites.sql` says "Rollback = nothing to undo": it's a one-off data fix, so there's
     no schema to undo, but its row still blocks an older image. Delete row 86 with the server stopped (the invites it
     revoked stay revoked; they were already refused on accept), or restore the deploy's backup.

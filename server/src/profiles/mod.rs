@@ -28,6 +28,7 @@ struct ProfileRow {
     bio: Option<String>,
     card_glow: bool,
     created_at: String,
+    card_stats: Option<String>,
 }
 
 /// The most rename rows a profile carries.
@@ -45,7 +46,7 @@ pub async fn load_profile(
     let mut tx = db.begin().await?;
     let Some(row) = sqlx::query_as::<_, ProfileRow>(sqlx::AssertSqlSafe(format!(
         "SELECT {USER_COLS}, u.banner_hash, bn.still_hash AS banner_still, u.theme_top, \
-         u.theme_bottom, u.pronouns, u.bio, u.card_glow, u.created_at \
+         u.theme_bottom, u.pronouns, u.bio, u.card_glow, u.created_at, u.card_stats \
          FROM users u {USER_JOIN} LEFT JOIN media bn ON bn.hash = u.banner_hash WHERE u.id = ?"
     )))
     .bind(&id)
@@ -115,6 +116,11 @@ pub async fn load_profile(
     let steam_recent_minutes = crate::steam::store::profile_hours(&mut tx, user).await?;
     tx.commit().await?;
 
+    // What the card shows (#727). Someone else's view never carries a hidden stat's value; your own does.
+    let chosen = stored_card_stats(row.card_stats.as_deref());
+    let visible =
+        |key: &str| viewer == user || chosen.as_ref().is_none_or(|c| c.iter().any(|k| k == key));
+    let shown = chosen.clone();
     let hidden_from_viewer = crate::blocks::has_blocked(db, user, viewer).await?;
     let profile = Profile {
         user: row.user.into_user()?,
@@ -128,13 +134,23 @@ pub async fn load_profile(
             glow: row.card_glow,
         },
         stats: ProfileStats {
-            voice_seconds: voice.max(0.0).round() as u64,
-            member_since: row.created_at,
+            // required for older clients, so a hidden one is sent neutral rather than omitted
+            voice_seconds: if visible("voice") {
+                voice.max(0.0).round() as u64
+            } else {
+                0
+            },
+            member_since: if visible("member_since") {
+                row.created_at
+            } else {
+                String::new()
+            },
             top_reaction,
             times_renamed,
-            steam_completion,
-            steam_perfect_games,
-            steam_recent_minutes,
+            steam_completion: steam_completion.filter(|_| visible("steam_completion")),
+            steam_perfect_games: steam_perfect_games.filter(|_| visible("steam_completion")),
+            steam_recent_minutes: steam_recent_minutes.filter(|_| visible("steam_recent")),
+            shown,
         },
         badges,
         showcase,
@@ -147,6 +163,20 @@ pub async fn load_profile(
     } else {
         profile
     }))
+}
+
+/// The card stats (#727), stored by key in `users.card_stats` as a JSON array of the shown ones, in order (NULL:
+/// all four, in this order). A literal copy is in the client test.
+pub const CARD_STATS: [&str; 4] = ["member_since", "voice", "steam_completion", "steam_recent"];
+
+/// The saved card stats, if any: keys this server knows, as stored (a newer server's key is dropped).
+fn stored_card_stats(raw: Option<&str>) -> Option<Vec<String>> {
+    let keys: Vec<String> = serde_json::from_str(raw?).ok()?;
+    Some(
+        keys.into_iter()
+            .filter(|k| CARD_STATS.contains(&k.as_str()))
+            .collect(),
+    )
 }
 
 /// The bundled name fonts (plan reconciliation 9; the last six from #142).
@@ -227,6 +257,27 @@ pub struct Validated {
     pub ring_style: Option<Option<String>>,
     /// `None`: keep the current ring colour; `Some(None)`: back to green (#651).
     pub ring_color: Option<Option<String>>,
+    /// `None`: keep the current card stats; `Some(None)`: the default (all four) (#727). Else the JSON array.
+    pub card_stats: Option<Option<String>>,
+}
+
+/// A card stat list from a save (#727): absent keeps the current one, the default list stores NULL, an unknown or
+/// repeated key is refused.
+fn card_stats(keys: Option<Vec<String>>) -> AppResult<Option<Option<String>>> {
+    let Some(keys) = keys else { return Ok(None) };
+    for (i, k) in keys.iter().enumerate() {
+        if !CARD_STATS.contains(&k.as_str()) {
+            return Err(bad("Unknown card stat."));
+        }
+        if keys[..i].contains(k) {
+            return Err(bad("A card stat can be listed once."));
+        }
+    }
+    if keys == CARD_STATS {
+        return Ok(Some(None));
+    }
+    let json = serde_json::to_string(&keys).map_err(anyhow::Error::from)?;
+    Ok(Some(Some(json)))
 }
 
 /// A ring key from a save (#651): absent keeps the current one, a default key stores NULL and a
@@ -307,6 +358,7 @@ pub fn validate(req: UpdateProfileRequest) -> AppResult<Validated> {
         .transpose()?;
     let ring_style = ring_key(req.ring_style, &RING_STYLES, "Unknown speaking ring.")?;
     let ring_color = ring_key(req.ring_color, &RING_COLORS, "Unknown ring colour.")?;
+    let card_stats = card_stats(req.card_stats)?;
     let pronouns = text(req.pronouns);
     if let Some(p) = &pronouns {
         if p.chars().count() > PRONOUNS_MAX {
@@ -343,6 +395,7 @@ pub fn validate(req: UpdateProfileRequest) -> AppResult<Validated> {
         typing_text,
         ring_style,
         ring_color,
+        card_stats,
     })
 }
 

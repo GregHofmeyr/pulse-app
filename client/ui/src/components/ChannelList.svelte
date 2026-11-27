@@ -764,7 +764,7 @@
   .row.renaming { padding-right: 4px; }
   .row.renaming:hover { background: transparent; }
   .err { padding: 0 10px; color: var(--danger-text); font-size: 12px; }
-  .row { height: 34px; padding: 0 10px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-row); display: flex; align-items: center; gap: 8px; text-align: left; font-size: 14px; }
+  .row { min-height: 34px; padding: 0 10px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-row); display: flex; align-items: center; gap: 8px; text-align: left; font-size: 14px; }
   .row:hover, .row.hover { background: var(--bg-2); color: var(--text); }
   /* background and colour only: a bolder weight would widen the name */
   .row.active { background: var(--bg-3); color: var(--text); }
@@ -787,7 +787,7 @@
   .chat-btn.lit { color: var(--text-2); }
   .chat-dot { position: absolute; top: 3px; right: 3px; width: 7px; height: 7px; border-radius: 50%; background: var(--text); box-shadow: 0 0 0 2px var(--ring); }
   .chat-pill { position: absolute; top: -4px; right: -6px; box-shadow: 0 0 0 2px var(--ring); }
-  .occupant { cursor: default; border-radius: var(--radius-sm); height: 30px; padding: 0 8px 0 38px; display: flex; align-items: center; gap: 9px; font-size: 13px; color: var(--text-2); }
+  .occupant { cursor: default; border-radius: var(--radius-sm); min-height: 30px; padding: 0 8px 0 38px; display: flex; align-items: center; gap: 9px; font-size: 13px; color: var(--text-2); }
   /* the ring snaps with speaking, as the voice tile's border does (no box-shadow transition: a repaint per frame) */
   .ring { display: flex; flex-shrink: 0; border-radius: 50%; }
   .ring.speaking { box-shadow: 0 0 0 2px var(--ring), 0 0 0 4px var(--speak); }
