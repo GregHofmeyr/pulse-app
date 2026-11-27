@@ -61,7 +61,7 @@ hmac = { version = "0.13", optional = true }
 rustix = { version = "1", features = ["fs"] }
 
 [dev-dependencies]
-tokio-tungstenite = "0.29"
+tokio-tungstenite = "0.30"
 pulse-server = { path = ".", features = ["testing"] }
 tempfile = "3"
 prost = "0.14"

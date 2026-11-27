@@ -30,7 +30,7 @@ thiserror.workspace = true
 tauri = { version = "2.12", features = ["protocol-asset"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "http2", "stream"] }
 url = "2"
-tokio-tungstenite = { version = "0.29", features = ["rustls-tls-native-roots"] }
+tokio-tungstenite = { version = "0.30", features = ["rustls-tls-native-roots"] }
 futures = "0.3"
 rand = "0.9"
 sha2 = "0.11"
