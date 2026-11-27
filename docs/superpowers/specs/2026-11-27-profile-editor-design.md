@@ -38,8 +38,10 @@ clutter the page. Principle: **if it's already displayed, edit it there; if it h
 
 ## Non-goals
 
-- New profile features or fields. Everything in the editor exists today (or is App appearance, moved as is).
-- Server or protocol changes. The save path (`profileDraft.ts` `toRequest`, `PATCH` profile) stays as it is.
+- New profile features or fields, except **Card stats** (below). Everything else in the editor exists today (or is
+  App appearance, moved as is).
+- Server or protocol changes, except the small additive ones Card stats needs. The save path (`profileDraft.ts`
+  `toRequest`, `PATCH` profile) otherwise stays as it is.
 - Redesigning App appearance itself. It moves into the editor's menu unchanged (see Layout). The wider "make Pulse
   yours" idea stays parked as #726.
 - A board or widgets panel like the reference app's right side. Not wanted now.
@@ -95,7 +97,7 @@ window. Three columns, a header and a footer:
 
 ### Left: the menu
 
-- **Looks** (default), **Badges**, **Typing text**, then a divider, then **App appearance**.
+- **Looks** (default), **Badges**, **Card stats**, **Typing text**, then a divider, then **App appearance**.
 - The menu replaces the tab row. Each entry changes the centre and right columns. It's a vertical list with icons,
   never scrolls sideways, and collapses to icons only when the window is narrow.
 - App appearance is how Pulse looks to you, so it sits apart below the divider. It shows today's
@@ -163,6 +165,22 @@ right columns together; that's the builder's call, as long as nothing is cramped
 - Keyboard: the tiles are buttons, and the slots can be reordered with arrow keys (today's `railDrag` keyboard
   support carries over).
 
+### Card stats (new, the owner's addition)
+
+You choose which stats your card shows. Today the card's stats panel (`ProfileCard.svelte`) always shows Member since
+and Voice, plus Steam completion and Steam (last 2 weeks) when you share Steam hours.
+
+- The right column lists the four stats as rows, each with a show/hide switch and a drag handle to set their order.
+  The card in the centre updates live.
+- Stored on the server as part of the profile: a new nullable column on `users` (NULL means today's default, all
+  shown in today's order), an additive optional field on the profile update request and on what the server sends.
+- **The server applies it:** a hidden stat is left out of the profile it sends to other people, not just hidden by
+  their client. You still see all of them in the editor so you can turn them back on.
+- Steam's own sharing rules stay in charge. A Steam stat you've turned on still shows only while you share Steam
+  hours. The live "In ‹voice channel›" line and the Deadlock panel are not stats and are unaffected.
+- A migration with a rollback note in `deploy/README.md`. The server deploys before the client, as always.
+- Build it last, so the editor never waits on it.
+
 ### Typing text
 
 The typing text input with the suggestion chips, laid out with room. The "Where you show up" chat line previews it.
@@ -210,8 +228,9 @@ pass at a few widths covers the worst font and effect pairs.
 
 ## Calls made in this doc (owner to check)
 
-- **Card stats and Activity & privacy,** which appeared in the mockups' menu, are dropped. Neither exists in today's
-  editor, and Privacy stays its own Settings section.
+- **Activity & privacy,** which appeared in the mockups' menu, is dropped. Privacy stays its own Settings section.
+- **Card stats** is show/hide plus drag to order (the owner asked for choosing what displays; ordering reuses the
+  badge drag). If ordering isn't wanted, it's a cut, not a redesign.
 - Clicking the **name text** on the card edits the display name in place. Its **style** is changed from the Name tile.
 - Unsaved changes on close: one "keep editing or discard" prompt.
 - App appearance works without the profile loaded, and hides Reset and Save.
