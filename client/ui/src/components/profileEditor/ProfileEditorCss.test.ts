@@ -45,4 +45,11 @@ describe('the editor layout (#727)', () => {
     expect(label).toMatch(/text-overflow:\s*ellipsis/)
     expect(label).toMatch(/white-space:\s*nowrap/)
   })
+
+  it('the_badges_panel_is_wider_and_wraps_under_the_card', () => {
+    const side = rule(editor, '.side.wide')
+    expect(side).toMatch(/flex:\s*2 1 520px/)
+    expect(side).toMatch(/max-width:\s*720px/)
+    expect(editor).toMatch(/\.stage\[data-section=['"]?badges['"]?\]/)
+  })
 })

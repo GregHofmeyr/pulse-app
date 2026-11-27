@@ -80,6 +80,16 @@ describe('the profile editor', () => {
     expect(document.querySelector('nav [aria-current=page]')?.textContent?.trim()).toBe('Badges')
   })
 
+  it('badges_section_shows_the_card_and_the_badge_panel', async () => {
+    await open()
+    expect(document.querySelector('aside[aria-label="Badges"]')).toBeNull()
+    button('Badges')!.click()
+    flushSync()
+    expect(document.querySelector('.card')).not.toBeNull()
+    expect(document.querySelector('aside[aria-label="Badges"]')).not.toBeNull()
+    expect(document.querySelector('aside[aria-label="Looks"]')).toBeNull()
+  })
+
   it('close_when_clean_closes_without_asking', async () => {
     await open()
     document.querySelector<HTMLButtonElement>('[aria-label="Close editor"]')!.click()
