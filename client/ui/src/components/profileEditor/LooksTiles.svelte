@@ -78,7 +78,7 @@
         {#if me && pu}
           <span class="ring-stage" style:--d="{RING_D}px">
             <Avatar id={me.id} name={pu.display_name} user={pu} size={RING_D} />
-            <SpeakingRing userId={me.id} d={RING_D} speaking place="list" style={st.draft.ringStyle} color={st.draft.ringColor} user={pu} />
+            <SpeakingRing userId={me.id} d={RING_D} speaking place="list" own style={st.draft.ringStyle} color={st.draft.ringColor} user={pu} />
           </span>
         {/if}
       </button>
@@ -108,7 +108,8 @@
   .cell > .tile { width: 100%; }
   .cell > .tile.square { width: 76px; }
   .tile.wide, .tile.banner { width: 100%; }
-  .tile.mini { padding: 8px; overflow: visible; }
+  /* the glow reaches at most 8px (6px blur + 1px spread, 1px down), inside the 10px padding and the 8px row gap's half */
+  .tile.mini { padding: 10px; overflow: visible; }
   .tile.mini :global(.mc) { border-radius: var(--radius-md); }
   .tile[aria-expanded='true'] { border-color: var(--accent); }
   .tile img { width: 100%; height: 100%; object-fit: cover; display: block; }
@@ -116,7 +117,7 @@
   .face-name { max-width: 100%; padding: 0 12px; box-sizing: border-box; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; font-size: 16px; }
   /* the glow, drawn from the card's own colours, when on; a flat card when off */
   .glow-demo { display: block; width: 100%; height: 100%; border-radius: var(--radius-md); }
-  .glow-demo.on { box-shadow: 0 0 8px 1px var(--glow-top-a), 0 2px 12px 2px var(--glow-bottom-a); }
+  .glow-demo.on { box-shadow: 0 0 5px 1px var(--glow-top-a), 0 1px 6px 1px var(--glow-bottom-a); }
   .tile.mini[aria-checked='false'] .glow-demo { filter: saturate(.4); opacity: .7; }
   .ring-stage { position: relative; display: block; width: var(--d); height: var(--d); }
   .swatch { width: 36px; height: 36px; border-radius: 50%; background: var(--swatch); box-shadow: inset 0 0 0 1px var(--line-strong); }

@@ -11,6 +11,9 @@ import { invoke } from '@tauri-apps/api/core'
 import LooksTiles from './LooksTiles.svelte'
 import ProfileEditor from './ProfileEditor.svelte'
 import { closeProfileEditor, openProfileEditor, ProfileEditorState } from '../../lib/profileEditor.svelte'
+import { ringPrefs } from '../../lib/speakingRing.svelte'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { app } from '../../lib/store.svelte'
 import { emptyState } from '../../lib/state'
 import type { Profile } from '../../lib/protocol/Profile'
@@ -87,6 +90,26 @@ describe('the Looks tiles', () => {
     click(tile('Card theme'))
     expect(q('[role=dialog][aria-label="Card theme"]')).not.toBeNull()
     expect(q('[data-editor-layer]')).not.toBeNull()
+  })
+})
+
+describe('tile faces', () => {
+  it('ring_tile_shows_the_draft_style_even_with_classic_for_all', () => {
+    ringPrefs.classic = true
+    show()
+    st.draft.ringStyle = 'orbit'
+    flushSync()
+    const box = tile('Ring style').querySelector<HTMLElement>('.ring-box')!
+    expect(box.dataset.style).toBe('orbit')
+    expect(box.dataset.ring).toBe('still')
+    ringPrefs.classic = false
+  })
+  it('glow_fits_inside_the_tile_padding', () => {
+    const src = readFileSync(resolve(__dirname, 'LooksTiles.svelte'), 'utf8')
+    const pad = Number(src.match(/\.tile\.mini \{ padding: (\d+)px/)![1])
+    const shadow = src.match(/\.glow-demo\.on \{ box-shadow: ([^;]*);/)![1]
+    const reach = shadow.split(/,\s*(?=\d)/).map((l) => { const [x, y, blur, spread] = l.trim().split(/\s+/).slice(0, 4).map((v) => parseInt(v)); return Math.max(Math.abs(x), Math.abs(y)) + blur + (spread || 0) })
+    expect(Math.max(...reach)).toBeLessThanOrEqual(pad)
   })
 })
 

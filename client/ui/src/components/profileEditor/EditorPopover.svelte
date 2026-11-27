@@ -30,6 +30,7 @@
     return () => window.removeEventListener('keydown', key, true)
   })
 
+  // (`inert` is applied once, to the siblings present when the popover opens; the editor adds none while it is up.)
   // The editor behind is inert while the popover is up; only what this sets is cleared again. The focus goes in, and
   // comes back to where it was when the popover closes.
   $effect(() => {

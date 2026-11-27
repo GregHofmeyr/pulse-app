@@ -29,6 +29,7 @@
     style,
     color,
     user: draftUser,
+    own = false,
   }: {
     userId: string
     /** The avatar's diameter in px. */
@@ -41,11 +42,14 @@
     color?: RingColor
     /** The preview's draft you, so "Profile colour" follows a name colour not saved yet. */
     user?: User
+    /** An editor face (#727): draws the style as given, ignoring the viewer's "Show everyone's rings as Classic", and
+     *  stays as still as its `place` makes it (use `list`). Unlike `preview`, it never animates. */
+    own?: boolean
   } = $props()
 
   const user = $derived(draftUser ?? userOf(app.state, userId))
   const preview = $derived(place === 'preview')
-  const eff = $derived(preview ? (style ?? ringStyleOf(user)) : effectiveStyle(style ?? ringStyleOf(user), { classicForAll: ringPrefs.classic }))
+  const eff = $derived(preview || own ? (style ?? ringStyleOf(user)) : effectiveStyle(style ?? ringStyleOf(user), { classicForAll: ringPrefs.classic }))
   const css = $derived(speakCss(user, color ?? ringColorOf(user), nameBg('side')))
   const ringNow = $derived(ringState({ lit: speaking, place, style: eff, reducedMotion: motion.reducedMotion, streaming: motion.streaming, animating: preview || isAnimating(userId) }))
   const watches = $derived(watchesLevels(eff, { reducedMotion: motion.reducedMotion, streaming: motion.streaming, place }))
