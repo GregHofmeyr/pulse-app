@@ -147,6 +147,26 @@ describe('the profile editor', () => {
     expect(document.querySelector('[role=alert]')?.textContent).toContain('Discard')
   })
 
+  it('a_press_that_closes_a_layer_does_not_close_the_editor_on_its_click', async () => {
+    await open('looks', true)
+    dirty()
+    const layer = document.body.appendChild(document.createElement('div'))
+    layer.setAttribute('data-editor-layer', '')
+    const backdrop = document.querySelector<HTMLElement>('[data-backdrop]')!
+    // the press closes the layer (clickOutside), then the click lands on the backdrop
+    backdrop.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, cancelable: true }))
+    layer.remove()
+    backdrop.click()
+    flushSync()
+    expect(document.querySelector('[role=alert]')).toBeNull()
+    expect(profileEditor.open).toBe(true)
+    // the next outside click, with no layer, asks as usual
+    backdrop.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, cancelable: true }))
+    backdrop.click()
+    flushSync()
+    expect(document.querySelector('[role=alert]')?.textContent).toContain('Discard')
+  })
+
   it('appearance_works_when_profile_fails_to_load', async () => {
     loadFails = true
     await open('looks')

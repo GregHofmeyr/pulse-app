@@ -71,8 +71,14 @@
   }
   /** Escape while asking means "Keep editing". */
   const escape = () => (asking ? (asking = false) : requestClose())
+  // A menu or picker closes on the press (clickOutside), so by the click it ends on the backdrop the layer is gone: a
+  // layer open at the press keeps that click for itself.
+  let layerAtPress = false
+  const pressed = () => (layerAtPress = !!document.querySelector('[data-editor-layer]'))
   function backdrop() {
-    if (document.querySelector('[data-editor-layer]')) return
+    const had = layerAtPress
+    layerAtPress = false
+    if (had || document.querySelector('[data-editor-layer]')) return
     requestClose()
   }
   function discard() {
@@ -95,6 +101,8 @@
     savedTimer = setTimeout(() => (justSaved = false), SAVED_MS)
   }
 </script>
+
+<svelte:window onpointerdowncapture={pressed} />
 
 <div class="overlay modal-overlay fade-in">
   <div class="backdrop modal-backdrop" role="presentation" data-backdrop onclick={backdrop}></div>
