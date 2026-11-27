@@ -10,6 +10,7 @@ import { emptyState, setProfile } from './state'
 import type { Badge } from './protocol/Badge'
 import type { Profile } from './protocol/Profile'
 import type { BadgeDef } from './protocol/BadgeDef'
+import { nextTask } from './testSettle'
 
 const def = (over: Partial<BadgeDef> = {}): BadgeDef => ({
   key: 'the_yapper', name: 'The Yapper', description: 'Send messages.', icon: '💬', hidden: false, hand_given: false, one_of_a_kind: false, stacking: false, unit: 'count',
@@ -27,7 +28,6 @@ function deferred<T>() {
   const promise = new Promise<T>((a, b) => ((resolve = a), (reject = b)))
   return { promise, resolve, reject }
 }
-const flush = () => new Promise((r) => setTimeout(r, 0))
 
 beforeEach(() => {
   invoke.mockReset()
@@ -160,7 +160,7 @@ describe('badgeStore', () => {
     await badgeStore.load()
     invoke.mockClear()
     for (let i = 0; i < 5; i++) earned()
-    for (let i = 0; i < 5; i++) await flush()
+    for (let i = 0; i < 5; i++) await nextTask()
     expect(calls('get_badge_catalogue')).toHaveLength(2)
     expect(calls('get_profile')).toHaveLength(2)
     app.state = emptyState() as never
@@ -180,9 +180,9 @@ describe('the logo egg', () => {
   it('a failed report can be tried again; a reported one waits for the next session', async () => {
     invoke.mockRejectedValueOnce(new Error('offline'))
     for (let i = 0; i < 7; i++) logoClick(1000 + i * 100)
-    await flush()
+    await nextTask()
     for (let i = 0; i < 7; i++) logoClick(5000 + i * 100)
-    await flush()
+    await nextTask()
     expect(calls('report_egg')).toHaveLength(2)
     for (let i = 0; i < 7; i++) logoClick(9000 + i * 100)
     expect(calls('report_egg')).toHaveLength(2)

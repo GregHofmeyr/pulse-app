@@ -17,6 +17,7 @@ import ConversationList from './ConversationList.svelte'
 import { app, resetState } from '../lib/store.svelte'
 import { applyEvent, emptyState } from '../lib/state'
 import { categoryNameOk, dmSections } from '../lib/dmLayout'
+import { flushMicrotasks } from '../lib/testSettle'
 
 const user = (id: string, name: string) => ({ id, username: name, display_name: name, avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } })
 const [alex, sam, kim, jo] = [user('U1', 'alex'), user('U2', 'sam'), user('U3', 'kim'), user('U4', 'jo')]
@@ -59,7 +60,6 @@ const rightClick = (el: Element) => {
   flushSync()
 }
 const item = (text: string) => [...document.querySelectorAll<HTMLButtonElement>('[role=menu] [role=menuitem], [role=menu] [role=menuitemradio]')].find((b) => b.textContent?.trim() === text)
-const flush = async () => { for (let i = 0; i < 6; i++) await Promise.resolve(); flushSync() }
 const FRIENDS = { id: 'K1', name: 'Friends', collapsed: false }
 
 describe('pins and categories (#305)', () => {
@@ -82,7 +82,7 @@ describe('pins and categories (#305)', () => {
     expect(outline().slice(0, 2)).toEqual(['# Friends 3', '# Conversations'])
     expect(outline()).not.toContain('squad')
     expect(invoke).toHaveBeenCalledWith('update_dm_category', { id: 'K1', request: { collapsed: true } })
-    await flush()
+    await flushMicrotasks(6)
   })
 
   it('right-click a conversation: Pin to top, and Move to category into one of yours', async () => {
@@ -90,7 +90,7 @@ describe('pins and categories (#305)', () => {
     rightClick(rowFor('sam'))
     answer = { categories: [FRIENDS], placements: [{ channel_id: 'D1', pinned: true, category_id: null }] }
     item('Pin to top')!.click()
-    await flush()
+    await flushMicrotasks(6)
     expect(invoke).toHaveBeenCalledWith('place_dm', { channelId: 'D1', request: { pinned: true, category_id: null } })
     expect(outline().slice(0, 2)).toEqual(['# Pinned', 'sam'])
     rightClick(rowFor('sam'))
@@ -98,7 +98,7 @@ describe('pins and categories (#305)', () => {
     item('Move to category')!.click()
     flushSync()
     item('Friends')!.click()
-    await flush()
+    await flushMicrotasks(6)
     expect(invoke).toHaveBeenLastCalledWith('place_dm', { channelId: 'D1', request: { pinned: true, category_id: 'K1' } })
   })
 
@@ -115,7 +115,7 @@ describe('pins and categories (#305)', () => {
     flushSync()
     answer = { categories: [{ id: 'K9', name: 'Work', collapsed: false }], placements: [] }
     item('Create and move')!.click()
-    await flush()
+    await flushMicrotasks(6)
     expect(invoke).toHaveBeenCalledWith('create_dm_category', { name: 'Work' })
     expect(invoke).toHaveBeenLastCalledWith('place_dm', { channelId: 'D2', request: { pinned: false, category_id: 'K9' } })
   })
@@ -131,11 +131,11 @@ describe('pins and categories (#305)', () => {
     field.value = 'Mates'
     field.dispatchEvent(new Event('input'))
     field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
-    await flush()
+    await flushMicrotasks(6)
     expect(invoke).toHaveBeenCalledWith('update_dm_category', { id: 'K1', request: { name: 'Mates' } })
     rightClick(document.querySelector('.label .section[aria-expanded]')!)
     item('Delete category')!.click()
-    await flush()
+    await flushMicrotasks(6)
     expect(invoke).toHaveBeenLastCalledWith('delete_dm_category', { id: 'K1' })
   })
 
@@ -149,7 +149,7 @@ describe('pins and categories (#305)', () => {
     expect(menuItems()).toEqual(['Rename category…', 'Move down', 'Delete category'])
     answer = { categories: [MATES, FRIENDS], placements }
     item('Move down')!.click()
-    await flush()
+    await flushMicrotasks(6)
     expect(invoke).toHaveBeenLastCalledWith('update_dm_category', { id: 'K1', request: { position: 1 } })
     expect(outline().indexOf('# Mates')).toBeLessThan(outline().indexOf('# Friends'))
     rightClick(headings()[1])
@@ -157,7 +157,7 @@ describe('pins and categories (#305)', () => {
     // refused: put back
     invoke.mockImplementationOnce(async () => { throw new Error('nope') })
     item('Move up')!.click()
-    await flush()
+    await flushMicrotasks(6)
     expect(outline().indexOf('# Mates')).toBeLessThan(outline().indexOf('# Friends'))
   })
 
@@ -238,7 +238,7 @@ describe('drag onto a section (#419)', () => {
     answer = { categories: [FRIENDS], placements: [{ channel_id: 'D1', pinned: false, category_id: 'K1' }] }
     ev(row, 'pointerup', 10, 60)
     row.click()
-    await flush()
+    await flushMicrotasks(6)
     expect(onOpen).not.toHaveBeenCalled()
     expect(invoke).toHaveBeenCalledWith('place_dm', { channelId: 'D1', request: { pinned: false, category_id: 'K1' } })
     expect(outline().slice(0, 3)).toEqual(['# Friends', 'sam', '# Conversations'])
@@ -267,7 +267,7 @@ describe('drag onto a section (#419)', () => {
     under = null
     ev(row, 'pointermove', 300, 120)
     ev(row, 'pointerup', 300, 120)
-    await flush()
+    await flushMicrotasks(6)
     expect(invoke).not.toHaveBeenCalledWith('place_dm', expect.anything())
   })
 

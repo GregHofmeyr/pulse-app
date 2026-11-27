@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 // Settings › Chat: Plan reminders (#399) is kept by the server (every device), shows at once, and goes back with the
 // reason when the server refuses.
-import { flushSync, mount, tick, unmount } from 'svelte'
+import { flushSync, mount, unmount } from 'svelte'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const invoke = vi.fn(async (_cmd: string, _args?: unknown): Promise<unknown> => undefined)
@@ -10,11 +10,11 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: (cmd: string, args?: never) => 
 import ChatSettings from './ChatSettings.svelte'
 import { app } from '../lib/store.svelte'
 import { emptyState } from '../lib/state'
+import { flushMicrotasks } from '../lib/testSettle'
 
 let cmp: ReturnType<typeof mount> | undefined
 const field = () => [...document.querySelectorAll<HTMLElement>('.settings-field')].find((f) => f.textContent!.includes('PLAN REMINDERS'))!
 const pick = (label: string) => [...field().querySelectorAll<HTMLButtonElement>('button[role=radio]')].find((b) => b.textContent === label)!
-async function settle() { for (let i = 0; i < 5; i++) await Promise.resolve(); await tick() }
 
 beforeEach(() => {
   invoke.mockReset()
@@ -36,7 +36,7 @@ describe('Plan reminders', () => {
     pick('Off').click()
     flushSync()
     expect(app.state.planReminders).toBe(false)
-    await settle()
+    await flushMicrotasks(6)
     expect(invoke).toHaveBeenCalledWith('set_plan_reminders', { on: false })
     expect(pick('Off').getAttribute('aria-checked')).toBe('true')
   })
@@ -44,7 +44,7 @@ describe('Plan reminders', () => {
   it('a refusal puts it back and says why', async () => {
     invoke.mockRejectedValueOnce('try again in a moment')
     pick('Off').click()
-    await settle()
+    await flushMicrotasks(6)
     flushSync()
     expect(app.state.planReminders).toBe(true)
     expect(field().querySelector('[role=alert]')!.textContent).toBe('try again in a moment')

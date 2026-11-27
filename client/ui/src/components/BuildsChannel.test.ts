@@ -18,6 +18,7 @@ import { buildFeedKey } from '../lib/builds'
 import { applyEvent, applyReady, emptyState } from '../lib/state'
 import { testMe, testReady } from '../lib/testReady'
 import { windowFocus } from '../lib/windowFocus.svelte'
+import { nextTask } from '../lib/testSettle'
 
 const sam = { id: 'U2', username: 'sam', display_name: 'sam', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
 const ready = () =>
@@ -50,7 +51,6 @@ const list = (args: unknown) => {
 }
 let pages: Message[][] = []
 let cmp: ReturnType<typeof mount> | undefined
-const settle = () => new Promise((r) => setTimeout(r, 0))
 /** The calls of `cmd` (for `list_builds`, the browse feed's: the Favourites feed's are `favCalls`). */
 const calls = (cmd: string) => invoke.mock.calls.filter((c) => c[0] === cmd && !(cmd === 'list_builds' && (c[1] as { favourite?: boolean })?.favourite))
 const favCalls = () => invoke.mock.calls.filter((c) => c[0] === 'list_builds' && (c[1] as { favourite?: boolean })?.favourite)
@@ -81,7 +81,7 @@ afterEach(() => {
 async function show(channelId = 'B1') {
   cmp = mount(BuildsChannel, { target: document.body, props: { channelId, serverId: 'S1' } })
   flushSync()
-  await settle()
+  await nextTask()
   flushSync()
 }
 
@@ -186,7 +186,7 @@ describe('BuildsChannel: gallery and list', () => {
     await show()
     expect(order()).toHaveLength(30)
     FakeIntersectionObserver.set(document.querySelector('.sentinel')!, true)
-    await settle()
+    await nextTask()
     flushSync()
     expect(calls('list_builds')[1][1]).toMatchObject({ before: id(11) })
     expect(order()).toHaveLength(40)
@@ -306,7 +306,7 @@ describe('BuildsChannel: right-click menu', () => {
     opener('M002').focus()
     opener('M002').dispatchEvent(new KeyboardEvent('keydown', { key: 'F10', shiftKey: true, bubbles: true, cancelable: true }))
     flushSync()
-    await settle()
+    await nextTask()
     expect(items()[0]).toBe('Open')
     expect(document.activeElement?.textContent?.trim()).toBe('Open')
     item('Open').click()
@@ -354,7 +354,7 @@ describe('BuildsChannel: right-click menu', () => {
     item('Delete').click()
     flushSync()
     ;[...document.querySelectorAll<HTMLButtonElement>('[role=dialog] button')].find((b) => b.textContent?.trim() === 'Delete')!.click()
-    await settle()
+    await nextTask()
     expect(calls('delete_build')[0][1]).toEqual({ messageId: 'M002' })
     expect(calls('delete_many_builds')).toHaveLength(0)
   })
@@ -459,7 +459,7 @@ describe('BuildsChannel: multi-select', () => {
     // sam's M002 isn't yours: the bar says so before you act
     expect(bar()!.textContent).toContain('1 not yours')
     barButton('Archive')!.click()
-    await settle()
+    await nextTask()
     expect(calls('archive_many_builds')).toEqual([['archive_many_builds', { channelId: 'B1', body: { message_ids: ['M003', 'M001'], archived: true } }]])
     const { ui } = await import('../lib/store.svelte')
     expect(ui.notice).toBe("Archived 2 builds. 1 skipped: they aren't yours to change.")
@@ -479,7 +479,7 @@ describe('BuildsChannel: multi-select', () => {
     expect(barButton('Archive')).toBeDefined()
     click('M002')
     barButton('Restore')!.click()
-    await settle()
+    await nextTask()
     expect(calls('archive_many_builds')[0][1]).toEqual({ channelId: 'B1', body: { message_ids: ['M002'], archived: false } })
   })
 
@@ -499,7 +499,7 @@ describe('BuildsChannel: multi-select', () => {
     expect(dialog.textContent).toContain('Delete 2 builds?')
     expect(calls('delete_many_builds')).toHaveLength(0)
     ;[...dialog.querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent?.trim() === 'Delete 2 builds')!.click()
-    await settle()
+    await nextTask()
     expect(calls('delete_many_builds')[0][1]).toEqual({ channelId: 'B1', body: { message_ids: ['M004', 'M003'] } })
     const { ui } = await import('../lib/store.svelte')
     // the server skipped one (gone or changed meanwhile): said apart from any not yours
@@ -537,7 +537,7 @@ describe('BuildsChannel: multi-select', () => {
     flushSync()
     app.state = applyEvent(app.state, { t: 'MessageUpdated', d: { message: mine('M004') } }, Date.now())
     flushSync()
-    await settle()
+    await nextTask()
     flushSync()
     expect(card('M004')).not.toBeNull()
     expect(checked()).toEqual(['M003'])
@@ -577,7 +577,7 @@ describe('BuildsChannel: multi-select', () => {
       flushSync()
       expect(checked()).not.toContain('M002')
     }
-    await settle()
+    await nextTask()
     expect(calls('set_build_favourite')).toHaveLength(0)
   })
 
@@ -665,7 +665,7 @@ describe('BuildsChannel: favourites', () => {
     await show()
     star('M002').click()
     star('M001').click()
-    await settle()
+    await nextTask()
     expect(calls('set_build_favourite').map((c) => c[1])).toEqual([{ messageId: 'M002', favourite: true }, { messageId: 'M001', favourite: false }])
     // the build page didn't open
     expect(document.querySelectorAll('.build-card')).toHaveLength(2)
@@ -682,7 +682,7 @@ describe('BuildsChannel: favourites', () => {
     menuItem('M002', 'Favourite')!.click()
     flushSync()
     menuItem('M001', 'Unfavourite')!.click()
-    await settle()
+    await nextTask()
     expect(calls('set_build_favourite').map((c) => c[1])).toEqual([{ messageId: 'M002', favourite: true }, { messageId: 'M001', favourite: false }])
   })
 
@@ -704,7 +704,7 @@ describe('BuildsChannel: favourites', () => {
     const btn = (l: string) => [...document.querySelectorAll<HTMLButtonElement>('[role=toolbar] button')].find((b) => b.getAttribute('aria-label') === l)
     expect(btn('Unfavourite')).toBeDefined()
     btn('Favourite')!.click()
-    await settle()
+    await nextTask()
     expect(calls('favourite_many_builds')[0][1]).toEqual({ channelId: 'B1', body: { message_ids: ['M003', 'M002'], favourite: true } })
     const { ui } = await import('../lib/store.svelte')
     expect(ui.notice).toBe('Added 2 builds to your favourites.')
@@ -746,7 +746,7 @@ describe('BuildsChannel: favourites', () => {
     const toggle = document.querySelector<HTMLElement>('[role=switch]')
     toggle?.click()
     flushSync()
-    await settle()
+    await nextTask()
     flushSync()
     expect(sections()).toEqual({ favs: ['M004'], rest: ['M002'] })
   })
@@ -790,7 +790,7 @@ describe('BuildsChannel: favourites', () => {
     await show()
     app.state = applyEvent(app.state, { t: 'BuildFavouriteChanged', d: { user_id: 'U1', channel_id: 'B1', message_ids: ['M001'], favourite: true } }, Date.now())
     flushSync()
-    await settle()
+    await nextTask()
     flushSync()
     expect(calls('get_build')).toEqual([['get_build', { messageId: 'M001' }]])
     expect(sections()).toEqual({ favs: ['M001'], rest: ['M009'] })
@@ -812,7 +812,7 @@ describe('BuildsChannel: favourites', () => {
     // the restore's event carries no one's star
     app.state = applyEvent(app.state, { t: 'MessageUpdated', d: { message: build('M002') } }, Date.now())
     flushSync()
-    await settle()
+    await nextTask()
     flushSync()
     expect(calls('get_build')).toEqual([['get_build', { messageId: 'M002' }]])
     expect(sections()).toEqual({ favs: ['M002'], rest: ['M001'] })

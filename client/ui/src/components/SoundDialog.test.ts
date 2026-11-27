@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { flushSync, mount, tick, unmount } from 'svelte'
+import { flushSync, mount, unmount } from 'svelte'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Sound } from '../lib/protocol/Sound'
 
@@ -14,6 +14,7 @@ import { soundboard } from '../lib/soundboard.svelte'
 import { setNotch } from '../lib/mixer.svelte'
 import { canonicalKey } from '../lib/emoji'
 import type { CustomEmoji } from '../lib/protocol/CustomEmoji'
+import { settle } from '../lib/testSettle'
 
 const peaks = Array.from({ length: 200 }, (_, i) => (i % 10) / 10)
 const snd = (id: string, name: string, plays: number): Sound => ({
@@ -24,10 +25,6 @@ let answers: Record<string, unknown> = {}
 let cmp: ReturnType<typeof mount> | undefined
 const onClose = vi.fn()
 const calls = (c: string) => invoke.mock.calls.filter((x) => x[0] === c)
-const settle = async () => {
-  for (let i = 0; i < 5; i++) await tick()
-  flushSync()
-}
 const q = <T extends Element>(s: string) => document.querySelector<T>(s)!
 const button = (t: string) => [...document.querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent?.trim() === t)!
 const fill = (label: string, v: string) => {

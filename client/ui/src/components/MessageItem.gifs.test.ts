@@ -16,6 +16,7 @@ import { app } from '../lib/store.svelte'
 import { emptyState } from '../lib/state'
 import { gifFavs, resetGifFavs } from '../lib/gifs.svelte'
 import { previews } from '../lib/linkPreviews.svelte'
+import { flushMicrotasks } from '../lib/testSettle'
 
 const ID = '3o7TKSjRrfIPjeiVyM'
 const LINK = `https://giphy.com/gifs/excited-yes-${ID}`
@@ -44,7 +45,6 @@ function show(m: Message) {
 const gifs = () => [...document.querySelectorAll<HTMLElement>('.gif')]
 const img = (g = gifs()[0]) => g.querySelector('img')!
 const content = () => document.querySelector('.content')
-const flush = async () => { for (let i = 0; i < 6; i++) await Promise.resolve(); flushSync() }
 
 beforeEach(() => {
   motion.reducedMotion = false
@@ -123,9 +123,9 @@ describe('GIFs in chat', () => {
 
   it('the star adds it to your favourites', async () => {
     show(picked())
-    await flush()
+    await flushMicrotasks(6)
     gifs()[0].querySelector<HTMLButtonElement>('.star')!.click()
-    await flush()
+    await flushMicrotasks(6)
     expect(invoke).toHaveBeenCalledWith('set_gif_favourite', { gif: { id: ID, title: 'Excited Yes GIF', width: 480, height: 270 }, on: true })
     expect(gifFavs.list.map((g) => g.id)).toEqual([ID])
     expect(gifs()[0].querySelector('.star')!.getAttribute('aria-label')).toBe('Remove from favourite GIFs')
@@ -133,9 +133,9 @@ describe('GIFs in chat', () => {
 
   it('a sticker\'s star adds it to your favourite stickers, marked (#498)', async () => {
     show(picked({ gif: { id: ID, title: 'Wave Sticker', width: 480, height: 480, sticker: true } }))
-    await flush()
+    await flushMicrotasks(6)
     gifs()[0].querySelector<HTMLButtonElement>('.star')!.click()
-    await flush()
+    await flushMicrotasks(6)
     expect(invoke).toHaveBeenCalledWith('set_gif_favourite', { gif: { id: ID, title: 'Wave Sticker', width: 480, height: 480, sticker: true }, on: true })
     expect(gifs()[0].querySelector('.star')!.getAttribute('aria-label')).toBe('Remove from favourite stickers')
   })

@@ -10,6 +10,7 @@ import ConversationMenu from './ConversationMenu.svelte'
 import { app } from '../lib/store.svelte'
 import { emptyState } from '../lib/state'
 import type { Channel } from '../lib/protocol/Channel'
+import { nextTask } from '../lib/testSettle'
 
 const group: Channel = { id: 'G1', server_id: null, kind: 'group', name: 'Squad', position: 0 }
 const MENU_W = 230
@@ -90,7 +91,6 @@ describe("the bell's popover", () => {
   const flyout = (name: string) => document.querySelector<HTMLElement>(`[role=menu][aria-label="${name}"]`)
   const choices = (name: string) => [...(flyout(name)?.querySelectorAll<HTMLButtonElement>('[role^=menuitem]') ?? [])]
   const ticked = (name: string) => choices(name).filter((b) => b.getAttribute('aria-checked') === 'true').map((b) => b.textContent?.trim())
-  const settle = () => new Promise((r) => setTimeout(r, 0))
   beforeEach(() => {
     invoke.mockReset()
     invoke.mockResolvedValue(undefined)
@@ -112,7 +112,7 @@ describe("the bell's popover", () => {
     // the bell is near the window's right: the flyout opens to the left
     expect(flyout('Mute #general for')!.dataset.side).toBe('left')
     choices('Mute #general for')[4].click()
-    await settle()
+    await nextTask()
     expect(invoke).toHaveBeenCalledWith('set_mute', { targetKind: 'channel', targetId: 'C1', until: null })
     expect(onClose).toHaveBeenCalled()
   })
@@ -136,7 +136,7 @@ describe("the bell's popover", () => {
     hover(item('Notifications'))
     expect(ticked('Notifications for #general')).toEqual(['Nothing'])
     item('Unmute channel').click()
-    await settle()
+    await nextTask()
     expect(invoke).toHaveBeenCalledWith('clear_mute', { targetKind: 'channel', targetId: 'C1' })
   })
 
@@ -144,14 +144,14 @@ describe("the bell's popover", () => {
     open(general)
     hover(item('Notifications'))
     choices('Notifications for #general').find((b) => b.textContent?.trim() === 'Only @mentions')!.click()
-    await settle()
+    await nextTask()
     expect(invoke).toHaveBeenCalledWith('set_notify_level', { targetKind: 'channel', targetId: 'C1', level: 'mentions' })
     expect(onClose).toHaveBeenCalled()
     unmount(cmp!)
     open(general, [{ target_kind: 'channel', target_id: 'C1', level: 'mentions' }])
     hover(item('Notifications'))
     choices('Notifications for #general').find((b) => b.textContent?.trim() === 'Follow server')!.click()
-    await settle()
+    await nextTask()
     expect(invoke).toHaveBeenLastCalledWith('set_notify_level', { targetKind: 'channel', targetId: 'C1', level: null })
   })
 

@@ -17,13 +17,10 @@ import { app, resetState } from '../lib/store.svelte'
 import { applyEvent, applyReady, emptyState, type AppState } from '../lib/state'
 import { testMe, testReady } from '../lib/testReady'
 import type { Message } from '../lib/protocol/Message'
+import { flushMicrotasks } from '../lib/testSettle'
 
 const sam = { id: 'U2', username: 'sam', display_name: 'sam', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
 let cmp: ReturnType<typeof mount> | undefined
-const settle = async () => {
-  for (let i = 0; i < 6; i++) await Promise.resolve()
-  flushSync()
-}
 
 beforeEach(() => {
   resetState()
@@ -62,12 +59,12 @@ describe("your DM with someone you've blocked", () => {
     open()
     expect(note()!.querySelector('button')).toBeNull()
     note()!.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 10, clientY: 10 }))
-    await settle()
+    await flushMicrotasks(6)
     const unblock = document.querySelector<HTMLButtonElement>('[role=menu] [data-item="unblock"]')!
     expect(unblock).not.toBeNull()
     invoke.mockResolvedValueOnce([])
     unblock.click()
-    await settle()
+    await flushMicrotasks(6)
     expect(invoke.mock.calls.filter(([c]) => c === 'set_block').map(([, a]) => a)).toEqual([{ userId: 'U2', mode: null }])
   })
 })

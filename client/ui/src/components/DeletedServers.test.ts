@@ -12,6 +12,7 @@ import { app, clock } from '../lib/store.svelte'
 import { windowFocus } from '../lib/windowFocus.svelte'
 import { emptyState } from '../lib/state'
 import type { DeletedServer } from '../lib/protocol/DeletedServer'
+import { nextTask } from '../lib/testSettle'
 
 const DAY = 86_400_000
 const gone = (id: string, name: string, o: Partial<DeletedServer> = {}): DeletedServer => ({
@@ -23,14 +24,13 @@ const gone = (id: string, name: string, o: Partial<DeletedServer> = {}): Deleted
 })
 
 let cmp: ReturnType<typeof mount> | undefined
-const settle = () => new Promise((r) => setTimeout(r, 0))
 const button = (label: string) => document.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)
 async function show(list: DeletedServer[]) {
   invoke.mockImplementation(async (cmd: string) => (cmd === 'list_deleted_servers' ? list : undefined))
   app.state = emptyState()
   cmp = mount(DeletedServers, { target: document.body })
   flushSync()
-  await settle()
+  await nextTask()
   flushSync()
 }
 
@@ -55,7 +55,7 @@ describe('DeletedServers', () => {
   it('restores one, which leaves the list', async () => {
     await show([gone('S1', 'Main'), gone('S2', 'Old')])
     button('Restore Main')!.click()
-    await settle()
+    await nextTask()
     flushSync()
     expect(invoke).toHaveBeenCalledWith('restore_server', { serverId: 'S1' })
     expect([...document.querySelectorAll('li')].map((li) => li.textContent)).toEqual([expect.stringContaining('Old')])
@@ -71,7 +71,7 @@ describe('DeletedServers', () => {
     await show([gone('S1', 'Main')])
     invoke.mockRejectedValueOnce('nope')
     button('Restore Main')!.click()
-    await settle()
+    await nextTask()
     flushSync()
     expect(document.querySelector('[role=alert]')).not.toBeNull()
   })
@@ -81,7 +81,7 @@ describe('DeletedServers', () => {
   const tickClock = async () => {
     clock.nowIso = new Date(Date.parse(clock.nowIso) + 30_000).toISOString()
     flushSync()
-    await settle()
+    await nextTask()
     flushSync()
   }
 
@@ -115,11 +115,11 @@ describe('DeletedServers', () => {
     invoke.mockImplementation(async (cmd: string) => (cmd === 'list_deleted_servers' ? [] : undefined))
     windowFocus.focused = false
     flushSync()
-    await settle()
+    await nextTask()
     expect(listCalls()).toBe(n)
     windowFocus.focused = true
     flushSync()
-    await settle()
+    await nextTask()
     flushSync()
     expect(listCalls()).toBe(n + 1)
     expect(document.body.textContent).toContain('No deleted servers.')

@@ -2,7 +2,7 @@
 // Your own channel order (#304): drawn over the server's layout for you only; moves then change only yours (never a
 // layout save); the server's later changes still show (new channels after yours); the Archived group stays apart;
 // Reset to server order; the server tab's menu starts and resets it.
-import { flushSync, mount, tick, unmount } from 'svelte'
+import { flushSync, mount, unmount } from 'svelte'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const invoke = vi.fn()
@@ -18,6 +18,7 @@ import { testReady } from '../lib/testReady'
 import type { Category } from '../lib/protocol/Category'
 import type { Channel } from '../lib/protocol/Channel'
 import type { ChannelOrder } from '../lib/protocol/ChannelOrder'
+import { settle } from '../lib/testSettle'
 
 const cat = (id: string, name: string, position: number): Category => ({ id, server_id: 'S1', name, position })
 const cats: Category[] = [cat('C1', 'Text Channels', 0), cat('C2', 'Gaming', 1)]
@@ -51,10 +52,6 @@ const sections = () => [...document.querySelectorAll('.list > .cat')].map((c) =>
 const headings = () => [...document.querySelectorAll('.list > .cat button.section')].map((h) => h.textContent?.trim())
 const rowOf = (id: string) => document.querySelector<HTMLElement>(`.row[data-channel="${id}"]`)!
 const calls = (cmd: string) => invoke.mock.calls.filter(([c]) => c === cmd).map(([, a]) => a)
-const flush = async () => {
-  for (let i = 0; i < 6; i++) await tick()
-  flushSync()
-}
 
 describe('your own channel order', () => {
   it('draws your order over the server’s, says so, and keeps archived channels apart', () => {
@@ -70,7 +67,7 @@ describe('your own channel order', () => {
     show()
     rowOf('T2').focus()
     rowOf('T2').dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', altKey: true, bubbles: true, cancelable: true }))
-    await flush()
+    await settle(6)
     expect(calls('save_layout')).toEqual([])
     expect(calls('set_channel_order')).toEqual([{ serverId: 'S1', request: { uncategorised: [], categories: [{ id: 'C2', channels: ['Q1', 'T0'] }, { id: 'C1', channels: ['T1', 'T2'] }] } }])
     expect(sections()[2]).toEqual(['general', 'memes'])
@@ -82,7 +79,7 @@ describe('your own channel order', () => {
     })
     show()
     rowOf('T2').dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', altKey: true, bubbles: true, cancelable: true }))
-    await flush()
+    await settle(6)
     expect(sections()[2]).toEqual(['memes', 'general'])
   })
 
@@ -93,7 +90,7 @@ describe('your own channel order', () => {
     flushSync()
     expect(sections()[2]).toEqual(['memes', 'general', 'new'])
     ;[...document.querySelectorAll<HTMLButtonElement>('[data-personal-order] button')][0].click()
-    await flush()
+    await settle(6)
     expect(calls('set_channel_order')).toEqual([{ serverId: 'S1', request: null }])
     expect(headings()).toEqual(['Text Channels', 'Gaming'])
     expect(document.querySelector('[data-personal-order]')).toBeNull()
@@ -103,7 +100,7 @@ describe('your own channel order', () => {
     invoke.mockImplementation((c: string) => (c === 'save_layout' ? new Promise(() => {}) : Promise.resolve(undefined)))
     show([])
     rowOf('T1').dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', altKey: true, bubbles: true, cancelable: true }))
-    await flush()
+    await settle(6)
     expect(calls('save_layout')).toHaveLength(1)
     expect(calls('set_channel_order')).toEqual([])
   })
@@ -124,7 +121,7 @@ describe('the server tab’s menu', () => {
     open()
     expect(item().textContent).toBe('Arrange channels just for me')
     item().click()
-    await flush()
+    await settle(6)
     expect(calls('set_channel_order')).toEqual([{ serverId: 'S1', request: { uncategorised: ['T0'], categories: [{ id: 'C1', channels: ['T1', 'T2'] }, { id: 'C2', channels: ['Q1'] }] } }])
     expect(app.state.channelOrders.S1).toBeDefined()
   })

@@ -15,6 +15,7 @@ import { addHistory, markHistory } from '../lib/state'
 import { windowFocus } from '../lib/windowFocus.svelte'
 import { positionAt } from '../lib/composerDom'
 import { testMe, testReady } from '../lib/testReady'
+import { nextTask } from '../lib/testSettle'
 
 const sam = { id: 'U2', username: 'sam', display_name: 'sam', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
 const ready = testReady([{ id: 'C1', server_id: 'S1', kind: 'quotes', name: 'quotes', position: 0 }], {
@@ -36,7 +37,6 @@ const root: Message = {
 const reply = (n: number, over: Partial<Message> = {}): Message => ({ ...base(`R${String(n).padStart(4, '0')}`), content: `reply ${n}`, thread_root_id: 'Q1', ...over })
 
 let cmp: ReturnType<typeof mount> | undefined
-const settle = () => new Promise((r) => setTimeout(r, 0))
 const calls = (cmd: string) => invoke.mock.calls.filter((c) => c[0] === cmd)
 const rowOf = (text: string) => [...document.querySelectorAll<HTMLElement>('.msg')].find((m) => m.querySelector('.content')?.textContent?.trim() === text)!
 
@@ -44,7 +44,7 @@ async function show(props: { placeholder?: string; authorTag?: string | null } =
   app.state = markHistory(addHistory({ ...app.state }, 'C1', [root]), 'C1', true)
   cmp = mount(ThreadChat, { target: document.body, props: { root, serverId: 'S1', placeholder: 'Comment on this build', ...props } })
   flushSync()
-  await settle()
+  await nextTask()
   flushSync()
 }
 

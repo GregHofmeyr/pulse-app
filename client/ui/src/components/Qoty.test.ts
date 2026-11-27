@@ -21,6 +21,7 @@ import { applyEvent } from '../lib/state'
 import { app, clock, handleReady, resetState } from '../lib/store.svelte'
 import { testMe, testQoty, testReady } from '../lib/testReady'
 import { reactiveProps } from '../lib/testProps.svelte'
+import { settleTask } from '../lib/testSettle'
 
 const sam = { id: 'U2', username: 'sam', display_name: 'sam', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
 const kim = { id: 'U3', username: 'kim', display_name: 'kim', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
@@ -56,10 +57,6 @@ const set = (e: QotyEvent) => {
 let mounted: ReturnType<typeof mount>[] = []
 function show<P extends Record<string, any>>(c: Component<P>, props: P) {
   mounted.push(mount(c, { target: document.body, props }))
-  flushSync()
-}
-const settle = async () => {
-  await new Promise((r) => setTimeout(r, 0))
   flushSync()
 }
 const text = (el: Element | null) => (el?.textContent ?? '').replace(/\s+/g, ' ').trim()
@@ -133,7 +130,7 @@ describe('Quote of the Year voting', () => {
     show(QotyBanner, { serverId: 'S1' })
     button('Vote', banner()!)!.click()
     flushSync()
-    await settle()
+    await settleTask(0)
     expect(document.querySelector('[role=dialog][aria-label="Quote of the Year 2026"]')).toBeTruthy()
   }
 
@@ -143,14 +140,14 @@ describe('Quote of the Year voting', () => {
     expect(text(option('Q1'))).toContain('sam')
     expect(text(option('Q1'))).toContain('4 reactions')
     button('Vote', option('Q1'))!.click()
-    await settle()
+    await settleTask(0)
     expect(calls('vote_qoty')).toEqual([{ eventId: 'E1', messageId: 'Q1' }])
     // the server's answer: my vote is on Q1
     set(event({ options: [opt(quote('Q1', 'first one', 'U2', 4), ['U1']), opt(quote('Q2', 'second one', 'U3', 2))], voters: 1 }))
     expect(option('Q1').classList.contains('mine')).toBe(true)
     expect(button('Your vote', option('Q1'))!.getAttribute('aria-pressed')).toBe('true')
     button('Vote', option('Q2'))!.click()
-    await settle()
+    await settleTask(0)
     expect(calls('vote_qoty')).toEqual([{ eventId: 'E1', messageId: 'Q1' }, { eventId: 'E1', messageId: 'Q2' }])
     button('Your vote', option('Q1'))!.click()
     expect(calls('unvote_qoty')).toEqual([{ eventId: 'E1' }])
@@ -195,7 +192,7 @@ describe('Quote of the Year voting', () => {
     input.value = 'dec'
     input.dispatchEvent(new Event('input', { bubbles: true }))
     await new Promise((r) => setTimeout(r, 300))
-    await settle()
+    await settleTask(0)
     expect(calls('search_quotes')).toEqual([{ serverId: 'S1', q: 'dec' }])
     // already an option, or won an earlier year: not offered
     const results = [...document.querySelectorAll<HTMLButtonElement>('.results button')]
@@ -207,7 +204,7 @@ describe('Quote of the Year voting', () => {
   it('animates a vote', async () => {
     await openVoting()
     button('Vote', option('Q1'))!.click()
-    await settle()
+    await settleTask(0)
     expect(option('Q1').classList.contains('popped')).toBe(true)
   })
 
@@ -222,7 +219,7 @@ describe('Quote of the Year voting', () => {
     button('Vote', option('Q2'))!.click()
     expect(calls('vote_qoty')).toEqual([{ eventId: 'E1', messageId: 'Q1' }])
     answer()
-    await settle()
+    await settleTask(0)
     expect(button('Vote', option('Q2'))!.disabled).toBe(false)
   })
 
@@ -232,7 +229,7 @@ describe('Quote of the Year voting', () => {
     })
     await openVoting()
     button('Vote', option('Q1'))!.click()
-    await settle()
+    await settleTask(0)
     expect(option('Q1').classList.contains('popped')).toBe(false)
     expect(document.querySelector('.qoty-voting [role=alert]')).toBeTruthy()
   })
@@ -253,7 +250,7 @@ describe('Quote of the Year voting window lifecycle', () => {
     expect(dialog()).toBeNull()
     // the same event, reopened
     set(event())
-    await settle()
+    await settleTask(0)
     expect(banner()).toBeTruthy()
     expect(dialog()).toBeNull()
   })
@@ -267,7 +264,7 @@ describe('Quote of the Year voting window lifecycle', () => {
     app.state = applyEvent(app.state, { t: 'QotyEnded', d: { event: ended() } }, Date.now())
     flushSync()
     set(event())
-    await settle()
+    await settleTask(0)
     expect(document.querySelector('.qoty-strip')).toBeTruthy()
     expect(dialog()).toBeNull()
   })
@@ -283,7 +280,7 @@ describe('Quote of the Year voting window lifecycle', () => {
     expect(dialog()).toBeTruthy()
     props.serverId = 'S2'
     flushSync()
-    await settle()
+    await settleTask(0)
     expect(banner()).toBeTruthy()
     expect(dialog()).toBeNull()
   })
@@ -295,7 +292,7 @@ describe('Quote of the Year voting window details', () => {
     show(QotyBanner, { serverId: 'S1' })
     button('Vote', banner()!)!.click()
     flushSync()
-    await settle()
+    await settleTask(0)
   }
   const items = () => [...document.querySelectorAll<HTMLElement>('[role=menuitem]')].map((x) => x.textContent?.trim())
   const lineMenu = () => {
@@ -341,11 +338,11 @@ describe('Quote of the Year voting window details', () => {
       cmd === 'vote_qoty' ? event({ options: [opt(quote('Q1', 'first one', 'U2', 4), ['U1']), opt(quote('Q2', 'second one', 'U3', 2))], voters: 1 }) : undefined)
     await openVoting()
     button('Vote', option('Q1'))!.click()
-    await settle()
+    await settleTask(0)
     // the gateway's QotyUpdated hasn't arrived yet; the answer already says it's mine
     expect(option('Q1').classList.contains('mine')).toBe(true)
     button('Your vote', option('Q1'))!.click()
-    await settle()
+    await settleTask(0)
     expect(calls('vote_qoty')).toEqual([{ eventId: 'E1', messageId: 'Q1' }])
     expect(calls('unvote_qoty')).toEqual([{ eventId: 'E1' }])
   })
@@ -364,21 +361,21 @@ describe('Quote of the Year voting window details', () => {
     await openVoting()
     button('End voting…')!.click()
     flushSync()
-    await settle()
+    await settleTask(0)
     const cancel = button('Cancel', document.querySelector('.confirm')!)!
     expect(document.activeElement).toBe(cancel)
     const q = document.getElementById(cancel.getAttribute('aria-describedby') ?? '')
     expect(text(q)).toBe("End voting now? Everyone's votes are final.")
     cancel.click()
     flushSync()
-    await settle()
+    await settleTask(0)
     expect(document.activeElement).toBe(button('End voting…'))
     button('End voting…')!.click()
     flushSync()
-    await settle()
+    await settleTask(0)
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
     flushSync()
-    await settle()
+    await settleTask(0)
     expect(document.querySelector('.confirm')).toBeNull()
     expect(dialogOpen()).toBe(true)
     expect(document.activeElement).toBe(button('End voting…'))
@@ -389,7 +386,7 @@ describe('Quote of the Year voting window details', () => {
     await openVoting()
     await search('dec')
     document.querySelector<HTMLButtonElement>('.results button')!.click()
-    await settle()
+    await settleTask(0)
     expect(document.querySelector('input[aria-label="Search quotes"]')).toBeNull()
     expect(document.activeElement).toBe(button('Add a quote'))
   })
@@ -402,7 +399,7 @@ describe('Quote of the Year voting window details', () => {
     await openVoting()
     await search('dec')
     document.querySelector<HTMLButtonElement>('.results button')!.click()
-    await settle()
+    await settleTask(0)
     expect(text(document.querySelector('.qoty-voting [role=alert]'))).toBe('This vote has enough options.')
     // still adding: the search stays
     expect(document.querySelector('input[aria-label="Search quotes"]')).toBeTruthy()
@@ -416,7 +413,7 @@ describe('Quote of the Year voting window details', () => {
     input.value = q
     input.dispatchEvent(new Event('input', { bubbles: true }))
     await new Promise((r) => setTimeout(r, 300))
-    await settle()
+    await settleTask(0)
   }
 })
 
@@ -429,7 +426,7 @@ describe('Quote of the Year start', () => {
     // a start in flight ignores more presses: let each one finish
     const press = async () => {
       start().click()
-      await settle()
+      await settleTask(0)
     }
     await press()
     expect(calls('start_qoty').at(-1)).toEqual({ serverId: 'S1', body: { year: defaultQotyYear(new Date()), minutes: 180 } })
@@ -484,12 +481,12 @@ describe('Quote of the Year start', () => {
     })
     show(QotyStart, { serverId: 'S1', onClose })
     button('Start')!.click()
-    await settle()
+    await settleTask(0)
     expect(document.querySelector('[role=alert]')).toBeTruthy()
     expect(onClose).not.toHaveBeenCalled()
     invoke.mockImplementation(async () => event())
     button('Start')!.click()
-    await settle()
+    await settleTask(0)
     expect(onClose).toHaveBeenCalled()
   })
 })
@@ -542,7 +539,7 @@ describe('Quote of the Year winner card', () => {
     q.quote!.lines.push({ ...q.quote!.lines[0], id: 'LQ1b', speaker_id: 'U3', text: 'and another' })
     invoke.mockImplementation(async (cmd: string) => (cmd === 'list_messages_around' ? [quote('Q2', 'newer'), q, quote('Q0', 'older')] : undefined))
     showCard(card({}, ['U2']), null)
-    await settle()
+    await settleTask(0)
     expect(calls('list_messages_around')).toEqual([{ channelId: 'C1', messageId: 'Q1' }])
     const c = document.querySelector('.qoty-card')!
     expect([...c.querySelectorAll('.q p')].map(text)).toEqual(['“first one”', '“and another”'])
@@ -560,7 +557,7 @@ describe('Quote of the Year winner card', () => {
     const b = document.querySelector<HTMLButtonElement>('.qoty-card button.clip-dl[aria-label="Save image"]')!
     expect(b.dataset.tip).toBe('Save image')
     b.click()
-    await settle()
+    await settleTask(0)
     expect(calls('save_image')).toEqual([{ hash: A, caption: 'the look' }])
     expect(text(document.querySelector('.qoty-card [role=alert]'))).toBe("couldn't save the file: denied")
   })
@@ -585,7 +582,7 @@ describe('Quote of the Year winner card', () => {
       if (cmd === 'list_messages_around') throw { code: 'network', message: 'offline' }
     })
     showCard(card({}, ['U2']), null)
-    await settle()
+    await settleTask(0)
     expect(text(document.querySelector('.qoty-card'))).toContain('“first one” — sam')
   })
 
@@ -607,12 +604,12 @@ describe('Quote of the Year winner card', () => {
     // Fetched: the window has it, deleted.
     invoke.mockImplementation(async (cmd: string) => (cmd === 'list_messages_around' ? [{ ...quote('Q1', 'x'), deleted: true, content: '', quote: null }] : undefined))
     showCard(snap(card()), null)
-    await settle()
+    await settleTask(0)
     deleted('fetched')
     // Fetched: the server no longer shows it.
     invoke.mockImplementation(async (cmd: string) => (cmd === 'list_messages_around' ? null : undefined))
     showCard(snap(card()), null)
-    await settle()
+    await settleTask(0)
     deleted('gone')
   })
 
@@ -647,7 +644,7 @@ describe('Quote of the Year winner card', () => {
     expect([...document.querySelectorAll('[role=radiogroup][aria-label="Length"] [role=radio]')].map(text))
       .toEqual(['3 hours', '1 day', 'Custom', 'Until ended'])
     button('Reopen')!.click()
-    await settle()
+    await settleTask(0)
     expect(calls('reopen_qoty')).toEqual([{ eventId: 'E1', minutes: 180 }])
     expect(document.querySelector('[role=dialog]')).toBeNull() // done: the dialog closes
     button('Reopen voting')!.click()
@@ -695,7 +692,7 @@ describe('Quote of the Year motion', () => {
     button('Vote', banner()!)!.click()
     flushSync()
     button('Vote', option('Q1'))!.click()
-    await settle()
+    await settleTask(0)
     expect(calls('vote_qoty')).toEqual([{ eventId: 'E1', messageId: 'Q1' }])
     expect(option('Q1').classList.contains('popped')).toBe(false)
     expect(document.querySelector('.qoty-voting.animated')).toBeNull()

@@ -18,6 +18,7 @@ import { INBOX_PAGE } from '../lib/inbox'
 import { app, clock, handleReady, resetState, ui } from '../lib/store.svelte'
 import { testMe, testReady } from '../lib/testReady'
 import { testItem as item, testMessage } from '../lib/testInbox'
+import { flushMicrotasks } from '../lib/testSettle'
 
 const sam = { id: 'SAM', username: 'sam', display_name: 'Sam', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
 const NOW = Date.parse('2026-11-12T10:05:00.000Z')
@@ -25,12 +26,11 @@ const NOW = Date.parse('2026-11-12T10:05:00.000Z')
 let pages: Record<string, InboxPage> = {}
 let cmp: ReturnType<typeof mount> | undefined
 const onClose = vi.fn()
-const settle = async () => { for (let i = 0; i < 6; i++) await Promise.resolve(); flushSync() }
 async function show() {
   openInbox()
   cmp = mount(InboxPopover, { target: document.body, props: { onClose } })
   flushSync()
-  await settle()
+  await flushMicrotasks(6)
 }
 const rows = () => [...document.querySelectorAll<HTMLButtonElement>('.item')]
 const ids = () => rows().map((r) => r.querySelector('.said')?.textContent)
@@ -109,7 +109,7 @@ describe('the inbox (#306)', () => {
     await show()
     const tab = [...document.querySelectorAll<HTMLButtonElement>('[role=radio]')].find((b) => b.textContent === 'Mentions')!
     tab.click()
-    await settle()
+    await flushMicrotasks(6)
     expect(invoke).toHaveBeenCalledWith('inbox', { before: null, mentions: true })
     expect(ids()).toEqual(['look @alex'])
     expect(localStorage.getItem('pulse.inbox.tab')).toBe('mentions')
@@ -118,7 +118,7 @@ describe('the inbox (#306)', () => {
   it('opening an item reads it and jumps to it; a reply in a quote opens its replies', async () => {
     await show()
     rows()[0].click()
-    await settle()
+    await flushMicrotasks(6)
     expect(invoke).toHaveBeenCalledWith('inbox_read', { messageId: 'M3' })
     expect(inbox.open).toBe(false)
     expect(inbox.unread).toBe(0)
@@ -141,7 +141,7 @@ describe('the inbox (#306)', () => {
     await show()
     const mark = [...document.querySelectorAll('button')].find((b) => b.textContent === 'Mark all read')!
     mark.click()
-    await settle()
+    await flushMicrotasks(6)
     expect(invoke).toHaveBeenCalledWith('inbox_read_all', { upto: 'M3' })
     expect(inbox.unread).toBe(0)
     expect(rows().some((r) => r.classList.contains('unread'))).toBe(false)
@@ -168,7 +168,7 @@ describe('the inbox (#306)', () => {
     await show()
     invoke.mockClear()
     noteInboxEvent({ t: 'MutesChanged', d: { user_id: 'U1', mutes: [] } })
-    await settle()
+    await flushMicrotasks(6)
     expect(invoke).toHaveBeenCalledWith('inbox', { before: null, mentions: false })
     expect(rows()).toHaveLength(2)
   })
@@ -178,7 +178,7 @@ describe('the inbox (#306)', () => {
     await show()
     const list = document.querySelector<HTMLElement>('.list')!
     list.dispatchEvent(new Event('scroll'))
-    await settle()
+    await flushMicrotasks(6)
     expect(invoke).toHaveBeenCalledWith('inbox', { before: 'M071', mentions: false })
     expect(inbox.lists.all?.end).toBe(true)
     if (cmp) unmount(cmp)
@@ -231,7 +231,7 @@ describe('where an inbox item opens (#324)', () => {
     inbox.lists = { all: null, mentions: null }
     await show()
     rows()[0].click()
-    await settle()
+    await flushMicrotasks(6)
   }
   const clip = testMessage('V1', { channel_id: 'K1', author_id: 'U1', mentions: [], content: 'clutch' })
   const clipReply = item('R5', { kind: 'reply' }, { channel_id: 'K1', thread_root_id: 'V1', mentions: [] })
@@ -279,7 +279,7 @@ describe('where an inbox item opens (#324)', () => {
     ui.goTo = null
     ui.openChannelId = 'C1'
     answer([clip])
-    await settle()
+    await flushMicrotasks(6)
     expect(ui.openClip).toBeNull()
   })
 
@@ -320,7 +320,7 @@ describe('reminders and scheduled messages in the inbox (#300, #299)', () => {
     const buttons = rows().map((r) => r.querySelector<HTMLButtonElement>('.done')!.textContent)
     expect(buttons).toEqual(['Done', 'Cancel'])
     rows()[1].querySelector<HTMLButtonElement>('.done')!.click()
-    await settle()
+    await flushMicrotasks(6)
     expect(invoke).toHaveBeenCalledWith('delete_reminder', { id: 'R2' })
     expect(ids()).toEqual(['about R1'])
   })
@@ -329,7 +329,7 @@ describe('reminders and scheduled messages in the inbox (#300, #299)', () => {
     reminders.list = [rem('R1', true)]
     await show()
     rows()[0].querySelector<HTMLButtonElement>('.open')!.click()
-    await settle()
+    await flushMicrotasks(6)
     expect(invoke).toHaveBeenCalledWith('reminder_seen', { id: 'R1' })
     expect(ui.goTo).toBe('C1')
     expect(reminders.list[0].seen).toBe(true)
@@ -344,7 +344,7 @@ describe('reminders and scheduled messages in the inbox (#300, #299)', () => {
     expect(list.textContent).toContain('#general')
     expect(list.textContent).toContain('see you at 8')
     ;[...list.querySelectorAll('button')].find((b) => b.textContent === 'Delete')!.click()
-    await settle()
+    await flushMicrotasks(6)
     expect(invoke).toHaveBeenCalledWith('delete_scheduled', { id: 'S1' })
   })
 })
@@ -402,11 +402,11 @@ describe('saved messages in the inbox (#315)', () => {
     box.value = 'side door'
     box.dispatchEvent(new Event('input', { bubbles: true }))
     button('Save').click()
-    await settle()
+    await flushMicrotasks(6)
     expect(invoke).toHaveBeenCalledWith('edit_bookmark', { id: 'B1', note: 'side door' })
     expect(items()[0].querySelector('.note')!.textContent).toBe('side door')
     button('Remove').click()
-    await settle()
+    await flushMicrotasks(6)
     expect(invoke).toHaveBeenCalledWith('delete_bookmark', { id: 'B1' })
     expect(bookmarks.list).toEqual([])
   })
@@ -417,7 +417,7 @@ describe('saved messages in the inbox (#315)', () => {
     setTab('saved')
     flushSync()
     items()[0].querySelector<HTMLButtonElement>('.open')!.click()
-    await settle()
+    await flushMicrotasks(6)
     expect(inbox.open).toBe(false)
     expect(ui.goTo).toBe('C1')
   })

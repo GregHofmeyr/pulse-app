@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 // Jumping to a message (lib/jump.ts sets the request; the channel view scrolls, flashes and pages).
-import { flushSync, mount, tick, unmount } from 'svelte'
+import { flushSync, mount, unmount } from 'svelte'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Message } from '../lib/protocol/Message'
 
@@ -13,6 +13,7 @@ import { motion } from '../lib/animate.svelte'
 import { windowFocus } from '../lib/windowFocus.svelte'
 import { addPending, applyEvent, MISSED_CAP, applyReady, emptyState, loadLatest, loadWindow } from '../lib/state'
 import { testReady } from '../lib/testReady'
+import { settle } from '../lib/testSettle'
 
 const msg = (n: number): Message => ({
   id: `M${String(n).padStart(4, '0')}`, channel_id: 'C1', author_id: 'U2', kind: 'normal', content: `m${n}`,
@@ -24,10 +25,6 @@ const quote = (n: number): Message => ({
 })
 const newestFirst = (from: number, n: number, f = msg) => Array.from({ length: n }, (_, i) => f(from + i)).reverse()
 const ready = (kind: 'text' | 'quotes') => applyReady(emptyState(), testReady([{ id: 'C1', server_id: 'S1', kind, name: 'general', position: 0 }]))
-const settle = async () => {
-  for (let i = 0; i < 5; i++) await tick()
-  flushSync()
-}
 
 let cmp: ReturnType<typeof mount> | undefined
 const show = () => {

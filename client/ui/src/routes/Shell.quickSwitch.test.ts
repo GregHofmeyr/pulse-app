@@ -17,6 +17,7 @@ import { app } from '../lib/store.svelte'
 import { applyReady, emptyState } from '../lib/state'
 import { testMe, testReady } from '../lib/testReady'
 import { RECENTS_KEY } from '../lib/quickSwitch'
+import { nextTask } from '../lib/testSettle'
 
 let cmp: ReturnType<typeof mount> | undefined
 beforeEach(() => {
@@ -51,7 +52,6 @@ const type = (text: string) => {
   field().dispatchEvent(new Event('input', { bubbles: true }))
   flushSync()
 }
-const settle = () => new Promise((r) => setTimeout(r))
 const tab = (name: string) => [...document.querySelectorAll<HTMLButtonElement>('nav .tab')].find((b) => b.textContent?.includes(name))!
 
 describe('the quick switcher in the shell', () => {
@@ -72,7 +72,7 @@ describe('the quick switcher in the shell', () => {
   it('`/` in the message box stays the slash commands\' (#262); Ctrl+K still opens from there', async () => {
     tab('Main').click()
     flushSync()
-    await settle()
+    await nextTask()
     const box = document.querySelector<HTMLElement>('[contenteditable][role="textbox"]')!
     expect(box).not.toBeNull()
     box.focus()
@@ -97,7 +97,7 @@ describe('the quick switcher in the shell', () => {
     keydown(document.body, 'k', { ctrlKey: true })
     type('mem')
     keydown(field(), 'Enter')
-    await settle()
+    await nextTask()
     flushSync()
     expect(switcher()).toBeNull()
     expect(tab('Main').classList.contains('active')).toBe(true)
@@ -111,7 +111,7 @@ describe('the quick switcher in the shell', () => {
     keydown(document.body, 'k', { ctrlKey: true })
     type('lounge')
     keydown(field(), 'Enter', { shiftKey: true })
-    await settle()
+    await nextTask()
     flushSync()
     expect(invoke).toHaveBeenCalledWith('join_voice', expect.objectContaining({ channelId: 'V1' }))
   })
@@ -119,7 +119,7 @@ describe('the quick switcher in the shell', () => {
     keydown(document.body, 'k', { ctrlKey: true })
     type('>keybinds')
     keydown(field(), 'Enter')
-    await settle()
+    await nextTask()
     flushSync()
     const settings = document.querySelector('[aria-modal="true"]')
     expect(settings).not.toBeNull()
@@ -145,7 +145,7 @@ describe('the quick switcher in the shell', () => {
     it('in a server you are in: that server first, then everywhere but it', async () => {
       tab('Main').click()
       flushSync()
-      await settle()
+      await nextTask()
       invoke.mockImplementation(async (cmd: string, a: { everywhere?: boolean }) =>
         cmd === 'search_messages'
           ? { hits: a.everywhere ? [] : [hit('m1', 'T1', 'pizza tonight')], next_cursor: null, total: 1 }
@@ -183,7 +183,7 @@ describe('builds from the switcher (#619)', () => {
     flushSync()
     expect(invoke).toHaveBeenCalledWith('search_builds', { q: 'raven', game: null })
     keydown(field(), 'Enter')
-    await settle()
+    await nextTask()
     flushSync()
     expect(switcher()).toBeNull()
     // its channel shows, and asks for the build to open its page

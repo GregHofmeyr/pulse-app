@@ -17,9 +17,9 @@ import { handleReady, resetState } from '../lib/store.svelte'
 import { closeInbox, inbox, noteInboxEvent } from '../lib/inbox.svelte'
 import { testMe, testReady } from '../lib/testReady'
 import { testItem } from '../lib/testInbox'
+import { flushMicrotasks } from '../lib/testSettle'
 
 let cmp: ReturnType<typeof mount> | undefined
-const settle = async () => { for (let i = 0; i < 6; i++) await Promise.resolve(); flushSync() }
 beforeEach(() => {
   localStorage.clear()
   invoke.mockReset()
@@ -55,7 +55,7 @@ describe('the inbox in the shell (#306)', () => {
 
   it('opens and closes the popover; Esc closes it and gives the focus back', async () => {
     button().click()
-    await settle()
+    await flushMicrotasks(6)
     expect(popover()).not.toBeNull()
     expect(button().getAttribute('aria-expanded')).toBe('true')
     expect(invoke).toHaveBeenCalledWith('inbox', { before: null, mentions: false })
@@ -63,7 +63,7 @@ describe('the inbox in the shell (#306)', () => {
     flushSync()
     expect(popover()).toBeNull()
     button().click()
-    await settle()
+    await flushMicrotasks(6)
     await new Promise((r) => setTimeout(r)) // clickOutside listens from the next tick
     document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
     flushSync()
@@ -74,7 +74,7 @@ describe('the inbox in the shell (#306)', () => {
   // #327: the server reads an item before it sends it, so its chat may be gone by the time it arrives
   it('a new item from a chat no longer here is not listed, but its count is', async () => {
     button().click()
-    await settle()
+    await flushMicrotasks(6)
     const added = (id: string, channel_id: string, unread: number) =>
       noteInboxEvent({ t: 'InboxItemAdded', d: { user_id: 'U1', item: testItem(id, {}, { channel_id }), unread } })
     added('M2', 'GONE', 3)
@@ -92,7 +92,7 @@ describe('the inbox in the shell (#306)', () => {
     field.dispatchEvent(new Event('input', { bubbles: true }))
     flushSync()
     field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
-    await settle()
+    await flushMicrotasks(6)
     expect(popover()).not.toBeNull()
   })
 })

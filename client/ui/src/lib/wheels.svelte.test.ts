@@ -19,8 +19,7 @@ import {
   spinAgain, spinQuietly, spinWheel, spunLive, wheelPrefs, wheels,
 } from './wheels.svelte'
 import { QUIET_CARD_MS, QUIET_LINGER_MS } from './wheel'
-
-const flush = () => new Promise((r) => setTimeout(r, 0))
+import { nextTask } from './testSettle'
 
 beforeEach(() => {
   resetWheels()
@@ -35,12 +34,12 @@ describe('saving a saved wheel', () => {
     const first = saveWheel(w, { options: ['a', 'b', 'c'] })
     const second = saveWheel({ ...w, options: ['a', 'b', 'c'] }, { options: ['a', 'b', 'c', 'd'] })
     expect(wheels.server.S1[0].options).toEqual(['a', 'b', 'c', 'd'])
-    await flush()
+    await nextTask()
     expect(invoke.mock.calls.filter(([c]) => c === 'update_wheel')).toHaveLength(1) // the second waits
     answers[0]({ ...w, options: ['a', 'b', 'c'] })
     expect(await first).toBe('')
     expect(wheels.server.S1[0].options).toEqual(['a', 'b', 'c', 'd']) // the older answer doesn't undo the newer change
-    await flush()
+    await nextTask()
     answers[1]({ ...w, options: ['a', 'b', 'c', 'd'] })
     expect(await second).toBe('')
     expect(wheels.server.S1[0].options).toEqual(['a', 'b', 'c', 'd'])
@@ -48,7 +47,7 @@ describe('saving a saved wheel', () => {
 
   it('a refusal says why and fetches the list fresh', async () => {
     const r = saveWheel(w, { name: '' })
-    await flush()
+    await nextTask()
     fails[0]('wheel names are 1-40 characters')
     expect(await r).toBe('wheel names are 1-40 characters')
     expect(wheels.server.S1[0].options).toEqual(['from', 'server'])
@@ -58,7 +57,7 @@ describe('saving a saved wheel', () => {
     let done = false
     saveWheel(w, { options: ['x', 'y'] })
     const settled = savesSettled().then(() => (done = true))
-    await flush()
+    await nextTask()
     expect(done).toBe(false)
     answers[0]({ ...w, options: ['x', 'y'] })
     await settled

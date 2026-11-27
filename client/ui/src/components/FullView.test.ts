@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { flushSync, mount, tick, unmount } from 'svelte'
+import { flushSync, mount, unmount } from 'svelte'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const invoke = vi.fn()
@@ -29,6 +29,7 @@ import type { Ready } from '../lib/protocol/Ready'
 import { reloadVoiceChat } from '../lib/voiceChat.svelte'
 import { reloadColumns } from '../lib/columns.svelte'
 import { motion } from '../lib/animate.svelte'
+import { settleTask } from '../lib/testSettle'
 
 const me = { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
 const sam = { id: 'U2', username: 'sam', display_name: 'sam', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
@@ -47,17 +48,12 @@ const SAM = { channelId: 'V1', streamer: 'U2' }
 let cmp: ReturnType<typeof mount> | undefined
 const q = (sel: string) => document.querySelector<HTMLElement>(sel)
 const button = (text: string) => [...document.querySelectorAll('button')].find((b) => b.textContent?.trim() === text || b.getAttribute('aria-label') === text)
-const settle = async () => {
-  for (let i = 0; i < 5; i++) await tick()
-  await new Promise((r) => setTimeout(r, 0))
-  flushSync()
-}
 /** The call view on V1, watching sam's stream in full view. */
 async function fullOnSam() {
   cmp = mount(VoicePanel, { target: document.body, props: { channelId: 'V1', serverId: 'S1', onMessage: () => {}, onVoiceSettings: () => {} } })
   await streamApi.watch('V1', 'U2')
   openFull(SAM)
-  await settle()
+  await settleTask()
 }
 
 beforeEach(() => {
@@ -107,7 +103,7 @@ describe('full view', () => {
       props: { channelId: 'V1', serverId: 'S1', onMessage: () => {}, onVoiceSettings: () => {} } })
     await streamApi.watch('V1', 'U2')
     openFull(SAM)
-    await settle()
+    await settleTask()
     const toggles = [...document.querySelectorAll<HTMLButtonElement>('.full-view .panel-toggle')]
     expect(toggles.map((t) => t.getAttribute('aria-label'))).toEqual(['Conversations'])
     expect(toggles[0].dataset.tip).toBe('Show conversations')
@@ -123,7 +119,7 @@ describe('full view', () => {
       props: { channelId: 'V1', serverId: 'S1', onMessage: () => {}, onVoiceSettings: () => {} } })
     await streamApi.watch('V1', 'U2')
     openFull(SAM)
-    await settle()
+    await settleTask()
     const right = q('.full-view .panel-toggle#full-toggle-members')!
     expect(right.getAttribute('aria-label')).toBe('Chat')
     expect(right.dataset.tip).toBe('Show chat')
@@ -180,7 +176,7 @@ describe('full view', () => {
     // into full view from the grid by double-clicking a tile: the second click is ignored
     cmp = mount(VoicePanel, { target: document.body, props: { channelId: 'V1', serverId: 'S1', onMessage: () => {}, onVoiceSettings: () => {} } })
     await streamApi.watch('V1', 'U2')
-    await settle()
+    await settleTask()
     const host = q('[data-stream="U2"] .host')!
     host.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }))
     flushSync()
@@ -262,7 +258,7 @@ describe('full view', () => {
     await fullOnSam()
     button('Back')!.focus()
     button('Back')!.click()
-    await settle()
+    await settleTask()
     expect(document.activeElement).toBe(q('[data-stream="U2"] .host'))
   })
 
@@ -314,7 +310,7 @@ describe('full view', () => {
   it('stop_watching_ends_the_watch_and_the_full_view', async () => {
     await fullOnSam()
     button('Stop watching')!.click()
-    await settle()
+    await settleTask()
     expect(stream.watching).toEqual([])
     expect(callView.full).toBeNull()
     expect(q('.full-view')).toBeNull()
@@ -324,7 +320,7 @@ describe('full view', () => {
   it('the_tiles_full_view_button_opens_it', async () => {
     cmp = mount(VoicePanel, { target: document.body, props: { channelId: 'V1', serverId: 'S1', onMessage: () => {}, onVoiceSettings: () => {} } })
     await streamApi.watch('V1', 'U2')
-    await settle()
+    await settleTask()
     button('Full view')!.click()
     flushSync()
     expect(callView.full).toEqual(SAM)
@@ -391,7 +387,7 @@ describe('full view', () => {
   it('stream_volume_is_one_value_the_tile_and_full_view_both_follow', async () => {
     cmp = mount(VoicePanel, { target: document.body, props: { channelId: 'V1', serverId: 'S1', onMessage: () => {}, onVoiceSettings: () => {} } })
     await streamApi.watch('V1', 'U2')
-    await settle()
+    await settleTask()
     // set from elsewhere (e.g. a menu): the tile shows it
     streamApi.setStreamVolume('U2', 40)
     flushSync()
@@ -442,7 +438,7 @@ describe('chat strip and full screen (#63)', () => {
     expect(t.querySelector('svg')).not.toBeNull()
     expect(strip()).toBeNull()
     t.click()
-    await settle()
+    await settleTask()
     const s = strip()!
     expect(s.getAttribute('aria-label')).toBe('Chat')
     // the voice chat panel's own view: its Chat header, close button and composer
@@ -455,7 +451,7 @@ describe('chat strip and full screen (#63)', () => {
     expect(t.dataset.tip).toBe('Hide chat')
     expect(JSON.parse(localStorage.getItem('pulse.voiceChat')!)).toEqual({ open: true })
     t.click()
-    await settle()
+    await settleTask()
     expect(strip()).toBeNull()
     expect(JSON.parse(localStorage.getItem('pulse.voiceChat')!)).toEqual({ open: false })
   })
@@ -471,11 +467,11 @@ describe('chat strip and full screen (#63)', () => {
   it("the strip's close button closes it and hands the focus to the toggle", async () => {
     await fullOnSam()
     chatToggle()!.click()
-    await settle()
+    await settleTask()
     const close = strip()!.querySelector<HTMLButtonElement>('[aria-label="Close chat"]')!
     close.focus()
     close.click()
-    await settle()
+    await settleTask()
     expect(document.activeElement).toBe(chatToggle())
     expect(chatToggle()!.getAttribute('aria-pressed')).toBe('false')
   })
@@ -484,7 +480,7 @@ describe('chat strip and full screen (#63)', () => {
     motion.reducedMotion = true
     await fullOnSam()
     chatToggle()!.click()
-    await settle()
+    await settleTask()
     chatToggle()!.click()
     flushSync()
     expect(strip()).toBeNull()
@@ -503,7 +499,7 @@ describe('chat strip and full screen (#63)', () => {
     expect(chatToggle()!.querySelector('.chat-pill')?.textContent).toBe('2')
     expect(chatToggle()!.getAttribute('aria-label')).toBe('Chat, 2 mentions')
     chatToggle()!.click()
-    await settle()
+    await settleTask()
     expect(chatToggle()!.querySelector('.chat-dot, .chat-pill')).toBeNull()
     expect(chatToggle()!.getAttribute('aria-label')).toBe('Chat')
   })
@@ -511,7 +507,7 @@ describe('chat strip and full screen (#63)', () => {
   it('resizes like the other columns, with its own remembered width', async () => {
     await fullOnSam()
     chatToggle()!.click()
-    await settle()
+    await settleTask()
     const h = q('.full-view [role=separator][aria-label="Resize the chat"]')!
     expect(h.getAttribute('aria-controls')).toBe('stream-chat')
     expect(h.getAttribute('aria-valuenow')).toBe('300')
@@ -533,14 +529,14 @@ describe('chat strip and full screen (#63)', () => {
     expect(b.closest('.trail')).not.toBeNull()
     expect(q('.full-view')!.classList.contains('screen')).toBe(false)
     b.click()
-    await settle()
+    await settleTask()
     expect(fullscreenCalls()).toEqual([true])
     expect(q('.full-view')!.classList.contains('screen')).toBe(true)
     expect(screenBtn()!.getAttribute('aria-label')).toBe('Exit full screen')
     expect(q('.full-view.screen aside#stream-chat')).not.toBeNull()
     expect(q('.full-view.screen #stream-chat-toggle')).not.toBeNull()
     screenBtn()!.click()
-    await settle()
+    await settleTask()
     expect(fullscreenCalls()).toEqual([true, false])
     expect(q('.full-view')!.classList.contains('screen')).toBe(false)
   })
@@ -549,25 +545,25 @@ describe('chat strip and full screen (#63)', () => {
     invoke.mockImplementation(async (cmd: string) => (cmd === 'set_fullscreen' ? true : cmd === 'list_messages' ? [] : undefined))
     await fullOnSam()
     screenBtn()!.click()
-    await settle()
+    await settleTask()
     screenBtn()!.click()
-    await settle()
+    await settleTask()
     expect(fullscreenCalls()).toEqual([true, true])
   })
 
   it('Esc leaves full screen first, then full view; Esc in the message box does neither', async () => {
     await fullOnSam()
     chatToggle()!.click()
-    await settle()
+    await settleTask()
     screenBtn()!.click()
-    await settle()
+    await settleTask()
     const box = strip()!.querySelector<HTMLElement>('[role="textbox"]')!
     box.focus()
     esc(box)
     expect(q('.full-view.screen')).not.toBeNull()
     box.blur()
     esc()
-    await settle()
+    await settleTask()
     expect(fullscreenCalls()).toEqual([true, false])
     expect(q('.full-view')).not.toBeNull()
     expect(q('.full-view.screen')).toBeNull()
@@ -578,9 +574,9 @@ describe('chat strip and full screen (#63)', () => {
   it('leaving full view while full screen gives the window back', async () => {
     await fullOnSam()
     screenBtn()!.click()
-    await settle()
+    await settleTask()
     button('Back')!.click()
-    await settle()
+    await settleTask()
     expect(q('.full-view')).toBeNull()
     expect(fullscreenCalls()).toEqual([true, false])
   })
@@ -601,7 +597,7 @@ describe('chat strip and full screen (#63)', () => {
       size(1280, 720)
       await fullOnSam()
       screenBtn()!.click()
-      await settle()
+      await settleTask()
     }
 
     it('the app leaves its full screen and keeps the full view, the button says so, and the core is told', async () => {
@@ -609,7 +605,7 @@ describe('chat strip and full screen (#63)', () => {
       size(1920, 1080) // the window fills the screen
       expect(inScreen()).toBe(true)
       size(1280, 720) // and then the OS put it back
-      await settle()
+      await settleTask()
       expect(inScreen()).toBe(false)
       expect(q('.full-view')).not.toBeNull()
       expect(callView.full).toEqual(SAM)
@@ -618,7 +614,7 @@ describe('chat strip and full screen (#63)', () => {
       // the core still thinks it's full screen until told; nothing more when the view goes
       expect(fullscreenCalls()).toEqual([true, false])
       button('Back')!.click()
-      await settle()
+      await settleTask()
       expect(fullscreenCalls()).toEqual([true, false])
     })
 
@@ -627,12 +623,12 @@ describe('chat strip and full screen (#63)', () => {
       await intoScreen()
       size(1920, 1080)
       size(1000, 700)
-      await settle()
+      await settleTask()
       expect(inScreen()).toBe(false)
       expect(fullscreenCalls()).toEqual([true, false])
       // in again: the button goes on working
       screenBtn()!.click()
-      await settle()
+      await settleTask()
       expect(inScreen()).toBe(true)
       expect(fullscreenCalls()).toEqual([true, false, true])
     })
@@ -641,7 +637,7 @@ describe('chat strip and full screen (#63)', () => {
       await intoScreen()
       size(1300, 740)
       size(1600, 900)
-      await settle()
+      await settleTask()
       expect(inScreen()).toBe(true)
       expect(fullscreenCalls()).toEqual([true])
     })
@@ -654,7 +650,7 @@ describe('chat strip and full screen (#63)', () => {
       size(800, 600)
       hidden.mockRestore()
       size(1920, 1080)
-      await settle()
+      await settleTask()
       expect(inScreen()).toBe(true)
       expect(fullscreenCalls()).toEqual([true])
     })
@@ -663,7 +659,7 @@ describe('chat strip and full screen (#63)', () => {
       await intoScreen()
       size(1535, 863, 1536, 864)
       size(1536, 862, 1536, 864)
-      await settle()
+      await settleTask()
       expect(inScreen()).toBe(true)
       expect(fullscreenCalls()).toEqual([true])
     })
@@ -672,7 +668,7 @@ describe('chat strip and full screen (#63)', () => {
       size(1920, 1080)
       await fullOnSam()
       size(1280, 720)
-      await settle()
+      await settleTask()
       expect(inScreen()).toBe(false)
       expect(fullscreenCalls()).toEqual([])
     })
@@ -684,10 +680,10 @@ describe('chat strip and full screen (#63)', () => {
       props: { channelId: 'V1', serverId: 'S1', onMessage: () => {}, onVoiceSettings: () => {} } })
     await streamApi.watch('V1', 'U2')
     openFull(SAM)
-    await settle()
+    await settleTask()
     expect(document.querySelectorAll('.full-view .panel-toggle')).toHaveLength(2)
     screenBtn()!.click()
-    await settle()
+    await settleTask()
     expect(document.querySelectorAll('.full-view .panel-toggle')).toHaveLength(0)
     await new Promise((r) => setTimeout(r, 350))
     const u = q('.full-view .unfocus')!
@@ -701,7 +697,7 @@ describe('chat strip and full screen (#63)', () => {
     await fullOnSam()
     expect(q('#voice-chat-toggle')!.getAttribute('aria-controls')).toBe('stream-chat')
     q('#voice-chat-toggle')!.click()
-    await settle()
+    await settleTask()
     expect(strip()).not.toBeNull()
   })
 })

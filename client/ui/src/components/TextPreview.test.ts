@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 // A small text file's inline preview (#318): first lines, expandable; Markdown rendered safely; HTML only ever as text.
-import { flushSync, mount, tick, unmount } from 'svelte'
+import { flushSync, mount, unmount } from 'svelte'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 let answer: () => Promise<unknown> = async () => ''
@@ -11,15 +11,12 @@ import TextPreview from './TextPreview.svelte'
 import MessageFiles from './MessageFiles.svelte'
 import type { Attachment } from '../lib/protocol/Attachment'
 import type { Message } from '../lib/protocol/Message'
+import { settle } from '../lib/testSettle'
 
 const att = (name: string, extra: Partial<Attachment> = {}): Attachment => ({
   id: 'A1', name, kind: 'file', content_type: 'text/plain', size: 600, width: null, height: null, duration_ms: null, expires_at: null, expired: false, ...extra,
 })
 let cmp: ReturnType<typeof mount> | undefined
-const settle = async () => {
-  for (let i = 0; i < 5; i++) await tick()
-  flushSync()
-}
 function show(file: Attachment, kind: 'markdown' | 'text', text: string | null) {
   answer = async () => text
   cmp = mount(TextPreview, { target: document.body, props: { file, messageId: 'M1', kind } })

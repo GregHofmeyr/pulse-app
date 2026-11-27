@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 // Files in the composer (#57): the attach button, pasted files, chips and sending with only files.
-import { flushSync, mount, tick, unmount } from 'svelte'
+import { flushSync, mount, unmount } from 'svelte'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const calls: { cmd: string; args: unknown; opts?: unknown }[] = []
@@ -18,6 +18,7 @@ import { app } from '../lib/store.svelte'
 import { emptyState } from '../lib/state'
 import type { StagedFile } from '../lib/tauri'
 import { plusItem } from './plusMenuHarness'
+import { settle } from '../lib/testSettle'
 
 const file = (id: string, name: string, size = 1000, extra: Partial<StagedFile> = {}): StagedFile => ({
   id, name, size, content_type: 'application/octet-stream', kind: 'file', width: null, height: null, preview: null, ...extra,
@@ -33,10 +34,6 @@ function show(extra: Record<string, unknown> = { files: true }) {
   })
   flushSync()
   return document.querySelector<HTMLElement>('[role="textbox"]')!
-}
-const settle = async () => {
-  for (let i = 0; i < 5; i++) await tick()
-  flushSync()
 }
 const chips = () => [...document.querySelectorAll('.chip .name')].map((n) => n.textContent)
 const enter = (box: HTMLElement) => {

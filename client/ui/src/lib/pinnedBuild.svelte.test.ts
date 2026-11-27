@@ -9,6 +9,7 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: (cmd: string, args?: never) => 
 import { forgetPinnedBuild, isPinned, notePinnedBuildEvent, pinBuild, pinnedBuild, refreshPinnedBuild, unpinBuild } from './pinnedBuild.svelte'
 import { handleReady, resetState } from './store.svelte'
 import { testReady } from './testReady'
+import { microtasks } from './testSettle'
 
 const B1 = { id: 'B1', server_id: 'S1', kind: 'builds' as const, name: 'raven-builds', position: 0 }
 const build = (id: string, title = `Build ${id}`): Message => ({
@@ -16,7 +17,6 @@ const build = (id: string, title = `Build ${id}`): Message => ({
   edited_at: null, deleted: false, mentions: [], reactions: [], thread_root_id: null, quote: null, qoty_card: null, embeds: [], clip: null,
   build: { title, title_auto: false, game_id: null, game_guessed: false, link: null, notes: null, quick_drop: false, updated_at: null, archived_at: null, archived_by: null, reply_count: 0, last_reply_id: null, replies_seen: null },
 })
-const settle = async () => { for (let i = 0; i < 10; i++) await Promise.resolve() }
 
 beforeEach(() => {
   localStorage.clear()
@@ -45,7 +45,7 @@ describe('pinnedBuild', () => {
     expect(invoke).toHaveBeenCalledWith('get_build', { messageId: 'M001' })
     pinBuild('B1', 'M002', build('M002'))
     first(build('M001'))
-    await settle()
+    await microtasks(10)
     expect(pinnedBuild.message?.id).toBe('M002')
   })
 
@@ -92,7 +92,7 @@ describe('pinnedBuild', () => {
     void refreshPinnedBuild()
     notePinnedBuildEvent({ t: 'MessageUpdated', d: { message: build('M001', 'Edited') } })
     answer(build('M001', 'Stale'))
-    await settle()
+    await microtasks(10)
     expect(pinnedBuild.message?.build?.title).toBe('Edited')
   })
 
@@ -103,7 +103,7 @@ describe('pinnedBuild', () => {
     void refreshPinnedBuild()
     notePinnedBuildEvent({ t: 'BuildsArchived', d: { channel_id: 'B1', message_ids: ['M001'], archived_at: '2026-10-05T00:00:00Z', archived_by: 'U2' } })
     answer(build('M001'))
-    await settle()
+    await microtasks(10)
     expect(pinnedBuild.message?.build?.archived_at).toBe('2026-10-05T00:00:00Z')
   })
 })

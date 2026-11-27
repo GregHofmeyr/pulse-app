@@ -50,6 +50,7 @@ import { editProfile, openCardSettings, profileUi } from '../lib/profileCard.sve
 import { reloadPatchNotesSeen } from '../lib/patchNotesSeen.svelte'
 import { patchNotes, previousPatchNotes } from '../patchNotes'
 import { startUpdateListening, updates, UPDATE_READY_TIP } from '../lib/updates.svelte'
+import { settleTask } from '../lib/testSettle'
 
 let cmp: ReturnType<typeof mount> | undefined
 let offs: (() => void)[] = []
@@ -646,11 +647,6 @@ describe('watching from anywhere', () => {
   const SAM = { channelId: 'V1', streamer: 'U2' }
   const q = (sel: string) => document.querySelector<HTMLElement>(sel)
   const button = (text: string) => [...document.querySelectorAll('button')].find((b) => b.textContent?.trim() === text || b.getAttribute('aria-label') === text)
-  const settle = async () => {
-    for (let i = 0; i < 5; i++) await tick()
-    await new Promise((r) => setTimeout(r, 0))
-    flushSync()
-  }
   const emit = (name: string, payload: unknown) => handlers.get(name)!({ payload })
   const goTo = (id: string) => {
     callView.goTo = id
@@ -689,7 +685,7 @@ describe('watching from anywhere', () => {
     goTo('V1')
     await streamApi.watch('V1', 'U2')
     openFull(SAM)
-    await settle()
+    await settleTask()
     expect(q('.full-view')).not.toBeNull()
     expect(side().hidden).toBe(true)
     expect(members().hidden).toBe(true)
@@ -742,7 +738,7 @@ describe('watching from anywhere', () => {
 
     // next time: hidden again by default (nothing remembered)
     openFull(SAM)
-    await settle()
+    await settleTask()
     expect(side().hidden).toBe(true)
     expect(members().hidden).toBe(true)
     expect(setItem.mock.calls.filter(([k]) => !/^pulse\.(stream|sounds|unsent|quickSwitch)/.test(String(k)))).toEqual([])
@@ -754,12 +750,12 @@ describe('watching from anywhere', () => {
     localStorage.setItem('pulse.voiceChat', JSON.stringify({ open: true }))
     reloadVoiceChat()
     goTo('V1')
-    await settle()
+    await settleTask()
     expect(q('.right-panel aside.voice-chat')).not.toBeNull()
     expect(ui.openChannelId).toBe('V1')
     await streamApi.watch('V1', 'U2')
     openFull(SAM)
-    await settle()
+    await settleTask()
     await new Promise((r) => setTimeout(r, 150)) // the column's chat fades out
     flushSync()
     // one chat on screen: the strip, inside the full view
@@ -775,13 +771,13 @@ describe('watching from anywhere', () => {
     expect(q('.right-panel aside.members')).not.toBeNull()
     // the strip closed: nothing of the chat on screen
     q('#stream-chat-toggle')!.click()
-    await settle()
+    await settleTask()
     expect(ui.openChannelId).toBeNull()
     // leaving full view with it open again: back in the column
     q('#stream-chat-toggle')!.click()
-    await settle()
+    await settleTask()
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', cancelable: true }))
-    await settle()
+    await settleTask()
     expect(q('.full-view')).toBeNull()
     expect(q('.right-panel aside.voice-chat')).not.toBeNull()
     expect(ui.openChannelId).toBe('V1')
@@ -792,11 +788,11 @@ describe('watching from anywhere', () => {
     goTo('V1')
     await streamApi.watch('V1', 'U2')
     openFull(SAM)
-    await settle()
+    await settleTask()
     const t = q('#stream-chat-toggle')!
     t.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerType: 'mouse' }))
     t.click()
-    await settle()
+    await settleTask()
     expect(document.activeElement).toBe(q('.full-view aside#stream-chat [role="textbox"]'))
   })
 
@@ -804,13 +800,13 @@ describe('watching from anywhere', () => {
     goTo('V1')
     await streamApi.watch('V1', 'U2')
     openFull(SAM)
-    await settle()
+    await settleTask()
     toggle('Channels')!.click()
     flushSync()
     expect(q('aside.side')!.hidden).toBe(false)
     // another stream in the same call takes full view from its toast's Watch (the watch cap ends sam's)
     watchStream('V1', 'U3')
-    await settle()
+    await settleTask()
     expect(callView.full).toEqual({ channelId: 'V1', streamer: 'U3' })
     expect(q('.full-view')).not.toBeNull()
     expect(q('aside.side')!.hidden).toBe(false)
@@ -820,9 +816,9 @@ describe('watching from anywhere', () => {
     goTo('V1')
     await streamApi.watch('V1', 'U2')
     openFull(SAM)
-    await settle()
+    await settleTask()
     goTo('T1')
-    await settle()
+    await settleTask()
     expect(q('aside.side')!.hidden).toBe(false)
     expect(q('.right-panel')!.hidden).toBe(false)
     expect(toggle('Channels')).toBeNull()
@@ -831,12 +827,12 @@ describe('watching from anywhere', () => {
   it('a_menu_left_open_in_a_panel_closes_when_full_view_hides_it_so_esc_still_leaves', async () => {
     goTo('V1')
     await streamApi.watch('V1', 'U2')
-    await settle()
+    await settleTask()
     q('.head-btn[data-menu-toggle]')!.click() // the server menu, open
     flushSync()
     expect(q('.menu[role="menu"]')).not.toBeNull()
     openFull(SAM)
-    await settle()
+    await settleTask()
     expect(q('.menu[role="menu"]')).toBeNull()
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', cancelable: true }))
     flushSync()
@@ -846,23 +842,23 @@ describe('watching from anywhere', () => {
   it('focus_inside_a_panel_that_hides_moves_to_its_toggle', async () => {
     goTo('V1')
     await streamApi.watch('V1', 'U2')
-    await settle()
+    await settleTask()
     q('aside.side button')!.focus()
     expect(q('aside.side')!.contains(document.activeElement)).toBe(true)
     openFull(SAM)
-    await settle()
+    await settleTask()
     expect(document.activeElement).toBe(toggle('Channels'))
   })
 
   it('focus_inside_the_member_list_as_it_hides_moves_to_the_members_toggle', async () => {
     goTo('V1')
     await streamApi.watch('V1', 'U2')
-    await settle()
+    await settleTask()
     const inMembers = q('.right-panel')!.querySelector<HTMLElement>('button, [tabindex]')!
     inMembers.focus()
     expect(q('.right-panel')!.contains(document.activeElement)).toBe(true)
     openFull(SAM)
-    await settle()
+    await settleTask()
     expect(document.activeElement).toBe(toggle('Members'))
   })
 
@@ -871,9 +867,9 @@ describe('watching from anywhere', () => {
     goTo('V1')
     await streamApi.watch('V1', 'U2')
     openFull(SAM)
-    await settle()
+    await settleTask()
     goTo('T1')
-    await settle()
+    await settleTask()
     expect(q('.mini-preview')).not.toBeNull()
     expect(q('aside.side')!.hidden).toBe(false)
     expect(q('.right-panel')!.hidden).toBe(false)
@@ -884,10 +880,10 @@ describe('watching from anywhere', () => {
     goTo('V1')
     await streamApi.watch('V1', 'U2')
     openFull(SAM)
-    await settle()
+    await settleTask()
     expect(q('.full-view')).not.toBeNull()
     emit('pulse://event', { t: 'StreamEnded', d: { channel_id: 'V1', user_id: 'U2', reason: 'stopped' } })
-    await settle()
+    await settleTask()
     expect(q('.full-view')).toBeNull()
     expect(q('.mini-preview')).toBeNull()
     expect(callView.full).toBeNull()
@@ -898,10 +894,10 @@ describe('watching from anywhere', () => {
     await streamApi.watch('V1', 'U2')
     openFull(SAM)
     goTo('T1')
-    await settle()
+    await settleTask()
     expect(q('.mini-preview')).not.toBeNull()
     emit('pulse://event', { t: 'StreamEnded', d: { channel_id: 'V1', user_id: 'U2', reason: 'stopped' } })
-    await settle()
+    await settleTask()
     expect(q('.mini-preview')).toBeNull()
     expect(callView.full).toBeNull()
     expect(document.querySelectorAll('video')).toHaveLength(0)
@@ -911,12 +907,12 @@ describe('watching from anywhere', () => {
   it('leaving_voice_drops_the_mini_preview_and_its_element', async () => {
     goTo('V1')
     await streamApi.watch('V1', 'U2')
-    await settle()
+    await settleTask()
     goTo('T1')
-    await settle()
+    await settleTask()
     expect(q('.mini-preview video')).not.toBeNull()
     emit('voice://event', { kind: 'state', channel_id: null, connection: 'disconnected', controls: flags })
-    await settle()
+    await settleTask()
     expect(q('.mini-preview')).toBeNull()
     expect(document.querySelectorAll('video').length).toBe(0)
     expect(stream.watching).toEqual([])
@@ -927,22 +923,22 @@ describe('watching from anywhere', () => {
     emit('pulse://event', { t: 'StreamStarted', d: { stream: { ...samStream, user_id: 'U1' } } })
     stream.live = { channelId: 'V1', res: 720, fps: 60, audio: false, audioMuted: false, label: 'Game', encoderWarning: false, allowGhosts: true }
     goTo('V1')
-    await settle()
+    await settleTask()
     openOwnFull('V1')
-    await settle()
+    await settleTask()
     expect(q('.full-view .name')!.textContent).toBe('Your stream')
     expect(q('aside.side')!.hidden).toBe(true)
     expect(toggle('Channels')).not.toBeNull()
     expect(invoke.mock.calls.some(([c]) => c === 'stream_watch')).toBe(false)
     // elsewhere and back: still in full view, and no mini-preview of your own stream
     goTo('T1')
-    await settle()
+    await settleTask()
     expect(q('.mini-preview')).toBeNull()
     goTo('V1')
-    await settle()
+    await settleTask()
     expect(q('.full-view .name')!.textContent).toBe('Your stream')
     stream.live = null
-    await settle()
+    await settleTask()
     expect(callView.own).toBeNull()
     expect(q('.full-view')).toBeNull()
   })
@@ -953,7 +949,7 @@ describe('watching from anywhere', () => {
     showToast({ channelId: 'V1', streamer: 'U2', name: 'sam' })
     flushSync()
     button('Watch')!.click()
-    await settle()
+    await settleTask()
     expect(invoke).toHaveBeenCalledWith('stream_watch', { channelId: 'V1', streamer: 'U2' })
     expect(callView.full).toEqual(SAM)
     expect(q('.full-view .stage video')).not.toBeNull()
@@ -968,16 +964,16 @@ describe('watching from anywhere', () => {
     showToast({ channelId: 'V1', streamer: 'U2', name: 'sam' })
     flushSync()
     button('Join & watch')!.click()
-    await settle()
+    await settleTask()
     expect(invoke).toHaveBeenCalledWith('join_voice', expect.objectContaining({ channelId: 'V1' }))
     expect(invoke.mock.calls.filter(([c]) => c === 'stream_watch')).toHaveLength(0)
     // not yet connected: still waiting
     emit('voice://event', { kind: 'state', channel_id: 'V1', connection: 'connecting', controls: flags })
-    await settle()
+    await settleTask()
     expect(invoke.mock.calls.filter(([c]) => c === 'stream_watch')).toHaveLength(0)
 
     emit('voice://event', { kind: 'state', channel_id: 'V1', connection: 'connected', controls: flags })
-    await settle()
+    await settleTask()
     expect(invoke).toHaveBeenCalledWith('stream_watch', { channelId: 'V1', streamer: 'U2' })
     expect(callView.joinThenWatch).toBeNull()
     expect(callView.full).toEqual(SAM)
@@ -993,12 +989,12 @@ describe('watching from anywhere', () => {
     showToast({ channelId: 'V1', streamer: 'U2', name: 'sam' })
     flushSync()
     button('Join & watch')!.click()
-    await settle()
+    await settleTask()
     expect(voice.joinFailed).not.toBeNull()
     expect(callView.joinThenWatch).toBeNull()
     // joining later by hand doesn't start the old watch
     emit('voice://event', { kind: 'state', channel_id: 'V1', connection: 'connected', controls: flags })
-    await settle()
+    await settleTask()
     expect(invoke.mock.calls.filter(([c]) => c === 'stream_watch')).toHaveLength(0)
   })
 
@@ -1008,9 +1004,9 @@ describe('watching from anywhere', () => {
     showToast({ channelId: 'V1', streamer: 'U2', name: 'sam' })
     flushSync()
     button('Join & watch')!.click()
-    await settle()
+    await settleTask()
     voice.joining = 'V2'
-    await settle()
+    await settleTask()
     expect(callView.joinThenWatch).toBeNull()
   })
 
@@ -1029,7 +1025,7 @@ describe('watching from anywhere', () => {
     const watch = q('[aria-label="Live stream"] .watch')!
     expect(watch.textContent).toBe('Join & watch')
     watch.click()
-    await settle()
+    await settleTask()
     expect(invoke).toHaveBeenCalledWith('join_voice', expect.objectContaining({ channelId: 'V1' }))
     expect(callView.joinThenWatch).toEqual(SAM)
     unmount(pop2)
@@ -1049,7 +1045,7 @@ describe('watching from anywhere', () => {
     const watch = box.querySelector<HTMLElement>('.watch')!
     expect(watch.textContent).toBe('Watch')
     watch.click()
-    await settle()
+    await settleTask()
     expect(invoke.mock.calls.filter(([c]) => c === 'join_voice')).toHaveLength(0)
     expect(invoke).toHaveBeenCalledWith('stream_watch', { channelId: 'V1', streamer: 'U2', ghost: true })
     expect(callView.full).toEqual(SAM)
@@ -1061,7 +1057,7 @@ describe('watching from anywhere', () => {
     voice.connection = 'disconnected'
     joinAndWatch('V1', 'U2')
     joinAndWatch('V1', 'U2')
-    await settle()
+    await settleTask()
     expect(invoke.mock.calls.filter(([c]) => c === 'join_voice')).toHaveLength(1)
     expect(callView.joinThenWatch).toEqual(SAM)
   })
@@ -1636,21 +1632,16 @@ describe('pin to side (#619)', () => {
     { id: 'B1', server_id: 'S1', kind: 'builds' as const, name: 'raven-builds', position: 2 },
     { id: 'D1', server_id: null, kind: 'dm' as const, name: null, position: 0 },
   ]
-  const settle = async () => {
-    for (let i = 0; i < 5; i++) await tick()
-    await new Promise((r) => setTimeout(r, 0))
-    flushSync()
-  }
   const goTo = async (id: string) => {
     ui.goTo = id
-    await settle()
+    await settleTask()
   }
   let pins: typeof import('../lib/pinnedBuild.svelte')
   const mountShell = async () => {
     cmp = mount(Shell, { target: document.body, props: { user: testMe, onLogout: () => {} } })
     flushSync()
     ;[...document.querySelectorAll<HTMLButtonElement>('.tab')].find((t) => t.textContent!.includes('Main'))!.click()
-    await settle()
+    await settleTask()
   }
   beforeEach(async () => {
     localStorage.clear()
@@ -1682,18 +1673,18 @@ describe('pin to side (#619)', () => {
     pins.pinBuild('B1', 'M001', build('M001'))
     // the voice stage (a double-click on its row), its chat closed
     q('.row[data-channel="V1"]')!.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))
-    await settle()
+    await settleTask()
     expect(q('.row[data-channel="V1"]')!.classList.contains('active')).toBe(true)
     expect(q('.right-panel aside.pinned-build')).not.toBeNull()
     // an open voice chat takes the column meanwhile, and gives it back when closed
     const { setVoiceChat } = await import('../lib/voiceChat.svelte')
     setVoiceChat(true)
-    await settle()
+    await settleTask()
     expect(q('.right-panel aside.voice-chat')).not.toBeNull()
     expect(q('.right-panel aside.pinned-build')).toBeNull()
     setVoiceChat(false)
     await new Promise((r) => setTimeout(r, 150)) // the chat fades out
-    await settle()
+    await settleTask()
     expect(q('.right-panel aside.pinned-build')).not.toBeNull()
     await goTo('D1')
     expect(q('.right-panel')!.hidden).toBe(false)
@@ -1715,7 +1706,7 @@ describe('pin to side (#619)', () => {
     localStorage.setItem('pulse.pinnedBuild.U1', JSON.stringify({ channelId: 'B1', messageId: 'M007' }))
     await mountShell()
     handleReady(testReady(channels))
-    await settle()
+    await settleTask()
     expect(invoke).toHaveBeenCalledWith('get_build', { messageId: 'M007' })
     expect(q('.right-panel aside.pinned-build .title')?.textContent).toBe('Build M007')
   })
@@ -1755,7 +1746,7 @@ describe('pin to side (#619)', () => {
     localStorage.setItem('pulse.pinnedBuild.U9', JSON.stringify({ channelId: 'B1', messageId: 'M007' }))
     await mountShell()
     handleReady(testReady(channels))
-    await settle()
+    await settleTask()
     expect(q('.right-panel aside.pinned-build')).toBeNull()
   })
 
@@ -1769,7 +1760,7 @@ describe('pin to side (#619)', () => {
     expect(q('.right-panel .search-results')).not.toBeNull()
     expect(q('.right-panel aside.pinned-build')).toBeNull()
     closeSearch()
-    await settle()
+    await settleTask()
     expect(q('.right-panel aside.pinned-build')).not.toBeNull()
   })
 })
@@ -1788,11 +1779,6 @@ describe('right panel switcher (#638)', () => {
     { id: 'T1', server_id: 'S1', kind: 'text' as const, name: 'general', position: 0 },
     { id: 'B1', server_id: 'S1', kind: 'builds' as const, name: 'raven-builds', position: 1 },
   ]
-  const settle = async () => {
-    for (let i = 0; i < 5; i++) await tick()
-    await new Promise((r) => setTimeout(r, 0))
-    flushSync()
-  }
   let pins: typeof import('../lib/pinnedBuild.svelte')
   beforeEach(async () => {
     localStorage.clear()
@@ -1806,7 +1792,7 @@ describe('right panel switcher (#638)', () => {
     cmp = mount(Shell, { target: document.body, props: { user: testMe, onLogout: () => {} } })
     flushSync()
     ;[...document.querySelectorAll<HTMLButtonElement>('.tab')].find((t) => t.textContent!.includes('Main'))!.click()
-    await settle()
+    await settleTask()
   })
   afterEach(async () => {
     pins.forgetPinnedBuild()
@@ -1816,7 +1802,7 @@ describe('right panel switcher (#638)', () => {
   it('appears with a second view and hides again with one', async () => {
     expect(q('.right-panel [role=tablist]')).toBeNull()
     pins.pinBuild('B1', 'M001', build('M001'))
-    await settle()
+    await settleTask()
     expect(q('.right-panel [role=tablist]')).not.toBeNull()
     expect(tabs().map((t) => t.getAttribute('aria-label') ?? t.textContent?.trim())).toEqual(['Pinned build', 'Members'])
     expect(tab('Pinned build').getAttribute('aria-selected')).toBe('true')
@@ -1824,7 +1810,7 @@ describe('right panel switcher (#638)', () => {
     expect(panel.getAttribute('aria-labelledby')).toBe(tab('Pinned build').id)
     expect(panel.querySelector('aside.pinned-build')).not.toBeNull()
     pins.unpinBuild()
-    await settle()
+    await settleTask()
     expect(q('.right-panel [role=tablist]')).toBeNull()
     expect(q('.right-panel [role=tabpanel]')).toBeNull()
     expect(q('.right-panel aside.members')).not.toBeNull()
@@ -1832,53 +1818,53 @@ describe('right panel switcher (#638)', () => {
 
   it('members show while the build stays pinned, and the build comes back', async () => {
     pins.pinBuild('B1', 'M001', build('M001'))
-    await settle()
+    await settleTask()
     tab('Members').click()
-    await settle()
+    await settleTask()
     expect(q('.right-panel aside.members')).not.toBeNull()
     expect(q('.right-panel aside.pinned-build')).toBeNull()
     expect(pins.pinnedBuild.key).toEqual({ channelId: 'B1', messageId: 'M001' })
     tab('Pinned build').click()
-    await settle()
+    await settleTask()
     expect(q('.right-panel aside.pinned-build')).not.toBeNull()
   })
 
   it('a view that arrives takes the column: a build pinned, a search run', async () => {
     const { runSearch } = await import('../lib/search.svelte')
     pins.pinBuild('B1', 'M001', build('M001'))
-    await settle()
+    await settleTask()
     tab('Members').click()
-    await settle()
+    await settleTask()
     pins.pinBuild('B1', 'M002', build('M002'))
-    await settle()
+    await settleTask()
     expect(q('.right-panel aside.pinned-build .title')?.textContent).toBe('Build M002')
     await runSearch({ kind: 'server', serverId: 'S1' }, 'raven', [])
-    await settle()
+    await settleTask()
     expect(q('.right-panel .search-results')).not.toBeNull()
     expect(tabs()).toHaveLength(3)
     // a new search after picking another view takes the column back
     tab('Members').click()
-    await settle()
+    await settleTask()
     await runSearch({ kind: 'server', serverId: 'S1' }, 'bunny', [])
-    await settle()
+    await settleTask()
     expect(q('.right-panel .search-results')).not.toBeNull()
   })
 
   it('closing the view showing goes back to the one before', async () => {
     const { runSearch, closeSearch } = await import('../lib/search.svelte')
     pins.pinBuild('B1', 'M001', build('M001'))
-    await settle()
+    await settleTask()
     tab('Members').click()
-    await settle()
+    await settleTask()
     await runSearch({ kind: 'server', serverId: 'S1' }, 'raven', [])
-    await settle()
+    await settleTask()
     closeSearch()
-    await settle()
+    await settleTask()
     expect(q('.right-panel aside.members'), 'back to Members, the choice before the search').not.toBeNull()
     tab('Pinned build').click()
-    await settle()
+    await settleTask()
     q('.right-panel button[aria-label="Unpin"]')!.click()
-    await settle()
+    await settleTask()
     expect(q('.right-panel aside.members')).not.toBeNull()
     expect(q('.right-panel [role=tablist]')).toBeNull()
   })
@@ -1899,17 +1885,12 @@ describe('right panel switcher, hidden views (#638)', () => {
     { id: 'V1', server_id: 'S1', kind: 'voice' as const, name: 'Lounge', position: 1 },
     { id: 'B1', server_id: 'S1', kind: 'builds' as const, name: 'raven-builds', position: 2 },
   ]
-  const settle = async () => {
-    for (let i = 0; i < 5; i++) await tick()
-    await new Promise((r) => setTimeout(r, 0))
-    flushSync()
-  }
   let pins: typeof import('../lib/pinnedBuild.svelte')
   const mountShell = async () => {
     cmp = mount(Shell, { target: document.body, props: { user: testMe, onLogout: () => {} } })
     flushSync()
     ;[...document.querySelectorAll<HTMLButtonElement>('.tab')].find((t) => t.textContent!.includes('Main'))!.click()
-    await settle()
+    await settleTask()
   }
   beforeEach(async () => {
     localStorage.clear()
@@ -1931,23 +1912,23 @@ describe('right panel switcher, hidden views (#638)', () => {
     const { voiceChat, setVoiceChat } = await import('../lib/voiceChat.svelte')
     await mountShell()
     q('.row[data-channel="V1"]')!.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))
-    await settle()
+    await settleTask()
     setVoiceChat(true)
-    await settle()
+    await settleTask()
     const toggle = () => q('#voice-chat-toggle')!
     expect(toggle().getAttribute('aria-pressed')).toBe('true')
     pins.pinBuild('B1', 'M001', build('M001'))
-    await settle()
+    await settleTask()
     expect(q('.right-panel aside.voice-chat')).toBeNull()
     app.state = { ...app.state, reads: { ...app.state.reads, V1: { channel_id: 'V1', unread: 3, mentions: 0, last_read_message_id: null } } }
-    await settle()
+    await settleTask()
     expect(toggle().getAttribute('aria-pressed')).toBe('false')
     expect(toggle().dataset.tip).toBe('Show chat')
     expect(toggle().querySelector('.chat-dot')).not.toBeNull()
     expect(tab('Chat').querySelector('.tab-dot')).not.toBeNull()
     expect(tab('Chat').getAttribute('aria-label')).toBe('Chat, unread messages')
     toggle().click()
-    await settle()
+    await settleTask()
     expect(voiceChat.open, 'brought forward, not closed').toBe(true)
     expect(q('.right-panel aside.voice-chat')).not.toBeNull()
     expect(toggle().getAttribute('aria-pressed')).toBe('true')
@@ -1961,13 +1942,13 @@ describe('right panel switcher, hidden views (#638)', () => {
     await mountShell()
     pins.pinBuild('B1', 'M001', build('M001'))
     await runSearch({ kind: 'server', serverId: 'S1' }, 'raven', [])
-    await settle()
+    await settleTask()
     tab('Pinned build').click()
-    await settle()
+    await settleTask()
     const box = q('[role="combobox"][aria-label^="Search"]') ?? q('.search-box [contenteditable], .search-box input')!
     box.focus()
     box.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
-    await settle()
+    await settleTask()
     expect(search.open, 'kept behind its tab').toBe(true)
   })
 
@@ -1976,13 +1957,13 @@ describe('right panel switcher, hidden views (#638)', () => {
     await mountShell()
     pins.pinBuild('B1', 'M001', build('M001'))
     await runSearch({ kind: 'server', serverId: 'S1' }, 'raven', [])
-    await settle()
+    await settleTask()
     tab('Search results').focus()
     closeSearch()
-    await settle()
+    await settleTask()
     expect(document.activeElement).toBe(tab('Pinned build'))
     pins.unpinBuild()
-    await settle()
+    await settleTask()
     expect(document.activeElement).toBe(q('#right-view'))
   })
 
@@ -1992,14 +1973,14 @@ describe('right panel switcher, hidden views (#638)', () => {
     await mountShell()
     handleReady(testReady(channels))
     pins.pinBuild('B1', 'M001', build('M001'))
-    await settle()
+    await settleTask()
     tab('Members').click()
-    await settle()
+    await settleTask()
     expect(JSON.parse(localStorage.getItem('pulse.rightViews.U1')!)).toEqual({ 's:S1': ['build', 'members'] })
     // as after a restart: nothing in memory, the account's choices read back on Ready
     views.forgetRightViews()
     handleReady(testReady(channels))
-    await settle()
+    await settleTask()
     expect(q('.right-panel aside.members')).not.toBeNull()
   })
 
@@ -2009,24 +1990,24 @@ describe('right panel switcher, hidden views (#638)', () => {
     await mountShell()
     const width = () => q('.right-panel')!.style.getPropertyValue('--right-w')
     setColumn('right', 250)
-    await settle()
+    await settleTask()
     expect(width()).toBe('250px') // one view: its own width
     pins.pinBuild('B1', 'M001', build('M001'))
     await runSearch({ kind: 'server', serverId: 'S1' }, 'raven', [])
-    await settle()
+    await settleTask()
     // tabs: the largest default of the views there (search 340) until resized
     const shared = width()
     tab('Pinned build').click()
-    await settle()
+    await settleTask()
     expect(width()).toBe(shared)
     tab('Members').click()
-    await settle()
+    await settleTask()
     expect(width()).toBe(shared)
     // resizing now sets the shared width only
     const handle = document.querySelector<HTMLElement>('[role=separator][aria-label^="Resize the"]:not([aria-label="Resize the channel list"])')!
     handle.focus()
     handle.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true, cancelable: true }))
-    await settle()
+    await settleTask()
     expect(columns.tabs).not.toBeNull()
     expect(columns.right).toBe(250)
   })

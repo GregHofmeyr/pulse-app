@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 // Server settings › Achievements (#379): the owner picks one of the server's text channels or none (the default);
 // everyone else reads the choice.
-import { flushSync, mount, tick, unmount } from 'svelte'
+import { flushSync, mount, unmount } from 'svelte'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const invoke = vi.fn(async (_cmd: string, _args?: unknown): Promise<unknown> => undefined)
@@ -12,13 +12,10 @@ import { chooseOption, selectLabels, selectTrigger, selectValue } from './select
 import { app } from '../lib/store.svelte'
 import { emptyState } from '../lib/state'
 import type { Channel } from '../lib/protocol/Channel'
+import { settle } from '../lib/testSettle'
 
 let cmp: ReturnType<typeof mount> | undefined
 const ch = (id: string, kind: Channel['kind'], position: number, server_id = 'S1') => ({ id, server_id, kind, name: id.toLowerCase(), position }) as unknown as Channel
-const settle = async () => {
-  for (let i = 0; i < 4; i++) await tick()
-  flushSync()
-}
 
 beforeEach(() => {
   invoke.mockReset()
@@ -43,22 +40,22 @@ function open(owner: string) {
 describe('AchievementsChannelSettings', () => {
   it("the owner picks among this server's text channels; none by default", async () => {
     open('U1')
-    await settle()
+    await settle(4)
     const select = selectTrigger()!
     expect(selectLabels(select)).toEqual(['None (no cards)', '#general', '#memes'])
     expect(selectValue(select)).toBe('')
     chooseOption(select, 'MEMES')
-    await settle()
+    await settle(4)
     expect(invoke).toHaveBeenCalledWith('set_achievements_channel', { serverId: 'S1', channelId: 'MEMES' })
     chooseOption(select, '')
-    await settle()
+    await settle(4)
     expect(invoke).toHaveBeenLastCalledWith('set_achievements_channel', { serverId: 'S1', channelId: null })
   })
 
   it('anyone else reads the choice', async () => {
     invoke.mockImplementation(async (cmd: string) => (cmd === 'achievements_channel' ? { channel_id: 'GENERAL' } : undefined))
     open('U9')
-    await settle()
+    await settle(4)
     expect(selectTrigger()).toBeNull()
     expect(document.body.textContent).toContain('Cards go to #general.')
   })

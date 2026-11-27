@@ -13,6 +13,7 @@ import type { ActionContext } from '../lib/quickActions'
 import { MESSAGE_DELAY_MS } from '../lib/quickMessages'
 import type { SearchHit } from '../lib/protocol/SearchHit'
 import type { Message } from '../lib/protocol/Message'
+import { nextTask } from '../lib/testSettle'
 
 type Messages = { label: string; serverId: string | null; search: (q: string) => Promise<SearchHit[]>; open: (hit: SearchHit) => void }
 const hit = (id: string, text: string, author = 'U2', channel = 'c1') =>
@@ -74,7 +75,6 @@ const press = (key: string, o: KeyboardEventInit = {}) => {
   flushSync()
   return e
 }
-const settle = () => new Promise((r) => setTimeout(r))
 const options = () => [...document.querySelectorAll<HTMLElement>('[role="option"]')]
 const names = () => options().map((o) => o.querySelector('.name')!.textContent)
 const activeOption = () => document.getElementById(field().getAttribute('aria-activedescendant') ?? '')
@@ -140,12 +140,12 @@ describe('QuickSwitcher', () => {
     type('gene')
     press('Enter')
     expect(onClose).toHaveBeenCalled()
-    await settle()
+    await nextTask()
     expect(onGo).toHaveBeenCalledWith(expect.objectContaining({ key: 'c:c1' }), false)
     open()
     type('game')
     options()[0].click()
-    await settle()
+    await nextTask()
     expect(onGo).toHaveBeenLastCalledWith(expect.objectContaining({ key: 's:s1' }), false)
   })
   it("while a voice row is listed, every place row keeps the Join button's room, so the server names line up", () => {
@@ -167,12 +167,12 @@ describe('QuickSwitcher', () => {
     expect(join.textContent).toBe('Join')
     expect(join.tabIndex).toBe(-1)
     press('Enter', { shiftKey: true })
-    await settle()
+    await nextTask()
     expect(onGo).toHaveBeenCalledWith(expect.objectContaining({ key: 'c:v1' }), true)
     open()
     type('lounge')
     options()[0].querySelector<HTMLButtonElement>('button.join')!.click()
-    await settle()
+    await nextTask()
     expect(onGo).toHaveBeenLastCalledWith(expect.objectContaining({ key: 'c:v1' }), true)
     expect(onGo).toHaveBeenCalledTimes(2)
   })
@@ -187,7 +187,7 @@ describe('QuickSwitcher', () => {
     type('>keyb')
     expect(names()).toEqual(['Settings: Keybinds'])
     press('Enter')
-    await settle()
+    await nextTask()
     expect(ctx.openSettings).toHaveBeenCalledWith('keybinds')
     expect(onGo).not.toHaveBeenCalled()
   })
@@ -220,7 +220,7 @@ describe('QuickSwitcher', () => {
       press('ArrowDown')
       expect(activeOption()).toBe(options()[2])
       press('Enter')
-      await settle()
+      await nextTask()
       expect(onClose).toHaveBeenCalled()
       expect(m.open).toHaveBeenCalledWith(expect.objectContaining({ message: expect.objectContaining({ id: 'm1' }) }))
       expect(onGo).not.toHaveBeenCalled()
@@ -318,7 +318,7 @@ describe('QuickSwitcher', () => {
       for (let i = 0; i < 4; i++) press('ArrowDown')
       expect(activeOption()).toBe(options()[4])
       press('Enter')
-      await settle()
+      await nextTask()
       expect(onClose).toHaveBeenCalled()
       expect(e.open).toHaveBeenCalledWith(expect.objectContaining({ message: expect.objectContaining({ id: 'e1' }) }))
       expect(m.open).not.toHaveBeenCalled()
@@ -331,7 +331,7 @@ describe('QuickSwitcher', () => {
       await wait(MESSAGE_DELAY_MS + 30)
       flushSync()
       options().find((o) => o.textContent!.includes('setup in the club'))!.click()
-      await settle()
+      await nextTask()
       expect(e.open).toHaveBeenCalledWith(expect.objectContaining({ message: expect.objectContaining({ id: 'e1' }) }))
     })
 
@@ -356,7 +356,7 @@ describe('QuickSwitcher', () => {
       expect(heads()).toEqual(['Jump to', 'Actions'])
       expect(note()).toBe('Searching messages…')
       answer([hit('m1', 'setup here')])
-      await settle()
+      await nextTask()
       flushSync()
       expect(heads()).toEqual(['Jump to', 'Actions', 'Messages in Game Night', 'Messages everywhere'])
       expect(note()).toBeNull()
@@ -486,7 +486,7 @@ describe('QuickSwitcher', () => {
       type('builds: raven')
       await answer()
       press('Enter')
-      await settle()
+      await nextTask()
       expect(onClose).toHaveBeenCalled()
       expect(builds.open).toHaveBeenCalledWith(expect.objectContaining({ id: 'm1' }))
     })
@@ -515,7 +515,7 @@ describe('QuickSwitcher', () => {
       // its Open opens the page
       press(' ')
       ;[...document.querySelectorAll<HTMLButtonElement>('.build-peek button')].find((b) => b.textContent?.trim() === 'Open')!.click()
-      await settle()
+      await nextTask()
       expect(onClose).toHaveBeenCalled()
       expect(builds.open).toHaveBeenCalledWith(expect.objectContaining({ id: 'm2' }))
     })

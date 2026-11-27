@@ -13,6 +13,7 @@ import { forgetBuildWindow, noteBuildWindowEvent, poppedOut, popOutBuild } from 
 import { app, handleReady, resetState } from './store.svelte'
 import { applyEvent } from './state'
 import { testMe, testReady } from './testReady'
+import { nextTask } from './testSettle'
 
 const sam = { id: 'U2', username: 'sam', display_name: 'sam', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
 const ready = () =>
@@ -34,7 +35,6 @@ const event = (e: Event) => {
   noteBuildWindowEvent(e)
 }
 const calls = (cmd: string) => invoke.mock.calls.filter(([c]) => c === cmd).map(([, a]) => a as Record<string, unknown>)
-const settle = () => new Promise((r) => setTimeout(r, 0))
 
 beforeEach(() => {
   invoke.mockReset()
@@ -67,7 +67,7 @@ describe('the build pop-out from the main window', () => {
     // its edits are the ones sent on
     event({ t: 'MessageUpdated', d: { message: build('M002', { title: 'Raven endgame' }) } })
     event({ t: 'MessageUpdated', d: { message: build('M001', { title: 'Other' }) } })
-    await settle()
+    await nextTask()
     expect(calls('update_build_window').map((a) => (a.snapshot as { message_id: string }).message_id)).toEqual(['M002'])
   })
 
@@ -81,7 +81,7 @@ describe('the build pop-out from the main window', () => {
     await second
     expect(poppedOut.messageId).toBe('M002')
     event({ t: 'MessageUpdated', d: { message: build('M002', { title: 'Raven endgame' }) } })
-    await settle()
+    await nextTask()
     expect(calls('update_build_window').map((a) => (a.snapshot as { message_id: string }).message_id)).toEqual(['M002'])
   })
 
@@ -100,7 +100,7 @@ describe('the build pop-out from the main window', () => {
     event({ t: 'MessageUpdated', d: { message: build('M001', { title: 'Raven endgame' }) } })
     event({ t: 'MessageUpdated', d: { message: build('M002', { title: 'Other' }) } })
     event({ t: 'BuildsArchived', d: { channel_id: 'B1', message_ids: ['M001'], archived_at: '2026-10-05T00:00:00Z', archived_by: 'U2' } })
-    await settle()
+    await nextTask()
     const sent = calls('update_build_window').map((a) => a.snapshot as { message_id: string; title: string; archived: boolean })
     expect(sent.map((s) => [s.message_id, s.title, s.archived])).toEqual([['M001', 'Raven endgame', false], ['M001', 'Raven endgame', true]])
   })
@@ -109,7 +109,7 @@ describe('the build pop-out from the main window', () => {
   it('deleting the build closes its pop-out', async () => {
     await popOutBuild(build('M001'))
     event({ t: 'MessageDeleted', d: { channel_id: 'B1', message_id: 'M001', author_id: 'U2', mentions: [], thread_root_id: null } } as Event)
-    await settle()
+    await nextTask()
     expect(calls('close_build_window')).toEqual([{ messageId: 'M001' }])
     expect(poppedOut.messageId).toBeNull()
   })
@@ -117,14 +117,14 @@ describe('the build pop-out from the main window', () => {
   it('a comment deleted under it does not close it', async () => {
     await popOutBuild(build('M001'))
     event({ t: 'MessageDeleted', d: { channel_id: 'B1', message_id: 'M001', author_id: 'U2', mentions: [], thread_root_id: 'M000' } } as Event)
-    await settle()
+    await nextTask()
     expect(calls('close_build_window')).toEqual([])
   })
 
   it('losing access (its channel leaves the data) closes it', async () => {
     await popOutBuild(build('M001'))
     event({ t: 'ChannelDeleted', d: { channel_id: 'B1', server_id: 'S1' } })
-    await settle()
+    await nextTask()
     expect(calls('close_build_window')).toEqual([{ messageId: 'M001' }])
   })
 
@@ -135,7 +135,7 @@ describe('the build pop-out from the main window', () => {
     expect(poppedOut.channelId).toBeNull()
     handleReady(ready())
     event({ t: 'MessageUpdated', d: { message: build('M001', { title: 'Raven endgame' }) } })
-    await settle()
+    await nextTask()
     expect(calls('update_build_window'), "nothing of the last account's pop-out is sent on").toEqual([])
   })
 })

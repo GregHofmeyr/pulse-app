@@ -43,6 +43,7 @@ import { openMessage } from '../lib/openMessage'
 import { testMe, testReady } from '../lib/testReady'
 import { windowFocus } from '../lib/windowFocus.svelte'
 import { forgetPinnedBuild, pinnedBuild } from '../lib/pinnedBuild.svelte'
+import { nextTask } from '../lib/testSettle'
 
 const sam = { id: 'U2', username: 'sam', display_name: 'sam', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
 const jo = { id: 'U3', username: 'jo', display_name: 'jo', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
@@ -74,7 +75,6 @@ const comment = (id: string, author: string, content: string): Message => ({
 })
 
 let cmp: ReturnType<typeof mount> | undefined
-const settle = () => new Promise((r) => setTimeout(r, 0))
 /** The calls of `cmd` (for `list_builds`, the browse feed's, not the Favourites section's own). */
 const calls = (cmd: string) => invoke.mock.calls.filter((c) => c[0] === cmd && !(cmd === 'list_builds' && (c[1] as { favourite?: boolean })?.favourite))
 let replies: Message[] = []
@@ -116,9 +116,9 @@ afterEach(() => {
 
 async function flush() {
   flushSync()
-  await settle()
+  await nextTask()
   flushSync()
-  await settle()
+  await nextTask()
   flushSync()
 }
 

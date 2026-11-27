@@ -11,6 +11,7 @@ import MessageItem from './MessageItem.svelte'
 import { app } from '../lib/store.svelte'
 import { emptyState } from '../lib/state'
 import { tipTiming } from '../lib/tooltip'
+import { nextTask } from '../lib/testSettle'
 
 const msg = (over: Partial<Message> = {}): Message => ({
   id: 'M1', channel_id: 'C1', author_id: 'U2', kind: 'normal', content: 'hi',
@@ -44,7 +45,6 @@ afterEach(() => {
   tipTiming.delay = TIP_DELAY
   vi.unstubAllGlobals()
 })
-const settle = () => new Promise((r) => setTimeout(r, 0))
 function deferred<T = unknown>() {
   let resolve!: (v: T) => void
   let reject!: (e: unknown) => void
@@ -198,7 +198,7 @@ describe('reaction toggles', () => {
     const r = (on: boolean) => react(() => app.state, (s) => (app.state = s), 'C1', 'M1', '🎉', on, 'U1', onError)
     const first = r(true) // a double click: add, then remove
     const second = r(false)
-    await settle()
+    await nextTask()
     expect(calls('remove_reaction')).toHaveLength(0)
     expect(cur().reactions).toEqual([{ emoji: '🎉', count: 2, me: true }])
     add.resolve(undefined)
@@ -212,7 +212,7 @@ describe('reaction toggles', () => {
     ;(document.querySelector('.actions [aria-label="Add reaction"]') as HTMLButtonElement).click()
     flushSync()
     cell('👍').click()
-    await settle()
+    await nextTask()
     expect(invoke).not.toHaveBeenCalled()
     expect(cur().reactions).toEqual([{ emoji: '👍', count: 2, me: true }])
   })
@@ -224,7 +224,7 @@ describe('reaction toggles', () => {
     cell('🎉').click()
     flushSync()
     expect(document.querySelector('.cell')).toBeNull() // picker closed
-    await settle()
+    await nextTask()
     expect(invoke).toHaveBeenCalledWith('add_reaction', { messageId: 'M1', emoji: '🎉' })
     expect(cur().reactions).toEqual([{ emoji: '🎉', count: 1, me: true }])
   })
@@ -235,11 +235,11 @@ describe('reaction toggles', () => {
     flushSync()
     const shiftClick = (k: string) => cell(k).dispatchEvent(new MouseEvent('click', { bubbles: true, shiftKey: true }))
     shiftClick('👍') // already mine: removes
-    await settle()
+    await nextTask()
     expect(calls('remove_reaction')).toHaveLength(1)
     expect(document.querySelector('.cell')).not.toBeNull()
     shiftClick('🎉') // not mine: adds
-    await settle()
+    await nextTask()
     expect(invoke).toHaveBeenCalledWith('add_reaction', { messageId: 'M1', emoji: '🎉' })
     expect(document.querySelector('.cell')).not.toBeNull()
   })
@@ -254,13 +254,13 @@ describe('reaction toggles', () => {
     show(msg({ reactions: [{ emoji: '👍', count: 1, me: true }] }))
     openFromChip()
     shiftClick('👍')
-    await settle()
+    await nextTask()
     flushSync()
     expect(calls('remove_reaction')).toHaveLength(1)
     expect(cur().reactions).toEqual([])
     expect(document.querySelector('.cell')).not.toBeNull() // the row emptied, the picker did not go
     shiftClick('🎉')
-    await settle()
+    await nextTask()
     expect(invoke).toHaveBeenCalledWith('add_reaction', { messageId: 'M1', emoji: '🎉' })
     expect(document.querySelectorAll('.picker')).toHaveLength(1)
   })
@@ -269,11 +269,11 @@ describe('reaction toggles', () => {
     show(msg({ reactions: [{ emoji: '👍', count: 1, me: false }] }))
     openFromChip()
     shiftClick('👍')
-    await settle()
+    await nextTask()
     expect(invoke).toHaveBeenCalledWith('add_reaction', { messageId: 'M1', emoji: '👍' })
     expect(document.querySelector('.cell')).not.toBeNull()
     cell('🎉').click()
-    await settle()
+    await nextTask()
     expect(document.querySelector('.cell')).toBeNull()
   })
 
@@ -306,10 +306,10 @@ describe('reaction toggles', () => {
     await tick() // the optimistic flip lands; the add itself stays in flight
     shiftClick('🎉') // optimistic state already says mine: this one removes
     await tick()
-    await settle()
+    await nextTask()
     expect(calls('remove_reaction')).toHaveLength(0) // queued behind the add still in flight
     add.resolve(undefined)
-    await settle()
+    await nextTask()
     expect(invoke.mock.calls.map((c) => c[0]).filter((c) => c.endsWith('_reaction'))).toEqual(['add_reaction', 'remove_reaction'])
     expect(cur().reactions).toEqual([])
   })
@@ -320,7 +320,7 @@ describe('reaction toggles', () => {
     ;(document.querySelector('.actions [aria-label="Add reaction"]') as HTMLButtonElement).click()
     flushSync()
     cell('🎉').click()
-    await settle()
+    await nextTask()
     expect(cur().reactions).toEqual([])
     expect(document.querySelector('[role="alert"]')?.textContent).toBe('nope') // inline on the message
   })
@@ -462,7 +462,7 @@ describe('reactor tooltip', () => {
     flushSync()
     expect(c.getAttribute('data-tip')).toBeNull()
     names.resolve(['U2', 'U3'])
-    await settle()
+    await nextTask()
     flushSync()
     expect(c.getAttribute('data-tip')).toBe('U2 and U3')
   })
@@ -472,7 +472,7 @@ describe('reactor tooltip', () => {
     show(msg({ reactions: [{ emoji: '👍', count: 2, me: false }] }))
     const c = chips()[0]
     c.dispatchEvent(new FocusEvent('focus'))
-    await settle()
+    await nextTask()
     flushSync()
     const tip = document.querySelector('.tip')!
     expect(tip.textContent).toBe('U2 and U3')
@@ -492,11 +492,11 @@ describe('reactor tooltip', () => {
     c.dispatchEvent(new Event('pointerenter'))
     c.dispatchEvent(new Event('pointerleave'))
     c.dispatchEvent(new Event('pointerenter'))
-    await settle()
+    await nextTask()
     flushSync()
     expect(document.querySelector('.tip')?.textContent).toBe('U2 and U4')
     slow.resolve(['U2', 'U3'])
-    await settle()
+    await nextTask()
     flushSync()
     expect(document.querySelector('.tip')?.textContent).toBe('U2 and U4')
   })
@@ -506,12 +506,12 @@ describe('reactor tooltip', () => {
     show(msg({ reactions: [{ emoji: '👍', count: 2, me: false }] }))
     const c = chips()[0]
     c.dispatchEvent(new Event('pointerenter'))
-    await settle()
+    await nextTask()
     flushSync()
     c.dispatchEvent(new FocusEvent('focus'))
     flushSync()
     expect(document.querySelector('.tip')?.textContent).toBe('U2 and U3')
-    await settle()
+    await nextTask()
     expect(calls('list_reactors')).toHaveLength(1)
   })
 
@@ -521,7 +521,7 @@ describe('reactor tooltip', () => {
     const c = chips()[0]
     c.dispatchEvent(new FocusEvent('focus'))
     c.dispatchEvent(new Event('pointerenter'))
-    await settle()
+    await nextTask()
     c.dispatchEvent(new Event('pointerleave'))
     flushSync()
     expect(document.querySelector('.tip')?.textContent).toBe('U2 and U3')
@@ -534,7 +534,7 @@ describe('reactor tooltip', () => {
     invoke.mockResolvedValue(['U2'])
     show(msg({ reactions: [{ emoji: '🎉', count: 1, me: false }, { emoji: 'custom:X1', count: 1, me: false }] }))
     chips()[1].dispatchEvent(new FocusEvent('focus'))
-    await settle()
+    await nextTask()
     flushSync()
     const tip = document.querySelector('.tip')!
     expect(tip.id).toBe('reactors-M1-custom-X1')
@@ -558,11 +558,11 @@ describe('reactor tooltip edge cases', () => {
     const [a, b] = chips()
     a.dispatchEvent(new FocusEvent('focus'))
     b.dispatchEvent(new Event('pointerenter'))
-    await settle()
+    await nextTask()
     flushSync()
     expect(tipText()).toBe('U9')
     b.dispatchEvent(new Event('pointerleave'))
-    await settle()
+    await nextTask()
     flushSync()
     expect(tipText()).toBe('U2 and U3')
     expect(a.getAttribute('aria-describedby')).toBe(document.querySelector('.tip')!.id)
@@ -572,12 +572,12 @@ describe('reactor tooltip edge cases', () => {
     invoke.mockResolvedValue(['U2', 'U3'])
     showLive(two())
     chips()[0].dispatchEvent(new Event('pointerenter'))
-    await settle()
+    await nextTask()
     flushSync()
     expect(tipText()).toBe('U2 and U3')
     invoke.mockResolvedValue(['U2', 'U3', 'U4'])
     app.state = { ...app.state, messages: { C1: [{ ...cur(), reactions: [{ emoji: '👍', count: 3, me: false }, cur().reactions[1]] }] } }
-    await settle()
+    await nextTask()
     flushSync()
     expect(calls('list_reactors')).toHaveLength(2)
     expect(tipText()).toBe('U2, U3 and U4')
@@ -589,9 +589,9 @@ describe('reactor tooltip edge cases', () => {
     show(msg({ reactions: [{ emoji: '👍', count: 2, me: false }] }))
     const c = chips()[0]
     c.dispatchEvent(new Event('pointerenter'))
-    await settle()
+    await nextTask()
     c.dispatchEvent(new FocusEvent('focus'))
-    await settle()
+    await nextTask()
     expect(calls('list_reactors')).toHaveLength(1)
     expect(warn).toHaveBeenCalled()
     warn.mockRestore()
@@ -601,9 +601,9 @@ describe('reactor tooltip edge cases', () => {
     invoke.mockResolvedValue(['U2'])
     showLive(msg({ reactions: [{ emoji: '👍', count: 2, me: false }] }))
     chips()[0].dispatchEvent(new Event('pointerenter'))
-    await settle()
+    await nextTask()
     app.state = { ...app.state, messages: { C1: [{ ...cur(), reactions: [{ emoji: '👍', count: 2, me: true }] }] } }
-    await settle()
+    await nextTask()
     expect(calls('list_reactors')).toHaveLength(2)
   })
 
@@ -612,16 +612,16 @@ describe('reactor tooltip edge cases', () => {
     show(msg({ reactions: [{ emoji: '👍', count: 2, me: false }] }))
     const c = chips()[0]
     c.dispatchEvent(new FocusEvent('focus'))
-    await settle()
+    await nextTask()
     flushSync()
     expect(tipText()).toMatch(/couldn.t load/i)
     c.dispatchEvent(new Event('pointerenter')) // same click: not a new show
-    await settle()
+    await nextTask()
     expect(calls('list_reactors')).toHaveLength(1)
     c.dispatchEvent(new FocusEvent('blur'))
     c.dispatchEvent(new Event('pointerleave'))
     c.dispatchEvent(new Event('pointerenter')) // a new show retries
-    await settle()
+    await nextTask()
     flushSync()
     expect(tipText()).toBe('U2 and U3')
     expect(calls('list_reactors')).toHaveLength(2)
@@ -646,7 +646,7 @@ describe('chips you cannot add to', () => {
   const chip = (key: string) => chips()[cur().reactions.findIndex((r) => r.emoji === key)]
   async function hoverTip(c: HTMLButtonElement) {
     c.dispatchEvent(new Event('pointerenter'))
-    await settle()
+    await nextTask()
     flushSync()
     return document.querySelector('.tip')?.textContent ?? ''
   }
@@ -657,7 +657,7 @@ describe('chips you cannot add to', () => {
     const c = chip('custom:X2')
     expect(c.getAttribute('aria-disabled')).toBe('true')
     c.click()
-    await settle()
+    await nextTask()
     expect(calls('add_reaction')).toHaveLength(0)
     expect(cur().reactions).toEqual([{ emoji: 'custom:X2', count: 1, me: false }])
     expect(await hoverTip(c)).toContain("From a server you're not in")
@@ -670,7 +670,7 @@ describe('chips you cannot add to', () => {
       const c = chip(key)
       expect(c.getAttribute('aria-disabled')).toBe('true')
       c.click()
-      await settle()
+      await nextTask()
       expect(await hoverTip(c)).toContain('This emoji was deleted')
       c.dispatchEvent(new Event('pointerleave'))
     }
@@ -682,7 +682,7 @@ describe('chips you cannot add to', () => {
     expect(chip('custom:X2').hasAttribute('aria-disabled')).toBe(false)
     chip('custom:X2').click()
     chip('custom:X3').click()
-    await settle()
+    await nextTask()
     expect(calls('remove_reaction').map((c) => (c[1] as { emoji: string }).emoji)).toEqual(['custom:X2', 'custom:X3'])
   })
 
@@ -690,7 +690,7 @@ describe('chips you cannot add to', () => {
     showCustom([{ emoji: 'custom:X1', count: 1, me: false }])
     expect(chip('custom:X1').hasAttribute('aria-disabled')).toBe(false)
     chip('custom:X1').click()
-    await settle()
+    await nextTask()
     expect(calls('add_reaction')).toHaveLength(1)
   })
 
@@ -701,7 +701,7 @@ describe('chips you cannot add to', () => {
     const faded = [...document.querySelectorAll<HTMLButtonElement>('.chip.suggest')]
     expect(faded.map((b) => b.getAttribute('aria-label'))).toEqual(['React with 🎉', 'React with ❤️'])
     faded[0].click()
-    await settle()
+    await nextTask()
     expect(calls('add_reaction')).toEqual([['add_reaction', { messageId: 'M1', emoji: '🎉' }]])
     // my 👍 was given up locally: one reaction per person
     expect(cur().reactions.find((r) => r.emoji === '👍')?.me).toBe(false)

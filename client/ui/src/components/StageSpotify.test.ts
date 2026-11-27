@@ -16,6 +16,7 @@ import { PILL_CLOSE_GRACE, PILL_OPEN_DELAY } from '../lib/hoverIntent'
 const EXPAND_PATH = 'M14 4h6v6M20 4l-7 7M10 20H4v-6M4 20l7-7'
 import type { Ready } from '../lib/protocol/Ready'
 import type { StageShare } from '../lib/protocol/StageShare'
+import { settle } from '../lib/testSettle'
 
 const me = { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
 const sam = { id: 'U2', username: 'sam', display_name: 'sam', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
@@ -108,17 +109,16 @@ describe('keyboard focus follows the view', () => {
   it('minimise hands it to the pill, opening hands it to the card, back to the strip to its Minimise', async () => {
     const top = show(share(), 'top')
     const corner = show(share(), 'corner')
-    const settle = async () => { for (let i = 0; i < 3; i++) await tick(); flushSync() }
     btn(top, 'Minimise')!.focus()
     btn(top, 'Minimise')!.click()
-    await settle()
+    await settle(3)
     expect(document.activeElement).toBe(corner.querySelector('.pill'))
     ;(document.activeElement as HTMLElement).click()
-    await settle()
+    await settle(3)
     expect(corner.querySelector('.corner-card')!.contains(document.activeElement)).toBe(true)
     btn(corner, 'Show above the tiles')!.focus()
     btn(corner, 'Show above the tiles')!.click()
-    await settle()
+    await settle(3)
     expect(document.activeElement).toBe(btn(top, 'Minimise'))
   })
 })
