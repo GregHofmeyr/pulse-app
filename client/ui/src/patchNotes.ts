@@ -28,6 +28,7 @@ export const patchNotes: PatchNotes = {
   version: '0.2.21',
   date: '27 November 2026',
   new: [
+    'Speaking rings: pick how your avatar lights up when you talk (Settings → Profile → Speaking ring). Eleven styles and nine colours, and Liquid, Wave of dots and Bars round the ring move with your voice. Prefer it calm? "Show everyone\'s rings as Classic" is in Voice settings',
     'Set your own typing text in Profile settings: instead of "is typing…", everyone sees "<you> is cooking", "is plotting" or whatever you like (pick a suggestion or write your own)',
     'Clips channels get a games panel on the right, like Builds: filter clips by game, with counts that follow your other filters',
     '"Hear yourself as others do" in the mic test: plays your voice back after the same compression everyone else hears, so you know exactly how you sound',
@@ -42,15 +43,14 @@ export const patchNotes: PatchNotes = {
     'Builds: the pop-out\'s "On top" button is labelled, and hidden where your system can\'t keep windows on top',
     'Builds: big images show a loading state, and the next and previous ones load ahead',
     'Typing: someone typing straight after sending a message shows up again, and switching chats no longer leaves the old typing line behind',
+    'Voice: calls can never fall back to phone-quality audio',
+    'Blocking: an invite preview no longer shows the profile of someone who blocked you',
   ],
   qol: [
     'One date picker everywhere: plans, scheduled messages and reminders, and it won\'t let you pick a day in the past',
     'Filter counts in Clips and Builds stay on screen while they update, instead of blinking',
   ],
-  soon: [
-    'Speaking rings: pick your own style and colour, some that move with your voice',
-  ],
-  message: 'Typing text and a clearer mic 🎙️\nSpeaking rings next 💫',
+  message: 'Speaking rings 💫 and typing text\nAnd a clearer mic 🎙️',
 }
 
 /** The release before `patchNotes` (#235), shown collapsed below them; `null` = none. */
