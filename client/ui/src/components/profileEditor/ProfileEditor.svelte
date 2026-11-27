@@ -16,6 +16,7 @@
   import CardEditor from './CardEditor.svelte'
   import LooksTiles from './LooksTiles.svelte'
   import ShowUp from './ShowUp.svelte'
+  import TypingSection from './TypingSection.svelte'
   import AppearanceSettings from '../AppearanceSettings.svelte'
   import EditorMenu from './EditorMenu.svelte'
   import { modal } from '../../lib/actions'
@@ -120,12 +121,14 @@
                The other sections show only the card until their own columns arrive. -->
           <div class="centre">
             <CardEditor state={st} />
-            {#if section === 'looks'}<ShowUp state={st} />{/if}
+            {#if section === 'looks' || section === 'typing'}<ShowUp state={st} />{/if}
           </div>
           {#if section === 'looks'}
             <aside class="side" aria-label="Looks"><LooksTiles state={st} /></aside>
           {:else if section === 'badges'}
             <aside class="side wide" aria-label="Badges"><BadgesSection state={st} /></aside>
+          {:else if section === 'typing'}
+            <aside class="side" aria-label="Typing text"><TypingSection state={st} /></aside>
           {/if}
         {/if}
       </div>
@@ -153,9 +156,9 @@
   .confirm span { margin-right: auto; }
   .body { flex: 1; min-height: 0; display: flex; }
   .stage { flex: 1; min-width: 0; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 24px; }
-  .stage[data-section='looks'], .stage[data-section='badges'] { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 24px; }
+  .stage[data-section='looks'], .stage[data-section='badges'], .stage[data-section='typing'] { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 24px; }
   .centre { display: flex; flex-direction: column; align-items: center; gap: 24px; min-width: 0; }
-  .stage[data-section='looks'] .centre, .stage[data-section='badges'] .centre { flex: 1 1 340px; }
+  .stage[data-section='looks'] .centre, .stage[data-section='badges'] .centre, .stage[data-section='typing'] .centre { flex: 1 1 340px; }
   /* the tile column keeps its size and drops under the card when the window is too narrow for both */
   .side { flex: 1 1 260px; max-width: 360px; min-width: 0; }
   /* Badges needs room for five 84px slots: a wider panel, which also drops under the card when the window is narrow */
