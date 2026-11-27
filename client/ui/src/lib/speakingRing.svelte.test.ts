@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 // Speaking rings (#651): the 8-ring cap (first eight to start animate, a newcomer never bumps one) and the viewer's
 // "Show everyone's rings as Classic" setting.
+import { flushSync } from 'svelte'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(async () => undefined) }))
@@ -11,7 +12,11 @@ import { isAnimating, nextOrder, RING_CAP } from './speakingRing.svelte'
 import { voice } from './voice.svelte'
 
 const ids = (n: number, from = 1) => Array.from({ length: n }, (_, i) => String(from + i))
-const speak = (list: string[]) => (voice.speaking = new Set(list))
+/** One speaking event: the set changes, then the app settles (each event is its own task). */
+const speak = (list: string[]) => {
+  voice.speaking = new Set(list)
+  flushSync()
+}
 const animating = (list: string[]) => list.filter((id) => isAnimating(id))
 
 describe('the ring cap (#651 §8.3)', () => {
@@ -60,13 +65,26 @@ describe('the ring cap (#651 §8.3)', () => {
     expect(isAnimating('8')).toBe(true)
   })
 
+  it('people_who_started_with_no_ring_on_screen_rank_by_start_time_not_name', () => {
+    // #713: nobody reads the cap while they start (no tile mounted), 9 first, then 8, … then 1: in name order the
+    // last to start would come first
+    const lit: string[] = []
+    for (const id of ids(9).reverse()) {
+      lit.push(id)
+      speak([...lit])
+    }
+    // a tile appears now: the first eight to start (9 … 2) animate, 1 waits
+    expect(animating(ids(9))).toEqual(ids(8, 2))
+    expect(isAnimating('1')).toBe(false)
+  })
+
   it('soundboard_lit_people_count_toward_the_cap', () => {
     vi.useFakeTimers()
     try {
       speak(ids(7))
       isAnimating('1')
       lightRing('S', 5000)
-      isAnimating('S')
+      flushSync()
       speak([...ids(7), '8'])
       expect(isAnimating('S')).toBe(true)
       expect(isAnimating('8')).toBe(false)
