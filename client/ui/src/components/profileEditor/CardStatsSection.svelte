@@ -67,8 +67,8 @@
         <button type="button" class="handle" disabled={!shown} aria-label="Move {label(key)}" data-tip="Drag, or use the arrow keys" onkeydown={(e) => handleKeys(e, key)}>
           <svg viewBox="0 0 10 16" width="10" height="16" aria-hidden="true"><circle cx="3" cy="3" r="1.4" /><circle cx="7" cy="3" r="1.4" /><circle cx="3" cy="8" r="1.4" /><circle cx="7" cy="8" r="1.4" /><circle cx="3" cy="13" r="1.4" /><circle cx="7" cy="13" r="1.4" /></svg>
         </button>
-        <span class="name">{label(key)}</span>
-        <button type="button" class="switch" class:on={shown} role="switch" aria-checked={shown} aria-label={label(key)} onclick={() => flip(key)}><span></span></button>
+        <span class="name" data-tip={key.startsWith('steam') ? 'Shows only while you share Steam' : undefined}>{label(key)}</span>
+        <button type="button" class="switch" class:on={shown} role="switch" aria-checked={shown} aria-label={label(key)} data-tip={key.startsWith('steam') ? 'Shows only while you share Steam' : undefined} onclick={() => flip(key)}><span></span></button>
       </li>
     {/each}
   </ol>

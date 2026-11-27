@@ -117,6 +117,15 @@ describe('the Card stats section (#727)', () => {
     expect([...document.querySelectorAll('.info dt')].map((d) => d.textContent)).toEqual(['Steam, 2 weeks', 'Member since'])
   })
 
+  it('steam_rows_say_they_show_only_while_sharing', () => {
+    show()
+    for (const k of ['steam_completion', 'steam_recent']) {
+      expect(q(`[data-row="${k}"] .name`).dataset.tip).toMatch(/share Steam/)
+      expect(sw(k).dataset.tip).toMatch(/share Steam/)
+    }
+    expect(q('[data-row="voice"] .name').dataset.tip).toBeUndefined()
+  })
+
   it('a_press_that_moves_without_dragging_is_not_a_toggle', () => {
     show()
     layout()
