@@ -117,6 +117,45 @@ describe('ClipEditor', () => {
     expect(video().getAttribute('src')).toBe('asset:///tmp/preview.mp4')
   })
 
+  // #545: a failed update install wound Pulse down mid-preview; once the sources are back, the editor asks again.
+  it('asks again for a preview and filmstrip cut short by winding down', async () => {
+    let fail = true
+    invoke.mockImplementation(async (cmd) => {
+      if (fail && (cmd === 'prepare_preview' || cmd === 'clip_filmstrip')) throw 'Pulse couldn\'t prepare a preview of that video.'
+      if (cmd === 'clip_filmstrip') return { path: '/tmp/film.jpg', tiles: 24 }
+      if (cmd === 'prepare_preview') return '/tmp/preview.mp4'
+      return undefined
+    })
+    await show(source({ video_codec: 'hevc', preview: 'encode' }))
+    expect(text()).toContain("Pulse couldn't prepare a preview of that video.")
+    expect(video()).toBeNull()
+    fail = false
+    invoke.mockClear()
+    listeners['clip://sources-back']?.({ payload: null })
+    await nextTask(); flushSync()
+    expect(invoke).toHaveBeenCalledWith('prepare_preview', { source: 'S-1' })
+    expect(invoke).toHaveBeenCalledWith('clip_filmstrip', { source: 'S-1' })
+    expect(video().getAttribute('src')).toBe('asset:///tmp/preview.mp4')
+    expect(text()).not.toContain("couldn't prepare")
+  })
+
+  it('a working editor ignores the sources coming back', async () => {
+    await show()
+    invoke.mockClear()
+    listeners['clip://sources-back']?.({ payload: null })
+    await nextTask(); flushSync()
+    expect(invoke).not.toHaveBeenCalledWith('prepare_preview', expect.anything())
+    expect(invoke).not.toHaveBeenCalledWith('clip_filmstrip', expect.anything())
+  })
+
+  it('stops listening for the sources once closed', async () => {
+    await show()
+    expect(listeners['clip://sources-back']).toBeDefined()
+    cmps.forEach((c) => unmount(c)); cmps = []
+    await nextTask()
+    expect(listeners['clip://sources-back']).toBeUndefined()
+  })
+
   // WebKitGTK won't play video over asset://: on Linux the core serves it over loopback HTTP.
   it('plays a direct file from the address the core gives (Linux)', async () => {
     invoke.mockImplementation(async (cmd, args) => {

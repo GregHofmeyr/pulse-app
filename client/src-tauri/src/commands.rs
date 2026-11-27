@@ -407,7 +407,10 @@ impl Core {
     /// No jobs when they're still there or nobody is signed in.
     #[cfg_attr(not(windows), allow(dead_code))]
     pub(crate) async fn resume_clips(&self, app: &AppHandle) {
-        self.clip_sources.unpark();
+        // the editor asks again for a preview or filmstrip that winding down cut short
+        if self.clip_sources.unpark() {
+            let _ = app.emit("clip://sources-back", ());
+        }
         let Ok((_, token)) = self.current() else {
             return;
         };
@@ -3757,6 +3760,9 @@ pub async fn prepare_preview(
         .lock_for(&source)
         .ok_or_else(|| editor::NO_PREVIEW.to_owned())?;
     let _one_at_a_time = work.lock().await;
+    if !core.clip_sources.is_current(&source, &work) {
+        return Err(editor::NO_PREVIEW.to_owned());
+    }
     let entry = core
         .clip_sources
         .get(&source)
@@ -3776,13 +3782,15 @@ pub async fn prepare_preview(
         );
     })
     .await;
-    if core.clip_sources.get(&source).is_none() {
-        // closed or signed out while (or just as) ffmpeg ran: nothing owns these files now, and
-        // ffmpeg has let go of them (a parked source still owns its folder)
-        if !core.clip_sources.is_parked(&source) {
+    // closed or signed out while (or just as) ffmpeg ran: nothing owns these files now, and
+    // ffmpeg has let go of them (a parked source still owns its folder)
+    match core.clip_sources.after_run(&source) {
+        editor::AfterRun::Open => {}
+        editor::AfterRun::Parked => return Err(editor::NO_PREVIEW.to_owned()),
+        editor::AfterRun::Closed => {
             editor::remove_dir_later(entry.dir);
+            return Err(editor::NO_PREVIEW.to_owned());
         }
-        return Err(editor::NO_PREVIEW.to_owned());
     }
     let out = out?;
     allow_asset(&app, &out)?;
@@ -3804,6 +3812,9 @@ pub async fn clip_filmstrip(
         .lock_for(&source)
         .ok_or_else(|| editor::NO_FILMSTRIP.to_owned())?;
     let _one_at_a_time = work.lock().await;
+    if !core.clip_sources.is_current(&source, &work) {
+        return Err(editor::NO_FILMSTRIP.to_owned());
+    }
     let entry = core
         .clip_sources
         .get(&source)
@@ -3813,13 +3824,15 @@ pub async fn clip_filmstrip(
         None => {
             let tools = ffmpeg_paths(&app)?;
             let out = editor::make_filmstrip(&tools.ffmpeg, &entry, work.closed()).await;
-            if core.clip_sources.get(&source).is_none() {
-                // closed while (or just as) ffmpeg ran: nothing owns these files now (a parked
-                // source still owns its folder)
-                if !core.clip_sources.is_parked(&source) {
+            // closed while (or just as) ffmpeg ran: nothing owns these files now (a parked
+            // source still owns its folder)
+            match core.clip_sources.after_run(&source) {
+                editor::AfterRun::Open => {}
+                editor::AfterRun::Parked => return Err(editor::NO_FILMSTRIP.to_owned()),
+                editor::AfterRun::Closed => {
                     editor::remove_dir_later(entry.dir);
+                    return Err(editor::NO_FILMSTRIP.to_owned());
                 }
-                return Err(editor::NO_FILMSTRIP.to_owned());
             }
             let out = out?;
             allow_asset(&app, &out)?;
@@ -4541,6 +4554,10 @@ mod tests {
         );
         assert!(core.clip_jobs.borrow().is_none());
         assert!(core.clip_sources.lock_for("a").is_none() && core.clip_sources.get("a").is_none());
+        assert!(
+            core.clip_sources.ids().contains("a"),
+            "parked: its folder isn't stale"
+        );
     }
 
     /// #545: an update's install that fails after winding down gives the editor its open sources
@@ -4573,7 +4590,7 @@ mod tests {
         assert!(core.clip_sources.get("a").is_none());
 
         // what `resume_clips` does first (the rest, loading the jobs, needs an app)
-        core.clip_sources.unpark();
+        assert!(core.clip_sources.unpark());
         let back = core.clip_sources.get("a").expect("the source is back");
         assert_eq!(back.preview.as_deref(), Some(preview.as_path()));
         let work = core.clip_sources.lock_for("a").unwrap();

@@ -113,11 +113,15 @@ impl Sources {
         }
     }
 
-    /// Close a source: its work in flight stops.
+    /// Close a source, open or parked: its work in flight stops.
     pub fn remove(&self, id: &str) -> Option<Entry> {
-        let (e, work) = self.map.lock().unwrap().remove(id)?;
-        work.close();
-        Some(e)
+        let mut map = self.map.lock().unwrap();
+        let mut parked = self.parked.lock().unwrap();
+        if let Some((e, work)) = map.remove(id) {
+            work.close();
+            return Some(e);
+        }
+        parked.remove(id)
     }
 
     /// Close every source, parked ones too (sign-out); the caller deletes the folders. Each
@@ -153,17 +157,36 @@ impl Sources {
             .collect()
     }
 
-    /// The parked sources open again, each with new work (the old one stays closed).
-    pub fn unpark(&self) {
+    /// The parked sources open again, each with new work (the old one stays closed). `true` if
+    /// any came back.
+    pub fn unpark(&self) -> bool {
         let mut map = self.map.lock().unwrap();
+        let mut back = false;
         for (id, e) in self.parked.lock().unwrap().drain() {
             map.insert(id, (e, Arc::new(Work::new())));
+            back = true;
         }
+        back
     }
 
-    /// Source `id` is parked: closed to work for now, but its folder is still its own.
-    pub fn is_parked(&self, id: &str) -> bool {
-        self.parked.lock().unwrap().contains_key(id)
+    /// `work` (taken from `lock_for`) is still source `id`'s: it wasn't closed, parked or
+    /// unparked since. A request that waited on an old work's lock must not run.
+    pub fn is_current(&self, id: &str, work: &Arc<Work>) -> bool {
+        self.lock_for(id).is_some_and(|w| Arc::ptr_eq(&w, work))
+    }
+
+    /// A preview or filmstrip run on source `id` has ended: whether what it made is kept, and if
+    /// not, whether its folder goes too. Decided under both locks at once.
+    pub fn after_run(&self, id: &str) -> AfterRun {
+        let map = self.map.lock().unwrap();
+        let parked = self.parked.lock().unwrap();
+        if map.contains_key(id) {
+            AfterRun::Open
+        } else if parked.contains_key(id) {
+            AfterRun::Parked
+        } else {
+            AfterRun::Closed
+        }
     }
 
     /// `f()` if source `id` is open, run under the sources' lock: a close (`remove`, `drain`)
@@ -184,6 +207,17 @@ impl Sources {
     pub fn lock_for(&self, id: &str) -> Option<Arc<Work>> {
         self.map.lock().unwrap().get(id).map(|(_, w)| w.clone())
     }
+}
+
+/// What [`Sources::after_run`] found.
+#[derive(Debug, PartialEq, Eq)]
+pub enum AfterRun {
+    /// Still open: keep what the run made.
+    Open,
+    /// Parked (winding down): the run's result is dropped, but the folder is still the source's.
+    Parked,
+    /// Closed or signed out: nothing owns the folder now; delete it.
+    Closed,
 }
 
 /// Delete a source's temp folder, off the async threads. Missing is fine; a failure is retried
@@ -427,8 +461,50 @@ mod tests {
         assert!(s.get("a").is_some() && s.lock_for("a").is_some());
         s.park();
         assert_eq!(s.drain().len(), 1, "a sign-out releases parked sources too");
-        s.unpark();
+        assert!(!s.unpark());
         assert!(s.get("a").is_none() && s.ids().is_empty());
+    }
+
+    #[test]
+    fn a_source_closed_while_parked_stays_closed() {
+        let s = Sources::default();
+        s.insert("a".into(), entry(Path::new("/t/a")));
+        s.park();
+        assert!(s.remove("a").is_some(), "the editor's close releases it");
+        assert!(!s.unpark());
+        assert!(s.get("a").is_none() && s.ids().is_empty());
+    }
+
+    #[test]
+    fn after_a_run_the_folder_goes_only_with_its_source() {
+        let s = Sources::default();
+        s.insert("a".into(), entry(Path::new("/t/a")));
+        assert_eq!(s.after_run("a"), AfterRun::Open);
+        s.park();
+        assert_eq!(
+            s.after_run("a"),
+            AfterRun::Parked,
+            "a park keeps the folder"
+        );
+        s.unpark();
+        s.remove("a");
+        assert_eq!(s.after_run("a"), AfterRun::Closed, "a close deletes it");
+    }
+
+    #[test]
+    fn work_from_before_a_park_is_not_current() {
+        let s = Sources::default();
+        s.insert("a".into(), entry(Path::new("/t/a")));
+        let old = s.lock_for("a").unwrap();
+        assert!(s.is_current("a", &old));
+        s.park();
+        assert!(!s.is_current("a", &old));
+        s.unpark();
+        assert!(
+            !s.is_current("a", &old),
+            "a request queued on it doesn't run"
+        );
+        assert!(s.is_current("a", &s.lock_for("a").unwrap()));
     }
 
     #[test]
