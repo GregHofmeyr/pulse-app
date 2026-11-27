@@ -20,8 +20,28 @@
 
   let layer = $state<HTMLElement>()
 
+  // Tab stays inside the popover: the dialog's own wrap (the `modal` action) would go to its first control, the
+  // inert close button behind. Only the ends are taken here; elsewhere Tab moves on as normal.
+  const FOCUSABLE = 'button:not([disabled]), input:not([disabled]), [href], select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+  function wrapTab(e: KeyboardEvent) {
+    const list = [...(layer?.querySelectorAll<HTMLElement>(FOCUSABLE) ?? [])].filter((el) => el.tabIndex >= 0 && !el.closest('[inert]'))
+    if (list.length === 0) return
+    const at = document.activeElement
+    const first = list[0]
+    const last = list[list.length - 1]
+    const outside = !at || !layer?.contains(at)
+    if (e.shiftKey ? outside || at === first : at === last) {
+      e.preventDefault()
+      ;(e.shiftKey ? last : first).focus()
+    } else if (outside) {
+      e.preventDefault()
+      first.focus()
+    }
+  }
+
   $effect(() => {
     const key = (e: KeyboardEvent) => {
+      if (e.key === 'Tab') return wrapTab(e)
       if (e.key !== 'Escape') return
       e.preventDefault()
       onCancel()

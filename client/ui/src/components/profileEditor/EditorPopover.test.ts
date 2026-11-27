@@ -41,4 +41,30 @@ describe('EditorPopover', () => {
     ;(document.querySelector('.scrim') as HTMLElement).click()
     expect(onCancel).toHaveBeenCalledTimes(1)
   })
+  it('tab_wraps_inside_the_popover', () => {
+    show()
+    // the dialog's own first control sits behind, inert
+    const behind = document.createElement('button')
+    behind.textContent = 'x'
+    document.body.prepend(behind)
+    const list = [...document.querySelectorAll<HTMLElement>('[data-editor-layer] button:not(.scrim)')]
+    const first = list[0]
+    const last = list[list.length - 1]
+    expect(first).not.toBe(last)
+    const tab = (shiftKey: boolean) => {
+      const e = new KeyboardEvent('keydown', { key: 'Tab', shiftKey, bubbles: true, cancelable: true })
+      window.dispatchEvent(e)
+      return e
+    }
+    last.focus()
+    expect(tab(false).defaultPrevented).toBe(true)
+    expect(document.activeElement).toBe(first)
+    expect(tab(true).defaultPrevented).toBe(true)
+    expect(document.activeElement).toBe(last)
+    // between the ends Tab is left to the browser
+    const mid = document.createElement('input')
+    first.after(mid)
+    mid.focus()
+    expect(tab(false).defaultPrevented).toBe(false)
+  })
 })
