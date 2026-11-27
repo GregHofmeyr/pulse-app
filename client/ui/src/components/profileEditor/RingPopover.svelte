@@ -35,6 +35,7 @@
 
   // The big ring as SpeakingRing draws it: still under reduced motion or while you're live.
   const previewRing = $derived(ringState({ lit: true, place: 'preview', style: st.draft.ringStyle, reducedMotion: motion.reducedMotion, streaming: motion.streaming, animating: true }))
+  const CAPTION_TIP = 'How your avatar lights up when you talk. Everyone in the call sees it. With reduced motion on, everyone sees the still version of each ring. In big calls some rings show still to keep things smooth.'
   const caption = $derived(previewRing !== 'still' ? 'Preview · talking' : motion.reducedMotion ? 'Preview · still (reduced motion is on)' : "Preview · still (you're live)")
   let stage = $state<HTMLElement>()
   let stageSeen = $state(false)
@@ -115,7 +116,7 @@
         <Avatar id={me.id} name={pu.display_name} user={pu} size={PREVIEW_D} />
         <SpeakingRing userId={me.id} d={PREVIEW_D} speaking place="preview" style={st.draft.ringStyle} color={st.draft.ringColor} user={pu} />
       </div>
-      <p class="caption">{caption}</p>
+      <p class="caption" data-tip={CAPTION_TIP}>{caption}</p>
     </div>
   {/if}
   <YouPreview state={st} />

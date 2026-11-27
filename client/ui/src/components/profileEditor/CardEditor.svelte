@@ -18,7 +18,7 @@
   import { customToken, savedTone, withSkin, type Std } from '../../lib/emoji'
   import { insertAt } from '../../lib/emojiComplete'
   import { renderMarkdown } from '../../lib/markdown'
-  import { BIO_LINE_BREAKS_MAX, BIO_MAX, charCount, nameProblem, normalBio, previewCard, previewUser, PRONOUNS_MAX } from '../../lib/profileDraft'
+  import { BIO_LINE_BREAKS_MAX, BIO_MAX, charCount, isZalgo, nameProblem, normalBio, previewCard, previewUser, PRONOUNS_MAX } from '../../lib/profileDraft'
   import type { ProfileEditorState } from '../../lib/profileEditor.svelte'
   import type { CustomEmoji } from '../../lib/protocol/CustomEmoji'
   import { app } from '../../lib/store.svelte'
@@ -31,6 +31,7 @@
   const pc = $derived(previewCard(st.draft))
 
   const nameError = $derived(nameProblem(st.draft.displayName))
+  const nameTip = $derived(`How your name shows everywhere. Not unique: your @${me?.username ?? ''} tells you apart.`)
   const pronounsOver = $derived(charCount(st.draft.pronouns.trim()) > PRONOUNS_MAX)
   const bio = $derived(normalBio(st.draft.bio))
   const bioLength = $derived(charCount(bio))
@@ -91,16 +92,16 @@
 {#snippet nameField()}
   <div class="name-box">
     {#if nameEditing}
-      <input bind:this={nameInput} class="name-in field" type="text" aria-label="Display name" aria-invalid={!!nameError} placeholder={me?.username} bind:value={st.draft.displayName}
+      <input bind:this={nameInput} class="name-in field" type="text" aria-label="Display name" data-tip={nameTip} aria-invalid={!!nameError} placeholder={me?.username} bind:value={st.draft.displayName}
         onblur={() => (nameEditing = false)} />
     {:else if pu}
-      <div class="name-view field" role="button" tabindex="0" aria-label="Edit display name" onclick={editName} onfocus={editName}
+      <div class="name-view field" role="button" tabindex="0" aria-label="Edit display name" data-tip={nameTip} onclick={editName} onfocus={editName}
         onkeydown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void editName() } }}>
         <Name userId={pu.id} serverId={null} text={baseName(pu)} interactive={false} size="card" bg={nameBg} user={pu} play />
       </div>
     {/if}
   </div>
-  {#if nameError}<p class="err" role="alert">{nameError}</p>{/if}
+  {#if nameError}<p class="err" role="alert">{nameError}</p>{:else if isZalgo(st.draft.displayName)}<small class="zalgo" role="status">Zalgo? Really?</small>{/if}
 {/snippet}
 
 {#snippet pronounsField()}
@@ -156,6 +157,7 @@
   .name-in { height: 100%; width: 100%; padding: 2px 0; font-size: calc(20px * var(--k)); font-weight: 700; line-height: 1.3; text-overflow: ellipsis; overflow: hidden; white-space: nowrap; }
   .pro-in { flex: 1 1 6em; padding: 0; color: var(--card-text-2); text-overflow: ellipsis; overflow: hidden; white-space: nowrap; }
   .err { margin: 2px 0 0; font-size: calc(12px * var(--k)); color: var(--card-danger); overflow-wrap: anywhere; }
+  .zalgo { display: block; margin: 2px 0 0; font-size: calc(12px * var(--k)); color: var(--card-text-2); overflow-wrap: anywhere; }
   .err.wide { flex: 1 0 100%; }
 
   /* the bio box, raw or formatted: the same box with the same fixed minimum and maximum (3 to 5 lines), scrolling past it */

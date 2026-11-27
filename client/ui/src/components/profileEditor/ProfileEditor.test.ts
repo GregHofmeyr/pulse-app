@@ -201,6 +201,8 @@ describe('closing around a Save, an upload and a failed load', () => {
     dirty()
     button('Save')!.click()
     flushSync()
+    expect(closeBtn().disabled).toBe(true)
+    expect(closeBtn().getAttribute('aria-busy')).toBe('true')
     closeBtn().click()
     await settle()
     // the Save may yet fail and keep the draft: not closed, nothing to discard yet

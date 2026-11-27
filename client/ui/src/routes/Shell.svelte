@@ -153,8 +153,6 @@
     }
   }
   function openSettings(section: Section = 'voice') {
-    // Settings → Profile is the profile editor now (#727)
-    if (section === 'profile') return openProfileEditor()
     settingsSection = section
     settingsOpen = true
   }
@@ -587,7 +585,7 @@
     if (!profileUi.edit) return
     untrack(() => {
       profileUi.edit = false
-      openSettings('profile')
+      openProfileEditor()
     })
   })
   // Settings on your own card (#168).

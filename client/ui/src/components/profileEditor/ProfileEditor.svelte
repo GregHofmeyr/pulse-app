@@ -100,7 +100,7 @@
   <div class="modal pop-in" role="dialog" aria-modal="true" aria-label="Edit profile" tabindex="-1" use:modal={escape}>
     <header>
       <h1>Edit profile</h1>
-      <button type="button" class="icon-btn round modal-close" aria-label="Close editor" onclick={requestClose}><Icon name="x" size={16} /></button>
+      <button type="button" class="icon-btn round modal-close" aria-label="Close editor" disabled={st?.saving} aria-busy={st?.saving || undefined} onclick={requestClose}><Icon name="x" size={16} /></button>
     </header>
     {#if asking}
       <div class="confirm" role="alert">
@@ -172,5 +172,7 @@
   .state { margin-right: auto; color: var(--warn-text); font-weight: 600; font-size: 13px; }
   .state .ok { color: var(--ok-text); }
   .error { margin: 0; min-width: 0; overflow-wrap: anywhere; color: var(--danger-text); font-size: 13px; }
+  /* a Save is on its way: the way out waits (requestClose ignores it) */
+  .modal-close[aria-busy='true'] { cursor: progress; opacity: .6; }
   .retry { height: 28px; margin-left: 8px; }
 </style>

@@ -142,6 +142,13 @@ describe('the Speaking ring popover, as the old tab behaved', () => {
     flushSync()
   }
 
+  it('the_help_is_a_tooltip_on_the_caption_not_text', () => {
+    const tip = q('.caption').dataset.tip!
+    expect(tip).toContain('How your avatar lights up when you talk. Everyone in the call sees it.')
+    expect(tip).toContain('With reduced motion on, everyone sees the still version of each ring. In big calls some rings show still to keep things smooth.')
+    expect(document.body.textContent).not.toContain('How your avatar lights up')
+  })
+
   it('the_caption_says_why_the_preview_is_still', () => {
     st.draft.ringStyle = 'bars'
     flushSync()

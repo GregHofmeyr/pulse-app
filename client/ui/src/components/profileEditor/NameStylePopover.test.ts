@@ -165,6 +165,11 @@ describe('the Name style popover, as the old tab behaved', () => {
     expect(fonts[fonts.length - 1].getAttribute('aria-checked')).toBe('true')
   })
 
+  it('effect_tiles_say_what_they_do_in_a_tooltip', () => {
+    for (const e of NAME_EFFECTS) expect(q(`[aria-label="Name effect"] [aria-label="${e.label}"]`).dataset.tip).toBe(e.moves)
+    expect(q('[aria-label="Name effect"] [aria-label="Neon"]').dataset.tip).toBe('Glow pulses')
+  })
+
   it('a_picked_font_and_gradient_restyle_the_preview_name', () => {
     click(q('[aria-label="Name font"] [aria-label="Techy"]'))
     click(q('[aria-label="Name colour"] [aria-label="Aurora gradient"]'))

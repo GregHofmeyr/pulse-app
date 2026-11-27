@@ -28,6 +28,26 @@
   const colour = $derived(pu ? speakCss(pu, st.draft.ringColor, nameBg('side')) : 'var(--speak-green)')
   const colourLabel = $derived(RING_COLORS.find((c) => c.key === st.draft.ringColor)?.label ?? 'Colour')
   const RING_D = 36
+  // Accounts from before display names have their username as one: nudge once (#47), until dismissed.
+  const NUDGE_KEY = (id: string) => `pulse.nameNudgeDismissed.${id}`
+  let nudgeGone = $state(false)
+  const nudge = $derived.by(() => {
+    const u = st.profile.user
+    if (!me || nudgeGone || (u.display_name && u.display_name !== u.username)) return false
+    try {
+      return localStorage.getItem(NUDGE_KEY(me.id)) === null
+    } catch {
+      return true
+    }
+  })
+  function dismissNudge() {
+    nudgeGone = true
+    try {
+      if (me) localStorage.setItem(NUDGE_KEY(me.id), '1')
+    } catch {
+      // no storage: it stays dismissed until the editor closes
+    }
+  }
   const glowVars = $derived(Object.entries(cardVars(st.draft.themeTop, st.draft.themeBottom)).map(([k, v]) => `${k}: ${v}`).join('; '))
 </script>
 
@@ -58,6 +78,12 @@
         {#if me && pu}<span class="face-name"><Name userId={me.id} serverId={null} user={pu} text={pu.display_name} interactive={false} /></span>{/if}
       </button>
     </div>
+    {#if nudge}
+      <div class="nudge" role="note">
+        <span><strong>Pick how your name looks.</strong> Capitals, spaces and emoji are all fine; your username stays for signing in.</span>
+        <button type="button" class="btn btn-secondary" onclick={dismissNudge}>Dismiss</button>
+      </div>
+    {/if}
   </section>
 
   <section aria-labelledby="lt-card">
@@ -66,7 +92,7 @@
       <button type="button" class="tile mini" aria-label="Card theme" aria-haspopup="dialog" onclick={() => (open = 'theme')}>
         <MiniCard top={st.draft.themeTop} bottom={st.draft.themeBottom} />
       </button>
-      <button type="button" role="switch" class="tile mini" aria-label="Glow" aria-checked={st.draft.glow} onclick={() => (st.draft.glow = !st.draft.glow)}>
+      <button type="button" role="switch" class="tile mini" aria-label="Glow" data-tip="A soft glow in your card's colours around it. Everyone sees your card as you set it." aria-checked={st.draft.glow} onclick={() => (st.draft.glow = !st.draft.glow)}>
         <span class="glow-demo" class:on={st.draft.glow} style={glowVars}><MiniCard top={st.draft.themeTop} bottom={st.draft.themeBottom} /></span>
       </button>
     </div>
@@ -99,6 +125,8 @@
   section { display: flex; flex-direction: column; gap: 8px; min-width: 0; padding-bottom: 16px; border-bottom: 1px solid var(--line-soft); }
   section:last-child { border-bottom: 0; padding-bottom: 0; }
   h3 { margin: 0; font-size: 12px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--text-3); }
+  .nudge { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; min-width: 0; padding: 10px 12px; border-radius: var(--radius-md); background: var(--accent-soft); color: var(--text); font-size: 13px; }
+  .nudge span { flex: 1 1 160px; min-width: 0; overflow-wrap: anywhere; }
   .row { display: flex; gap: 8px; min-width: 0; }
   .cell { position: relative; flex: 0 0 auto; min-width: 0; }
   .cell.wide { flex: 1 1 0; }

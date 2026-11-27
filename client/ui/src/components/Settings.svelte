@@ -1,5 +1,5 @@
 <script lang="ts" module>
-  export type Section = 'profile' | 'voice' | 'keybinds' | 'chat' | 'wheels' | 'notifications' | 'privacy' | 'sports' | 'deleted' | 'advanced' | 'about'
+  export type Section = 'voice' | 'keybinds' | 'chat' | 'wheels' | 'notifications' | 'privacy' | 'sports' | 'deleted' | 'advanced' | 'about'
 </script>
 
 <script lang="ts">
@@ -27,7 +27,6 @@
   // the section asked for from the start: not Voice first, mounted and thrown away a moment later (#238)
   let current = $state<Section>(untrack(() => section))
   const sections: { key: Section; label: string }[] = [
-    { key: 'profile', label: 'Profile' },
     { key: 'voice', label: 'Voice & Audio' },
     { key: 'keybinds', label: 'Keybinds' },
     { key: 'chat', label: 'Chat' },
@@ -44,12 +43,10 @@
     { key: 'about', label: 'About' },
   ]
 
-  function go(s: Section) {
-    // Profile is the editor's now (#727): Settings closes, then the editor opens on Looks
-    if (s === 'profile') {
-      onClose()
-      openProfileEditor()
-    } else current = s
+  // Profile is the editor's now (#727): Settings closes, then the editor opens on Looks
+  function openProfile() {
+    onClose()
+    openProfileEditor()
   }
 </script>
 
@@ -58,8 +55,9 @@
 <div class="modal pop-in" role="dialog" aria-modal="true" aria-label="Settings" tabindex="-1" use:modal={onClose}>
   <nav aria-label="Settings sections">
     <h1>Settings</h1>
+    <button onclick={openProfile}>Profile</button>
     {#each sections as s}
-      <button class:on={current === s.key} aria-current={current === s.key ? 'page' : undefined} onclick={() => go(s.key)}>{s.label}</button>
+      <button class:on={current === s.key} aria-current={current === s.key ? 'page' : undefined} onclick={() => (current = s.key)}>{s.label}</button>
     {/each}
     {#if onLogout}
       <span class="nav-sep" role="separator"></span>

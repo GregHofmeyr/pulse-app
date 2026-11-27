@@ -230,6 +230,27 @@ describe('the editable card', () => {
     expect(st.invalid).toBe(false)
   })
 
+  it('a_zalgo_name_gets_a_soft_hint_and_still_saves', () => {
+    show()
+    const zalgo = 'Z\u{335}\u{352}\u{316}alex'
+    type(nameInput(), zalgo)
+    const hint = q('.zalgo')
+    expect(hint.textContent).toBe('Zalgo? Really?')
+    expect(hint.getAttribute('role')).not.toBe('alert')
+    expect(document.querySelector('.who [role=alert]')).toBeNull()
+    expect(nameInput().getAttribute('aria-invalid')).toBe('false')
+    expect(st.invalid).toBe(false)
+    type(nameInput(), 'alex')
+    expect(document.querySelector('.zalgo')).toBeNull()
+  })
+
+  it('the_display_name_help_is_a_tooltip_not_text', () => {
+    show()
+    expect(document.body.textContent).not.toContain('How your name shows everywhere')
+    expect(q('.name-view').dataset.tip).toContain('How your name shows everywhere')
+    expect(nameInput().dataset.tip).toContain('Not unique: your @alex tells you apart.')
+  })
+
   it('bio_raw_while_focused_formatted_on_blur', () => {
     show()
     // blurred: markdown rendered, no raw box, no emoji button

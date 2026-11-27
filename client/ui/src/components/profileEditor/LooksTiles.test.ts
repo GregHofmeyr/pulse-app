@@ -83,6 +83,31 @@ describe('the Looks tiles', () => {
     expect(st.dirty).toBe(true)
   })
 
+  it('help_is_a_tooltip_on_the_glow_tile', () => {
+    show()
+    expect(tile('Glow').dataset.tip).toContain('soft glow')
+    expect(document.body.textContent).not.toContain('soft glow')
+  })
+
+  describe('the name nudge (#47)', () => {
+    beforeEach(() => { try { localStorage.clear() } catch { /* none */ } })
+    it('nudges_once_while_your_name_is_still_your_username_until_dismissed', () => {
+      show()
+      expect(q('.nudge').textContent).toContain('Pick how your name looks')
+      click([...document.querySelectorAll('.nudge button')].find((b) => b.textContent?.trim() === 'Dismiss')!)
+      expect(document.querySelector('.nudge')).toBeNull()
+      expect(localStorage.getItem('pulse.nameNudgeDismissed.U1')).toBe('1')
+      unmount(cmp!)
+      document.body.innerHTML = ''
+      show()
+      expect(document.querySelector('.nudge')).toBeNull()
+    })
+    it('no_nudge_once_you_have_a_display_name_of_your_own', () => {
+      show({ ...profile(), user: { ...alex, display_name: 'Alex A' } })
+      expect(document.querySelector('.nudge')).toBeNull()
+    })
+  })
+
   it('theme_tile_opens_card_theme_popover', () => {
     show()
     expect(document.querySelector("[role=dialog][aria-label=\"Card theme\"]")).toBeNull()

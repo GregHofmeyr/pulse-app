@@ -97,7 +97,7 @@
           <span class="none-text">None</span>
         </button>
         {#each NAME_EFFECTS as e (e.key)}
-          <button type="button" role="radio" class="tile" aria-label={e.label} aria-checked={st.draft.effect === e.key} tabindex={st.draft.effect === e.key ? 0 : -1} onclick={() => (st.draft.effect = e.key)}>
+          <button type="button" role="radio" class="tile" aria-label={e.label} data-tip={e.moves} aria-checked={st.draft.effect === e.key} tabindex={st.draft.effect === e.key ? 0 : -1} onclick={() => (st.draft.effect = e.key)}>
             <Name userId={me.id} serverId={null} user={{ ...pu, style: { ...pu.style, effect: e.key } }} text={e.label} interactive={false} />
           </button>
         {/each}
