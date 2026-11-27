@@ -1,6 +1,6 @@
 // The profile editor (#727): which section is open, and the working copy every section edits. Everything, uploads and
 // the badge order included, is staged here until Save sends it; the store isn't touched before then, so leaving
-// without saving leaves you exactly as you were. The draft logic is lifted from ProfileSettings (#467) as it was.
+// without saving leaves you exactly as you were. The draft logic is lifted from the old ProfileSettings page (#467, retired in #727) as it was.
 import { setProfile } from './state'
 import { app, loadProfile } from './store.svelte'
 import { api, errorText } from './tauri'

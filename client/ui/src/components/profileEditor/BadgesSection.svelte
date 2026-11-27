@@ -179,11 +179,11 @@
   .muted, .hint { margin: 0; color: var(--text-3); font-size: 12px; }
   .chip { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 4px 12px; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--bg-3); color: var(--text-2); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; }
   .chip:hover { background: var(--bg-4); color: var(--text); }
-  .chip.on { border-color: var(--accent); background: var(--accent-soft); color: var(--accent-text); }
+  .chip.on { border-color: var(--focus-ring); background: var(--accent-soft); color: var(--accent-text); }
   .chip:focus-visible, .slot:focus-visible, .tile:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
   /* five slots of up to 84px in a soft band; they shrink together with the window, and never spill */
   .slots { list-style: none; margin: 0; padding: 12px; display: grid; grid-template-columns: repeat(5, minmax(0, 84px)); gap: 8px; justify-content: start; box-sizing: border-box; max-width: 100%; border-radius: var(--radius-lg); background: var(--accent-faint); border: 1px solid transparent; }
-  .slots.over { border-color: var(--accent); }
+  .slots.over { border-color: var(--focus-ring); }
   .slots > li { aspect-ratio: 1; min-width: 0; }
   .slots > li.empty { border: 2px dashed var(--line-strong); border-radius: var(--radius-md); }
   .slot { display: grid; place-items: center; width: 100%; height: 100%; padding: 0; border: 0; border-radius: var(--radius-md); background: var(--bg-3); cursor: grab; touch-action: none; }
@@ -194,7 +194,7 @@
   .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 10px; min-width: 0; }
   .tile { display: flex; flex-direction: column; align-items: center; gap: 6px; min-width: 0; padding: 14px 8px 10px; border: 2px solid transparent; border-radius: var(--radius-lg); background: var(--bg-3); color: var(--text); font: inherit; cursor: pointer; touch-action: none; }
   .tile:hover:not(:disabled) { background: var(--bg-4); }
-  .tile.on { border-color: var(--accent); }
+  .tile.on { border-color: var(--focus-ring); }
   .tile.lifted { opacity: .55; }
   .tile:disabled { opacity: .5; cursor: not-allowed; }
   .name, .count { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

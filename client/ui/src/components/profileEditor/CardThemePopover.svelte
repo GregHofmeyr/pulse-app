@@ -96,7 +96,7 @@
   .tile { position: relative; display: flex; flex-direction: column; gap: 6px; min-width: 0; padding: 6px; border: 2px solid transparent; border-radius: var(--radius-lg); background: var(--bg-3); color: var(--text); font: inherit; font-size: 13px; cursor: pointer; }
   .tile:hover { background: var(--bg-4); }
   .tile:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
-  .tile[aria-checked='true'] { border-color: var(--accent); }
+  .tile[aria-checked='true'] { border-color: var(--focus-ring); }
   .tile > :global(.mc), .plus { flex: none; height: 84px; border-radius: var(--radius-md); }
   .plus { display: grid; place-items: center; border: 1px dashed var(--line-strong); color: var(--text-2); }
   .name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: center; }

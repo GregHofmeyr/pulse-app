@@ -107,16 +107,16 @@
     <div class="group">
       <h3 id="ns-colour">Colour</h3>
       <div class="swatches" role="radiogroup" aria-label="Name colour" tabindex="-1" onkeydown={arrows}>
-        <button type="button" role="radio" class="swatch none" aria-label="Default" title="Default colour" aria-checked={colourKey === 'default'} tabindex={colourKey === 'default' ? 0 : -1} onclick={() => setColours([])}></button>
+        <button type="button" role="radio" class="swatch none" aria-label="Default" data-tip="Default colour" aria-checked={colourKey === 'default'} tabindex={colourKey === 'default' ? 0 : -1} onclick={() => setColours([])}></button>
         {#each NAME_SOLIDS as p (p.key)}
-          <button type="button" role="radio" class="swatch" aria-label={p.label} title={p.label} aria-checked={colourKey === `solid:${p.key}`} tabindex={colourKey === `solid:${p.key}` ? 0 : -1}
+          <button type="button" role="radio" class="swatch" aria-label={p.label} data-tip={p.label} aria-checked={colourKey === `solid:${p.key}`} tabindex={colourKey === `solid:${p.key}` ? 0 : -1}
             style:background={p.colors[0]} onclick={() => setColours(p.colors)}></button>
         {/each}
         {#each NAME_GRADIENTS as p (p.key)}
-          <button type="button" role="radio" class="swatch" aria-label="{p.label} gradient" title={p.label} aria-checked={colourKey === `gradient:${p.key}`} tabindex={colourKey === `gradient:${p.key}` ? 0 : -1}
+          <button type="button" role="radio" class="swatch" aria-label="{p.label} gradient" data-tip={p.label} aria-checked={colourKey === `gradient:${p.key}`} tabindex={colourKey === `gradient:${p.key}` ? 0 : -1}
             style:background="linear-gradient(135deg, {p.colors[0]}, {p.colors[1]})" onclick={() => setColours(p.colors)}></button>
         {/each}
-        <button type="button" role="radio" class="swatch pick" aria-label="Custom" title="Custom colour" aria-checked={colourKey === 'custom'} tabindex={colourKey === 'custom' ? 0 : -1}
+        <button type="button" role="radio" class="swatch pick" aria-label="Custom" data-tip="Custom colour" aria-checked={colourKey === 'custom'} tabindex={colourKey === 'custom' ? 0 : -1}
           onclick={() => setColours(st.draft.colors.length ? st.draft.colors : ['#ffffff'], true)}><Icon name="plus" size={14} /></button>
       </div>
       {#if colourKey === 'custom'}
@@ -147,13 +147,13 @@
   .tile { display: grid; place-items: center; min-width: 0; height: 68px; padding: 0 8px; overflow: hidden; border: 2px solid transparent; border-radius: var(--radius-lg); background: var(--bg-3); color: var(--text); font: inherit; font-size: 20px; font-weight: 600; cursor: pointer; }
   .tile:hover { background: var(--bg-4); }
   .tile:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
-  .tile[aria-checked='true'] { border-color: var(--accent); }
+  .tile[aria-checked='true'] { border-color: var(--focus-ring); }
   .tile :global(.name) { max-width: 100%; }
   .none-text { font-size: 14px; font-weight: 500; color: var(--text-2); }
   .swatches { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; min-width: 0; }
   .swatch { flex: none; width: 32px; height: 32px; padding: 0; border-radius: 50%; border: 2px solid transparent; outline: 1px solid var(--line-strong); outline-offset: -1px; cursor: pointer; }
   .swatch:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
-  .swatch[aria-checked='true'] { outline: none; border-color: var(--text); box-shadow: 0 0 0 2px var(--accent) inset; }
+  .swatch[aria-checked='true'] { outline: none; border-color: var(--text); box-shadow: 0 0 0 2px var(--focus-ring) inset; }
   .swatch.none { border-color: var(--bg-4); background: linear-gradient(135deg, transparent calc(50% - 1px), var(--text-3) calc(50% - 1px) calc(50% + 1px), transparent calc(50% + 1px)); }
   .swatch.pick { border-color: var(--bg-4); background: var(--bg-3); color: var(--text-2); display: grid; place-items: center; }
   .swatch.pick:hover { color: var(--text); }

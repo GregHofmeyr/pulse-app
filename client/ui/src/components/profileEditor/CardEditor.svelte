@@ -140,7 +140,7 @@
 
 <style>
   .card-editor { display: flex; flex-direction: column; align-items: center; gap: 8px; min-width: 0; max-width: 100%; }
-  .up-err { margin: 0; max-width: calc(300px * 1.12); text-align: center; font-size: 13px; color: var(--danger); overflow-wrap: anywhere; }
+  .up-err { margin: 0; max-width: calc(300px * 1.12); text-align: center; font-size: 13px; color: var(--danger-text); overflow-wrap: anywhere; }
   .layer { display: contents; }
 
   /* a field on the card: plain until hovered or focused; a dashed outline invites, a solid accent one says "typing".
@@ -148,7 +148,7 @@
   .field { box-sizing: border-box; min-width: 0; border: 0; border-radius: var(--radius-sm); background: transparent; color: inherit; font: inherit; outline: 1px dashed transparent; outline-offset: 2px; }
   .field::placeholder { color: var(--card-text-2); opacity: 1; }
   .field:hover, .field:focus-visible { outline-color: var(--card-text-2); }
-  .field:focus { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .field:focus { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
   /* the name as the card sets it (Name's card size: 20px x --k, bold), clipped with an ellipsis when it doesn't fit */
   .name-box { height: calc(20px * var(--k) * 1.3 + 4px); min-width: 0; }
   .name-view { display: flex; align-items: center; height: 100%; cursor: text; }
@@ -162,7 +162,7 @@
   .bio-field { position: relative; min-width: 0; }
   .bio-field :global(.bio-box) { display: block; box-sizing: border-box; width: 100%; min-height: calc(20px * 3 + 18px); max-height: calc(20px * 5 + 18px); overflow-y: auto; padding: 8px 40px 8px 12px; border: 1px solid var(--card-edge); border-radius: var(--radius-md); background: var(--card-field); color: var(--card-text); font-size: calc(13px * var(--k)); line-height: 20px; overflow-wrap: anywhere; outline: 1px dashed transparent; outline-offset: 2px; }
   .bio-field :global(.bio-box:hover), .bio-field :global(.bio-box:focus-visible) { outline-color: var(--card-text-2); }
-  .bio-field :global(.bio-edit) { outline: 2px solid var(--accent); }
+  .bio-field :global(.bio-edit) { outline: 2px solid var(--focus-ring); }
   .bio-field :global(.bio-edit.empty::before) { color: var(--card-text-2); }
   .bio-view { cursor: text; }
   .bio-view.empty::before { content: attr(data-placeholder); color: var(--card-text-2); }

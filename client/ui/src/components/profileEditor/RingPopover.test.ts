@@ -12,6 +12,10 @@ import { ProfileEditorState } from '../../lib/profileEditor.svelte'
 import { RING_COLORS, RING_STYLES } from '../../lib/speakingRing'
 import { ringPrefs } from '../../lib/speakingRing.svelte'
 import { motion } from '../../lib/animate.svelte'
+import { windowFocus } from '../../lib/windowFocus.svelte'
+import { speakCss } from '../../lib/speakingRing'
+import { previewUser, draftFrom } from '../../lib/profileDraft'
+import { nameBg } from '../../lib/theme.svelte'
 import { app } from '../../lib/store.svelte'
 import { emptyState } from '../../lib/state'
 import type { Profile } from '../../lib/protocol/Profile'
@@ -40,6 +44,8 @@ afterEach(() => {
   cmp = undefined
   document.body.innerHTML = ''
   motion.reducedMotion = false
+  motion.streaming = false
+  windowFocus.focused = true
   ringPrefs.classic = false
   vi.useRealTimers()
 })
@@ -121,5 +127,104 @@ describe('the Speaking ring popover', () => {
     click(q('button[aria-label="Apply"]'))
     expect(st.draft.ringStyle).toBe('halo')
     expect(onClose).toHaveBeenCalledTimes(1)
+  })
+})
+
+// Ported from ProfileSettings.test.ts (the old Speaking ring tab) when the old page went (#727, task 10).
+describe('the Speaking ring popover, as the old tab behaved', () => {
+  const caption = () => q('.caption').textContent!.trim()
+  const radios = (label: string) => [...q(`[role=radiogroup][aria-label="${label}"]`).querySelectorAll<HTMLButtonElement>('[role=radio]')]
+  const remount = (p: Profile) => {
+    unmount(cmp!)
+    document.body.innerHTML = ''
+    st = new ProfileEditorState(p)
+    cmp = mount(RingPopover, { target: document.body, props: { state: st, onClose } })
+    flushSync()
+  }
+
+  it('the_caption_says_why_the_preview_is_still', () => {
+    st.draft.ringStyle = 'bars'
+    flushSync()
+    seen()
+    expect(caption()).toBe('Preview · talking')
+    motion.reducedMotion = true
+    flushSync()
+    expect(caption()).toBe('Preview · still (reduced motion is on)')
+    motion.reducedMotion = false
+    motion.streaming = true
+    flushSync()
+    // drawn still while you are live, and no envelope runs
+    expect(q('.ring-stage .ring-box').dataset.ring).toBe('still')
+    expect(caption()).toBe("Preview · still (you're live)")
+    tick(1000)
+    expect(stage().style.getPropertyValue('--lvl')).toBe('')
+    // going off air: it talks again
+    motion.streaming = false
+    flushSync()
+    expect(caption()).toBe('Preview · talking')
+    tick(300)
+    expect(stage().style.getPropertyValue('--lvl')).not.toBe('')
+  })
+
+  it('the_envelope_stops_while_the_window_is_unfocused', () => {
+    st.draft.ringStyle = 'dots'
+    flushSync()
+    seen()
+    tick(300)
+    expect(stage().style.getPropertyValue('--lvl')).not.toBe('')
+    windowFocus.focused = false
+    flushSync()
+    expect(stage().style.getPropertyValue('--lvl')).toBe('')
+    expect(vi.getTimerCount()).toBe(0)
+    windowFocus.focused = true
+    flushSync()
+    tick(300)
+    expect(stage().style.getPropertyValue('--lvl')).not.toBe('')
+  })
+
+  it('style_and_colour_radios_have_one_tab_stop_and_the_arrows_cross_groups_and_pick', () => {
+    expect(radios('Ring style')).toHaveLength(RING_STYLES.length)
+    expect(radios('Ring style').filter((r) => r.tabIndex === 0).map((r) => r.getAttribute('aria-label'))).toEqual(['Classic'])
+    expect(radios('Ring style').find((r) => r.getAttribute('aria-label') === 'Classic')!.getAttribute('aria-checked')).toBe('true')
+    // the last of "Still or looping", then the arrow lands on the first of "Follows your voice"
+    const still = RING_STYLES.filter((r) => !r.reactive)
+    const voice = RING_STYLES.filter((r) => r.reactive)
+    click(q(`[role=radio][aria-label="${still[still.length - 1].label}"]`))
+    const last = q<HTMLElement>(`[role=radio][aria-label="${still[still.length - 1].label}"]`)
+    last.focus()
+    last.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }))
+    flushSync()
+    const next = q<HTMLElement>(`[role=radio][aria-label="${voice[0].label}"]`)
+    expect(document.activeElement).toBe(next)
+    expect(next.getAttribute('aria-checked')).toBe('true')
+    expect(st.draft.ringStyle).toBe(voice[0].key)
+    expect(radios('Ring style').filter((r) => r.tabIndex === 0)).toEqual([next])
+    // the preview draws the draft
+    expect(q('.ring-stage .ring-box').dataset.style).toBe(voice[0].key)
+    // colours: by name, one tab stop
+    expect(radios('Ring colour').map((b) => b.getAttribute('aria-label'))).toEqual(RING_COLORS.map((c) => c.label))
+    expect(radios('Ring colour').filter((r) => r.tabIndex === 0).map((r) => r.getAttribute('aria-label'))).toEqual(['Green'])
+    expect(q('[aria-label="Pulse blue"]').style.getPropertyValue('--swatch')).toBe('var(--speak-blue)')
+    click(q('[aria-label="Cyan"]'))
+    expect(q('.ring-stage .ring-box').style.getPropertyValue('--speak')).toBe('var(--speak-cyan)')
+  })
+
+  it('the_profile_swatch_tip_says_where_the_colour_comes_from', () => {
+    const coloured = { ...alex, style: { font: null, colors: ['#ffbe7a'] } }
+    remount({ ...profile, user: coloured })
+    const prof = q('[aria-label="Profile colour"]')
+    expect(prof.dataset.tip).toBe('Your name colour, from Name style')
+    const want = speakCss(previewUser(alex, draftFrom({ ...profile, user: coloured })), 'profile', nameBg('side'))
+    expect(prof.style.getPropertyValue('--swatch')).toBe(want)
+    remount(profile)
+    expect(q('[aria-label="Profile colour"]').dataset.tip).toMatch(/ You haven't set one, so it's green\.$/)
+    expect(q('[aria-label="Profile colour"]').style.getPropertyValue('--swatch')).toBe('var(--speak-green)')
+  })
+
+  it('a_saved_ring_is_what_the_popover_shows', () => {
+    remount({ ...profile, user: { ...alex, ring_style: 'dots', ring_color: 'gold' } })
+    expect(q('[aria-label="Wave of dots"]').getAttribute('aria-checked')).toBe('true')
+    expect(q('[aria-label="Gold"]').getAttribute('aria-checked')).toBe('true')
+    expect(q('.ring-stage .ring-box').dataset.style).toBe('dots')
   })
 })

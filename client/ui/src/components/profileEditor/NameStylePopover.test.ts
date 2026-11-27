@@ -97,3 +97,81 @@ describe('the Name style popover', () => {
     expect(onClose).toHaveBeenCalledTimes(1)
   })
 })
+
+// Ported from ProfileSettings.test.ts (the old Name style tab) when the old page went (#727, task 10).
+describe('the Name style popover, as the old tab behaved', () => {
+  const colourRadios = () => [...q('[role=radiogroup][aria-label="Name colour"]').querySelectorAll<HTMLButtonElement>('[role=radio]')]
+  const tips = () => [...document.querySelectorAll<HTMLInputElement>('.custom input[type=color]')]
+  const setColor = (el: HTMLInputElement, v: string) => {
+    el.value = v
+    el.dispatchEvent(new Event('input', { bubbles: true }))
+    el.dispatchEvent(new Event('change', { bubbles: true }))
+    flushSync()
+  }
+
+  it('default_is_a_swatch_without_text_and_custom_an_icon_button', () => {
+    const def = q('[role=radio][aria-label="Default"][class*=swatch]')
+    const custom = q('[aria-label="Name colour"] [aria-label="Custom"]')
+    expect(def.classList.contains('none')).toBe(true)
+    expect(def.textContent!.trim()).toBe('')
+    expect(custom.querySelector('svg')).not.toBeNull()
+    expect(custom.textContent!.trim()).toBe('')
+    expect(custom.dataset.tip).toBe('Custom colour')
+  })
+
+  it('custom_shows_its_pickers_and_notes_lightening_only_when_a_colour_is_lightened', () => {
+    click(q('[aria-label="Name colour"] [aria-label="Custom"]'))
+    expect(tips()).toHaveLength(1)
+    expect(document.querySelector('.hint')).toBeNull()
+    setColor(tips()[0], '#000000')
+    expect(st.draft.colors).toEqual(['#000000'])
+    expect(q('.hint').textContent).toBe('Lightened so it reads on dark backgrounds')
+    // the preview names the lightened colour, as Save will store it
+    expect(document.body.innerHTML).toContain('rgb(168, 168, 168)')
+    // Gradient: two pickers
+    click([...document.querySelectorAll<HTMLElement>('.custom [role=tab], .custom button')].find((b) => b.textContent!.trim() === 'Gradient')!)
+    expect(tips()).toHaveLength(2)
+    setColor(tips()[0], '#ffc4a3')
+    setColor(tips()[1], '#a3d8ff')
+    expect(st.draft.colors).toEqual(['#ffc4a3', '#a3d8ff'])
+    expect(document.querySelector('.hint')).toBeNull()
+  })
+
+  it('arrowing_onto_custom_selects_it_without_opening_a_picker', () => {
+    const opened: HTMLInputElement[] = []
+    const spy = vi.spyOn(HTMLInputElement.prototype, 'click').mockImplementation(function (this: HTMLInputElement) { opened.push(this) })
+    try {
+      const radios = colourRadios()
+      expect(radios.filter((r) => r.tabIndex === 0)).toEqual([radios[0]]) // one tab stop: Default
+      radios[0].focus()
+      radios[0].dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true, cancelable: true }))
+      flushSync()
+      const custom = colourRadios()[colourRadios().length - 1]
+      expect(document.activeElement).toBe(custom)
+      expect(custom.getAttribute('aria-checked')).toBe('true')
+      expect(opened).toEqual([])
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  it('font_radios_wrap_backwards_from_the_first', () => {
+    const fonts = [...q('[role=radiogroup][aria-label="Name font"]').querySelectorAll<HTMLButtonElement>('[role=radio]')]
+    expect(fonts.filter((r) => r.tabIndex === 0)).toEqual([fonts[0]])
+    fonts[0].focus()
+    fonts[0].dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true, cancelable: true }))
+    flushSync()
+    expect(document.activeElement).toBe(fonts[fonts.length - 1])
+    expect(fonts[fonts.length - 1].getAttribute('aria-checked')).toBe('true')
+  })
+
+  it('a_picked_font_and_gradient_restyle_the_preview_name', () => {
+    click(q('[aria-label="Name font"] [aria-label="Techy"]'))
+    click(q('[aria-label="Name colour"] [aria-label="Aurora gradient"]'))
+    const css = q('.card .name').getAttribute('style')!
+    expect(css).toContain('Orbitron')
+    expect(css).toContain('linear-gradient(90deg, rgb(246, 182, 255), rgb(159, 180, 255))')
+    // nothing outside the editor changed
+    expect(app.state.me!.style).toEqual({ font: null, colors: [] })
+  })
+})

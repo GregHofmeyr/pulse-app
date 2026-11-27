@@ -185,6 +185,111 @@ describe('the profile editor', () => {
   })
 })
 
+// Ported from ProfileSettings.test.ts / Settings.test.ts when the old page went (#727, task 10).
+describe('closing around a Save, an upload and a failed load', () => {
+  const closeBtn = () => document.querySelector<HTMLButtonElement>('[aria-label="Close editor"]')!
+  const prompt = () => document.querySelector('[role=alert]')?.textContent ?? ''
+  const answers: ((p: Profile) => void)[] = []
+  const settle = () => vi.waitFor(() => { flushSync() })
+  beforeEach(() => {
+    answers.length = 0
+  })
+
+  it('closing_during_a_save_does_nothing_and_no_prompt_shows', async () => {
+    vi.mocked(invoke).mockImplementation((async (cmd: string) => (cmd === 'update_profile' ? new Promise<Profile>((r) => answers.push(r)) : undefined)) as never)
+    await open('looks', true)
+    dirty()
+    button('Save')!.click()
+    flushSync()
+    closeBtn().click()
+    await settle()
+    // the Save may yet fail and keep the draft: not closed, nothing to discard yet
+    expect(profileEditor.open).toBe(true)
+    expect(prompt()).not.toContain('Discard')
+    const stored = { ...saved(), card: { ...saved().card, bio: 'edited' } }
+    answers[0](stored)
+    await vi.waitFor(() => { flushSync(); expect(document.body.textContent).toContain('Saved') })
+    expect(app.state.profiles.U1).toEqual(stored)
+    // the draft is saved: closing now asks nothing
+    closeBtn().click()
+    flushSync()
+    expect(profileEditor.open).toBe(false)
+  })
+
+  it('closing_after_a_save_that_fails_asks_with_the_error_shown', async () => {
+    vi.mocked(invoke).mockImplementation((async (cmd: string) => { if (cmd === 'update_profile') throw 'Colours must look like #a1b2c3.' }) as never)
+    await open('looks', true)
+    dirty()
+    button('Save')!.click()
+    await vi.waitFor(() => { flushSync(); expect(document.querySelector('footer [role=alert]')?.textContent).toBe('Colours must look like #a1b2c3.') })
+    closeBtn().click()
+    flushSync()
+    expect(document.body.textContent).toContain('Discard your profile changes?')
+    expect(profileEditor.open).toBe(true)
+  })
+
+  it('a_save_started_while_the_discard_prompt_shows_puts_the_prompt_away', async () => {
+    vi.mocked(invoke).mockImplementation((async (cmd: string) => (cmd === 'update_profile' ? new Promise<Profile>((r) => answers.push(r)) : undefined)) as never)
+    await open('looks', true)
+    dirty()
+    closeBtn().click()
+    flushSync()
+    expect(prompt()).toContain('Discard your profile changes?')
+    button('Save')!.click()
+    flushSync()
+    expect(document.body.textContent).not.toContain('Discard your profile changes?')
+    answers[0]({ ...saved(), card: { ...saved().card, bio: 'edited' } })
+    await vi.waitFor(() => { flushSync(); expect(document.body.textContent).toContain('Saved') })
+    expect(document.body.textContent).not.toContain('Discard your profile changes?')
+    expect(profileEditor.open).toBe(true)
+  })
+
+  it('closing_during_an_upload_asks_first', async () => {
+    await open('looks', true)
+    held!.uploading.avatar = true
+    flushSync()
+    expect(button('Save')!.disabled).toBe(true)
+    closeBtn().click()
+    flushSync()
+    expect(document.body.textContent).toContain('Discard your profile changes?')
+    expect(profileEditor.open).toBe(true)
+  })
+
+  it('an_edit_on_one_section_is_kept_on_another_and_nothing_is_saved_until_Save', async () => {
+    await open('looks', true)
+    dirty()
+    button('Badges')!.click()
+    flushSync()
+    button('Looks')!.click()
+    flushSync()
+    expect(held!.draft.bio).toBe('edited')
+    expect(document.body.textContent).toContain('Unsaved changes')
+    expect(vi.mocked(invoke).mock.calls.filter((c) => c[0] === 'update_profile')).toHaveLength(0)
+  })
+
+  it('loads_once_you_are_known_and_a_failed_load_offers_Retry', async () => {
+    loadFails = true
+    app.state = emptyState()
+    openProfileEditor('looks')
+    cmp = mount(ProfileEditor, { target: document.body, props: {} })
+    flushSync()
+    // waiting: nothing is asked for before you are known
+    expect(vi.mocked(invoke).mock.calls.filter((c) => c[0] === 'get_profile')).toHaveLength(0)
+    app.state = { ...emptyState(), me: alex, people: { U1: { user: alex, online: true, last_seen_at: null } } } as never
+    await vi.waitFor(() => {
+      flushSync()
+      expect(document.querySelector('.stage [role=alert]')?.textContent).toContain('offline')
+    })
+    loadFails = false
+    button('Retry')!.click()
+    await vi.waitFor(() => {
+      flushSync()
+      if (!document.querySelector('.card')) throw new Error('not loaded')
+    })
+    expect(vi.mocked(invoke).mock.calls.filter((c) => c[0] === 'get_profile')).toHaveLength(2)
+  })
+})
+
 /** Makes the open editor's draft dirty through its shared state (what the section controls do from Task 3 on). */
 function dirty() {
   held!.draft.bio = 'edited'

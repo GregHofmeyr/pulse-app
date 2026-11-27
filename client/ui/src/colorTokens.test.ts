@@ -122,7 +122,7 @@ const ALLOWED: Record<string, (Allowed | Palette)[]> = {
     { uses: { '#f7c948': 1, '#f7dbc0': 1, '#e8c29a': 1, '#c89369': 1, '#9a6a45': 1, '#5f402c': 1 }, reason: 'skin-tone swatches: content colours' },
   ],
   'components/AppearanceSettings.svelte': [{ uses: { '#3b4bd8': 1 }, reason: 'a sample role colour in the Name readability preview (user data, not UI)' }],
-  'components/ProfileSettings.svelte': [{ uses: { '#ffffff': 1 }, reason: "the first custom name colour's starting value (user data, not UI)" }],
+  'components/profileEditor/NameStylePopover.svelte': [{ uses: { '#ffffff': 1 }, reason: "the first custom name colour's starting value (user data, not UI)" }],
   'components/FullProfile.svelte': [{ uses: { '#000': 7 }, reason: "the right column's round-cornered scroll mask: only its alpha counts, never shown as a colour" }],
   // the .ts colour sources
   'lib/stream/stream.svelte.ts': [{ uses: { '#000': 1 }, reason: VIDEO + ' (the letterbox the stream canvas paints round a frame)' }],

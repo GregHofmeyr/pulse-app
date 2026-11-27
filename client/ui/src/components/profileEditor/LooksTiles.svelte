@@ -84,7 +84,7 @@
         {/if}
       </button>
       <button type="button" class="tile square" aria-label="Ring colour" aria-haspopup="dialog" onclick={() => (open = 'ring')}>
-        <span class="swatch" style:--swatch={colour} title={colourLabel}></span>
+        <span class="swatch" style:--swatch={colour} data-tip={colourLabel}></span>
       </button>
     </div>
   </section>
@@ -114,7 +114,7 @@
   /* the glow reaches at most 8px (6px blur + 1px spread, 1px down), inside the 10px padding and the 8px row gap's half */
   .tile.mini { padding: 10px; overflow: visible; }
   .tile.mini :global(.mc) { border-radius: var(--radius-md); }
-  .tile[aria-expanded='true'] { border-color: var(--accent); }
+  .tile[aria-expanded='true'] { border-color: var(--focus-ring); }
   .tile img { width: 100%; height: 100%; object-fit: cover; display: block; }
   .none { width: 100%; height: 100%; background: repeating-linear-gradient(135deg, var(--bg-4) 0 6px, var(--bg-3) 6px 12px); }
   .face-name { max-width: 100%; padding: 0 12px; box-sizing: border-box; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; font-size: 16px; }

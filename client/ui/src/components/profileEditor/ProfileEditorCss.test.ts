@@ -9,7 +9,11 @@ const scope = 'svelte-test'
 const compiled = (file: string) => compile(readFileSync(resolve(__dirname, file), 'utf8'), { filename: file, css: 'external', cssHash: () => scope }).css!.code
 let editor = ''
 let menu = ''
+let ring = ''
+let typing = ''
 beforeAll(() => {
+  ring = compiled('RingPopover.svelte')
+  typing = compiled('TypingSection.svelte')
   editor = compiled('ProfileEditor.svelte')
   menu = compiled('EditorMenu.svelte')
 })
@@ -53,3 +57,45 @@ describe('the editor layout (#727)', () => {
     expect(editor).toMatch(/\.stage\[data-section=['"]?badges['"]?\]/)
   })
 })
+
+// Ported from ProfileSettingsCss.test.ts when the old page went (#727, task 10): the same never-spill rules, for where
+// the ring tiles and the typing row live now.
+describe('the Speaking ring popover never spills (#651)', () => {
+  it('the_style_grid_and_swatches_give_way_instead_of_spilling', () => {
+    expect(rule(ring, '.grid')).toMatch(/display:\s*grid/)
+    expect(rule(ring, '.grid')).toMatch(/grid-template-columns:\s*repeat\(auto-fill,\s*minmax\(104px,\s*1fr\)\)/)
+    expect(rule(ring, '.grid')).toMatch(/min-width:\s*0/)
+    const tile = rule(ring, '.tile')
+    expect(tile).toMatch(/min-width:\s*0/)
+    expect(tile).toMatch(/overflow:\s*hidden/)
+    const label = rule(ring, '.label')
+    expect(label).toMatch(/text-overflow:\s*ellipsis/)
+    expect(label).toMatch(/white-space:\s*nowrap/)
+    expect(rule(ring, '.swatches')).toMatch(/flex-wrap:\s*wrap/)
+    // the caption may wrap inside its panel; the stage keeps a fixed box and reserves its ring's outset by margin
+    expect(rule(ring, '.big')).toMatch(/max-width:\s*100%/)
+    expect(rule(ring, '.ring-stage')).toMatch(/margin:\s*calc\(/)
+    expect(rule(ring, '.caption')).toMatch(/max-width:\s*100%/)
+  })
+})
+
+describe('the typing text row fits a narrow window (#652)', () => {
+  /** The declarations of the rule for `sel`, each of its parts scoped (`.a .b` becomes `.a.svelte-test .b.svelte-test`). */
+  const scoped = (sel: string) =>
+    typing.match(new RegExp(`(?:^|\\n|\\})\\s*${sel.split(' ').map((p) => `${p.replace(/\./g, '\\.')}\\.${scope}`).join(' ')}\\s*\\{([^}]*)\\}`))?.[1] ?? ''
+
+  it('the_row_shrinks_the_box_first_and_a_long_name_and_the_preview_end_in_an_ellipsis', () => {
+    expect(scoped('.typing-row')).toMatch(/display:\s*flex/)
+    expect(scoped('.typing-row')).toMatch(/min-width:\s*0/)
+    const input = typing.match(new RegExp(`\\.typing-row\\.${scope} \\.input:where\\(\\.${scope}\\) \\{([^}]*)\\}`))?.[1]
+    expect(input).toMatch(/flex:\s*1 1 0/)
+    expect(input).toMatch(/min-width:\s*0/)
+    for (const sel of ['.typing-who', '.typing-preview']) {
+      expect(scoped(sel), sel).toMatch(/overflow:\s*hidden/)
+      expect(scoped(sel), sel).toMatch(/text-overflow:\s*ellipsis/)
+      expect(scoped(sel), sel).toMatch(/white-space:\s*nowrap/)
+    }
+    expect(scoped('.chips')).toMatch(/flex-wrap:\s*wrap/)
+  })
+})
+

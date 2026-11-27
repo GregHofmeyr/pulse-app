@@ -101,7 +101,7 @@
       <h3>Colour</h3>
       <div class="swatches" role="radiogroup" aria-label="Ring colour" tabindex="-1" onkeydown={arrows}>
         {#each RING_COLORS as c (c.key)}
-          <button type="button" role="radio" class="swatch" aria-label={c.label} title={c.key === 'profile' ? profileTip : c.label}
+          <button type="button" role="radio" class="swatch" aria-label={c.label} data-tip={c.key === 'profile' ? profileTip : c.label}
             aria-checked={st.draft.ringColor === c.key} tabindex={st.draft.ringColor === c.key ? 0 : -1} style:--swatch={swatchCss(c.key)} onclick={() => (st.draft.ringColor = c.key)}></button>
         {/each}
       </div>
@@ -133,14 +133,14 @@
   .tile { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; min-width: 0; padding: 8px; overflow: hidden; border: 2px solid transparent; border-radius: var(--radius-lg); background: var(--bg-3); color: var(--text); font: inherit; cursor: pointer; }
   .tile:hover { background: var(--bg-4); }
   .tile:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
-  .tile[aria-checked='true'] { border-color: var(--accent); }
+  .tile[aria-checked='true'] { border-color: var(--focus-ring); }
   /* the avatar, with the room its 1.32 D ring box needs (.16 D each side) so the ring never reaches the tile's edge */
   .face { position: relative; flex: none; display: block; width: var(--d); height: var(--d); margin: calc(var(--d) * .16); }
   .label { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 500; color: var(--text-2); }
   .swatches { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; min-width: 0; }
   .swatch { flex: none; width: 32px; height: 32px; padding: 0; border-radius: 50%; border: 2px solid transparent; background: var(--swatch); outline: 1px solid var(--line-strong); outline-offset: -1px; cursor: pointer; }
   .swatch:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
-  .swatch[aria-checked='true'] { outline: none; border-color: var(--text); box-shadow: 0 0 0 2px var(--accent) inset; }
+  .swatch[aria-checked='true'] { outline: none; border-color: var(--text); box-shadow: 0 0 0 2px var(--focus-ring) inset; }
   .big { display: flex; flex-direction: column; align-items: center; gap: 8px; min-width: 0; max-width: 100%; }
   .ring-stage { position: relative; flex: none; width: 96px; height: 96px; margin: calc(96px * .16); isolation: isolate; border-radius: 50%; }
   .caption { margin: 0; max-width: 100%; text-align: center; font-size: 12px; color: var(--text-3); }

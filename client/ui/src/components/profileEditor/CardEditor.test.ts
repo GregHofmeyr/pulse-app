@@ -211,6 +211,25 @@ describe('the editable card', () => {
     expect(q('.bio-field .counter').classList.contains('over')).toBe(true)
   })
 
+  it('the_bio_counter_shows_only_near_the_limit_and_the_name_note_is_not_text', () => {
+    show()
+    expect(document.body.textContent).not.toContain('How your name shows everywhere')
+    click(q('.bio-view'))
+    const box = q('[role=textbox][aria-label="Bio"]')
+    expect(document.querySelector('.counter')).toBeNull()
+    box.textContent = 'x'.repeat(150)
+    box.dispatchEvent(new Event('input', { bubbles: true }))
+    flushSync()
+    expect(q('.counter').textContent).toBe('150/190')
+    expect(q('.counter').classList.contains('over')).toBe(false)
+    box.textContent = 'x'.repeat(190)
+    box.dispatchEvent(new Event('input', { bubbles: true }))
+    flushSync()
+    expect(q('.counter').textContent).toBe('190/190')
+    expect(q('.counter').classList.contains('over')).toBe(false)
+    expect(st.invalid).toBe(false)
+  })
+
   it('bio_raw_while_focused_formatted_on_blur', () => {
     show()
     // blurred: markdown rendered, no raw box, no emoji button

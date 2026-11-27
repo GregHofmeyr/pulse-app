@@ -207,6 +207,11 @@ describe('the Badges section', () => {
     expect(st.showcase).toEqual(['a', 'b', 'c'])
   })
 
+  it('with_none_earned_it_says_so', () => {
+    show({ ...profile(), badges: [], showcase: [], showcase_chosen: false })
+    expect(document.body.textContent).toContain('No badges yet')
+  })
+
   it('edits_stay_in_the_state_until_save', async () => {
     const { invoke } = await import('@tauri-apps/api/core')
     show()

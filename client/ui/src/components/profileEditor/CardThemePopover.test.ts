@@ -69,3 +69,69 @@ describe('the Card theme popover', () => {
     expect(q('[aria-label="In the channel list"]')).not.toBeNull()
   })
 })
+
+// Ported from ProfileSettings.test.ts (the old Card tab) when the old page went (#727, task 10).
+describe('the Card theme popover, as the old tab behaved', () => {
+  it('a_preset_pick_restyles_the_preview_card', () => {
+    expect(q('.card').getAttribute('style')).toContain('--glow-top: #3a3d46')
+    click(q('button[aria-label="Berry"]'))
+    expect(q('.card').getAttribute('style')).toContain('--glow-top: #c2457a')
+    expect(q('.card').getAttribute('style')).toContain('--glow-bottom: #3a1f5e')
+    expect(q('button[aria-label="Berry"]').getAttribute('aria-checked')).toBe('true')
+  })
+
+  it('the_custom_pickers_write_the_draft_and_show_their_hex', () => {
+    click(q('button[aria-label="Custom"]'))
+    const [top, bottom] = [...document.querySelectorAll<HTMLInputElement>('.pickers input[type=color]')]
+    for (const [el, v] of [[top, '#ffffff'], [bottom, '#ffff00']] as const) {
+      el.value = v
+      el.dispatchEvent(new Event('input', { bubbles: true }))
+      el.dispatchEvent(new Event('change', { bubbles: true }))
+    }
+    flushSync()
+    expect(q('.card').getAttribute('style')).toContain('--glow-top: #ffffff')
+    expect(q('.card').getAttribute('style')).toContain('--glow-bottom: #ffff00')
+    expect(q('button[aria-label="Custom"]').getAttribute('aria-checked')).toBe('true')
+    expect([...document.querySelectorAll('.pick')].map((l) => l.textContent!.replace(/\s+/g, ' ').trim())).toEqual(['Top #ffffff', 'Bottom #ffff00'])
+    // the Custom tile is a mini card in the custom colours; a preset picked puts the + back
+    expect(q('button[aria-label="Custom"]').querySelector('.mc-banner')).not.toBeNull()
+    click(q('button[aria-label="Night sky"]'))
+    expect(q('button[aria-label="Custom"]').querySelector('.mc-banner')).toBeNull()
+  })
+
+  it('arrows_move_along_the_tiles_with_one_tab_stop_and_wrap', () => {
+    const radios = [...document.querySelectorAll<HTMLButtonElement>('[role=radiogroup][aria-label="Card theme"] [role=radio]')]
+    expect(radios.filter((r) => r.tabIndex === 0)).toEqual([q('button[aria-label="Plain"]')])
+    const plain = radios.indexOf(q<HTMLButtonElement>('button[aria-label="Plain"]'))
+    radios[plain].focus()
+    radios[plain].dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }))
+    flushSync()
+    const next = radios[(plain + 1) % radios.length]
+    expect(document.activeElement).toBe(next)
+    expect(next.getAttribute('aria-checked')).toBe('true')
+    expect(next.tabIndex).toBe(0)
+    expect(radios[plain].tabIndex).toBe(-1)
+  })
+
+  it('a_saved_custom_theme_is_what_the_popover_shows', () => {
+    unmount(cmp!)
+    document.body.innerHTML = ''
+    st = new ProfileEditorState({ ...profile, card: { ...profile.card, theme_top: '#ffb6d9', theme_bottom: '#ffffff' } })
+    cmp = mount(CardThemePopover, { target: document.body, props: { state: st, onClose } })
+    flushSync()
+    expect(q('button[aria-label="Custom"]').getAttribute('aria-checked')).toBe('true')
+    expect(q('button[aria-label="Custom"]').querySelector('.mc-banner')).not.toBeNull()
+    click(q('button[aria-label="Custom"]'))
+    expect([...document.querySelectorAll<HTMLInputElement>('.pickers input[type=color]')].map((i) => i.value)).toEqual(['#ffb6d9', '#ffffff'])
+    expect(q('.card').getAttribute('style')).toContain('--glow-top: #ffb6d9')
+  })
+
+  it('apply_takes_a_colour_still_waiting_for_its_frame', () => {
+    click(q('button[aria-label="Custom"]'))
+    const top = q<HTMLInputElement>('input[aria-label="Top colour"]')
+    top.value = '#ffb6d9'
+    top.dispatchEvent(new Event('input', { bubbles: true }))
+    click(q('button[aria-label="Apply"]'))
+    expect(st.draft.themeTop).toBe('#ffb6d9')
+  })
+})

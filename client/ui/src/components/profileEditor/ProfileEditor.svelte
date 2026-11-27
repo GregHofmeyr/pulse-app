@@ -84,6 +84,8 @@
 
   async function save() {
     if (!st) return
+    // a Save puts away a discard prompt shown before it, like "Keep editing"
+    asking = false
     const was = st
     await was.save()
     if (gone || was.error || !was.lastSave) return
