@@ -1,8 +1,10 @@
 // The profile editor's working copy (spec §4.1): everything is staged here until Save sends it whole.
+import { shownStats } from './cardStats'
 import { lightenForName } from './nameStyle'
 import { ringColorOf, ringStyleOf, type RingColor, type RingStyle } from './speakingRing'
 import type { CardProfile } from './protocol/CardProfile'
 import type { Profile } from './protocol/Profile'
+import type { ProfileStats } from './protocol/ProfileStats'
 import type { UpdateProfileRequest } from './protocol/UpdateProfileRequest'
 import type { User } from './protocol/User'
 
@@ -29,6 +31,8 @@ export type Draft = {
   /** The speaking ring others see (#651): Classic and green by default. */
   ringStyle: RingStyle
   ringColor: RingColor
+  /** The stats your card shows (#727), keys in order; null when none is saved (every stat shows). */
+  cardStats: string[] | null
 }
 
 export function draftFrom(p: Profile): Draft {
@@ -53,17 +57,25 @@ export function draftFrom(p: Profile): Draft {
     // none, unknown (a newer server's key) or an older server: Classic green
     ringStyle: ringStyleOf(p.user),
     ringColor: ringColorOf(p.user),
+    // an older server, or no choice saved: null
+    cardStats: p.stats?.shown ? [...p.stats.shown] : null,
   }
 }
 
+/** Whether two card-stat lists show the same stats in the same order (null is the default list). */
+const sameStats = (a: string[] | null, b: string[] | null) => shownStats(a).join() === shownStats(b).join()
+
 export function isDirty(d: Draft, saved: Draft): boolean {
   const keys = Object.keys(saved) as (keyof Draft)[]
-  return keys.some((k) => (k === 'colors' ? d.colors.join() !== saved.colors.join() : d[k] !== saved[k]))
+  return keys.some((k) => (k === 'colors' ? d.colors.join() !== saved.colors.join() : k === 'cardStats' ? !sameStats(d.cardStats, saved.cardStats) : d[k] !== saved[k]))
 }
 
 const orNull = (s: string) => (s.trim() === '' ? null : s)
 
-export function toRequest(d: Draft): UpdateProfileRequest {
+/** `saved` is what the server has: the card stats are sent only when they differ from it (absent keeps the setting).
+ *  Without it, only a chosen list is sent. */
+export function toRequest(d: Draft, saved?: Draft): UpdateProfileRequest {
+  const stats = d.cardStats && (saved ? !sameStats(d.cardStats, saved.cardStats) : true) ? { card_stats: [...d.cardStats] } : {}
   return {
     avatar_hash: d.avatarHash,
     banner_hash: d.bannerHash,
@@ -79,6 +91,7 @@ export function toRequest(d: Draft): UpdateProfileRequest {
     // always sent: "classic"/"green" store the default (absent would keep it)
     ring_style: d.ringStyle,
     ring_color: d.ringColor,
+    ...stats,
   }
 }
 
@@ -110,6 +123,12 @@ export function previewCard(d: Draft): CardProfile {
     bio: orNull(d.bio),
     glow: d.glow,
   }
+}
+
+/** The stats as the draft would show them: `shown` is the draft's list (nothing changes while it is the default). */
+export function previewStats(stats: ProfileStats | null, d: Draft): ProfileStats | null {
+  if (!stats || !d.cardStats) return stats
+  return { ...stats, shown: [...d.cardStats] }
 }
 
 /** Most characters in a name (display name or nickname; the server's limit). */
@@ -166,6 +185,8 @@ export function editsSince(before: Draft, now: Draft): Partial<Draft> {
   for (const k of Object.keys(before) as (keyof Draft)[]) {
     if (k === 'colors') {
       if (now.colors.join() !== before.colors.join()) out.colors = [...now.colors]
+    } else if (k === 'cardStats') {
+      if (!sameStats(now.cardStats, before.cardStats)) out.cardStats = now.cardStats && [...now.cardStats]
     } else if (now[k] !== before[k]) (out as Record<string, unknown>)[k] = now[k]
   }
   return out

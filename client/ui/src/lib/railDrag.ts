@@ -17,11 +17,14 @@ export type RailDragOptions = {
   disabled?: boolean
   /** The data attribute that marks an item and holds its id (default `server`: `[data-server]`). */
   item?: string
+  /** `y` for a list down the page (the profile editor's card stats, #727): items move on y. Default `x`, a row. */
+  axis?: 'x' | 'y'
 }
 
 type Drag = {
   id: string
   pointerId: number
+  /** where the press began, along the drag's axis */
   startX: number
   tab: HTMLElement
   /** set once it moves past the threshold */
@@ -33,6 +36,9 @@ export function railDrag(node: HTMLElement, options: RailDragOptions) {
   let drag: Drag | null = null
 
   const attr = () => opts.item ?? 'server'
+  const vertical = () => opts.axis === 'y'
+  const along = (e: { clientX: number; clientY: number }) => (vertical() ? e.clientY : e.clientX)
+  const translate = (px: number) => (vertical() ? `translateY(${px}px)` : `translateX(${px}px)`)
   const tabs = () => [...node.querySelectorAll<HTMLElement>(`[data-${attr()}]`)]
 
   function clear() {
@@ -47,8 +53,12 @@ export function railDrag(node: HTMLElement, options: RailDragOptions) {
   function start(d: Drag) {
     const all = tabs()
     const from = all.indexOf(d.tab)
-    // measured once: left edges along the rail stand in for drag.ts's tops
-    const boxes = all.map((t) => t.getBoundingClientRect())
+    // measured once: edges along the rail stand in for drag.ts's tops (left edges on x, top edges on y)
+    const v = vertical()
+    const boxes = all.map((t) => {
+      const b = t.getBoundingClientRect()
+      return v ? { left: b.top, right: b.bottom, width: b.height } : { left: b.left, right: b.right, width: b.width }
+    })
     const me = boxes[from]
     const others = boxes.filter((_, i) => i !== from).map((b) => ({ top: b.left, height: b.width }))
     // the room one tab takes: its width plus the gap to the next
@@ -67,7 +77,7 @@ export function railDrag(node: HTMLElement, options: RailDragOptions) {
 
   function move(e: PointerEvent) {
     if (!drag || e.pointerId !== drag.pointerId) return
-    const dx = e.clientX - drag.startX
+    const dx = along(e) - drag.startX
     if (!drag.live) {
       if (Math.abs(dx) < DRAG_THRESHOLD) return
       start(drag)
@@ -75,7 +85,7 @@ export function railDrag(node: HTMLElement, options: RailDragOptions) {
     const l = drag.live!
     l.slot = slotFor(l.others, l.centre + dx)
     const shifts = shiftsFor(l.from, l.slot, l.step, l.tabs.length)
-    l.tabs.forEach((t, i) => (t.style.transform = i === l.from ? `translateX(${dx}px)` : shifts[i] ? `translateX(${shifts[i]}px)` : ''))
+    l.tabs.forEach((t, i) => (t.style.transform = i === l.from ? translate(dx) : shifts[i] ? translate(shifts[i]) : ''))
   }
 
   function up(e: PointerEvent) {
@@ -112,7 +122,7 @@ export function railDrag(node: HTMLElement, options: RailDragOptions) {
     if (opts.disabled || e.button !== 0 || drag) return
     const tab = (e.target as Element).closest?.<HTMLElement>(`[data-${attr()}]`)
     if (!tab || !node.contains(tab)) return
-    drag = { id: tab.getAttribute(`data-${attr()}`)!, pointerId: e.pointerId, startX: e.clientX, tab, live: null }
+    drag = { id: tab.getAttribute(`data-${attr()}`)!, pointerId: e.pointerId, startX: along(e), tab, live: null }
   }
 
   function cancel(e: PointerEvent) {

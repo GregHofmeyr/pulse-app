@@ -149,7 +149,7 @@ export class ProfileEditorState {
     const sentShowcase = $state.snapshot(this.showcase)
     try {
       if (keys) await api.setBadgeShowcase(keys)
-      const answer = withProfile ? await api.updateProfile(toRequest(sent)) : await loadProfile(app.state.me!.id)
+      const answer = withProfile ? await api.updateProfile(toRequest(sent, this.saved)) : await loadProfile(app.state.me!.id)
       // The cache gets the answer even if the editor has gone meanwhile: the save went through.
       app.state = setProfile(app.state, answer)
       if (this.gone) return

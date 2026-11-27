@@ -229,6 +229,25 @@ describe('ProfileCard', () => {
     expect(el.querySelector('[data-steam-hours]')!.textContent).toBe('Steam, 2 weeks21.5 h')
   })
 
+  it('profile_card_renders_only_shown_in_order (#727)', () => {
+    // a hidden stat's neutral 0 / "" never shows; the rows follow `shown`
+    const el = show({ stats: { ...stats, voice_seconds: 0, member_since: '', steam_completion: 50, steam_perfect_games: 1, steam_recent_minutes: 600, shown: ['steam_recent', 'steam_completion'] } })
+    expect([...el.querySelectorAll('.info dt')].map((d) => d.textContent)).toEqual(['Steam, 2 weeks', 'Steam'])
+    expect(el.querySelector('.info')!.textContent).not.toContain('Member since')
+    expect(el.querySelector('.info')!.textContent).not.toContain('Voice')
+    unmount(cmp!)
+    // all hidden: no empty panel
+    expect(show({ stats: { ...stats, voice_seconds: 0, member_since: '', shown: [] } }).querySelector('.info')).toBeNull()
+    unmount(cmp!)
+    // shown but nothing to show yet (no Steam data): no blank row
+    expect(show({ stats: { ...stats, shown: ['voice', 'steam_completion'] } }).querySelectorAll('.info dt')).toHaveLength(1)
+  })
+
+  it('old_server_without_shown_shows_today_default (#727)', () => {
+    const el = show({ stats: { ...stats, steam_completion: 62.5, steam_perfect_games: 2, steam_recent_minutes: 1290 } })
+    expect([...el.querySelectorAll('.info dt')].map((d) => d.textContent)).toEqual(['Member since', 'Voice', 'Steam', 'Steam, 2 weeks'])
+  })
+
   it('Join (#381): on their Playing panel and in the card\'s right-click menu, even with no nickname items', () => {
     const join = { kind: 'server' as const, app_id: 440, address: '203.0.113.7:27015' }
     app.state = { ...app.state, people: { ...app.state.people, U2: { user: sam, online: true, last_seen_at: null, playing: { name: 'Hat Game', steam_app_id: 440, started_at: null, art: null, join } } } } as never

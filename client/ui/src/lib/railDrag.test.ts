@@ -115,3 +115,30 @@ describe('another kind of item (#467: the profile editor drags [data-badge])', (
     a.destroy()
   })
 })
+
+describe('vertical rail (#727)', () => {
+  it('a vertical list drags on y and drops at the slot', () => {
+    const list = document.createElement('ul')
+    const onDrop = vi.fn()
+    ;['A', 'B', 'C'].forEach((id, i) => {
+      const li = document.createElement('li')
+      li.dataset.stat = id
+      li.getBoundingClientRect = () => ({ left: 0, right: 100, width: 100, top: i * 46, bottom: i * 46 + 40, height: 40, x: 0, y: i * 46, toJSON: () => ({}) })
+      list.append(li)
+    })
+    document.body.append(list)
+    const a = railDrag(list, { onDrop, item: 'stat', axis: 'y' })
+    const y = (type: string, el: Element, yy: number) => {
+      const e = new MouseEvent(type, { bubbles: true, cancelable: true, clientX: 10, clientY: yy, button: 0 })
+      Object.defineProperty(e, 'pointerId', { value: 1 })
+      el.dispatchEvent(e)
+    }
+    const first = list.querySelector<HTMLElement>('[data-stat="A"]')!
+    y('pointerdown', first, 20)
+    y('pointermove', list, 130)
+    expect(first.style.transform).toBe('translateY(110px)')
+    y('pointerup', list, 130)
+    expect(onDrop).toHaveBeenCalledWith('A', 2)
+    a.destroy()
+  })
+})

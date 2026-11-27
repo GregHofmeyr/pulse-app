@@ -13,6 +13,7 @@
   import Icon from '../Icon.svelte'
   import Loading from '../Loading.svelte'
   import BadgesSection from './BadgesSection.svelte'
+  import CardStatsSection from './CardStatsSection.svelte'
   import CardEditor from './CardEditor.svelte'
   import LooksTiles from './LooksTiles.svelte'
   import ShowUp from './ShowUp.svelte'
@@ -129,6 +130,8 @@
             <aside class="side" aria-label="Looks"><LooksTiles state={st} /></aside>
           {:else if section === 'badges'}
             <aside class="side wide" aria-label="Badges"><BadgesSection state={st} /></aside>
+          {:else if section === 'stats'}
+            <aside class="side" aria-label="Card stats"><CardStatsSection state={st} /></aside>
           {:else if section === 'typing'}
             <aside class="side" aria-label="Typing text"><TypingSection state={st} /></aside>
           {/if}
@@ -158,9 +161,9 @@
   .confirm span { margin-right: auto; }
   .body { flex: 1; min-height: 0; display: flex; }
   .stage { flex: 1; min-width: 0; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 24px; }
-  .stage[data-section='looks'], .stage[data-section='badges'], .stage[data-section='typing'] { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 24px; }
+  .stage[data-section='looks'], .stage[data-section='badges'], .stage[data-section='stats'], .stage[data-section='typing'] { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 24px; }
   .centre { display: flex; flex-direction: column; align-items: center; gap: 24px; min-width: 0; }
-  .stage[data-section='looks'] .centre, .stage[data-section='badges'] .centre, .stage[data-section='typing'] .centre { flex: 1 1 340px; }
+  .stage[data-section='looks'] .centre, .stage[data-section='badges'] .centre, .stage[data-section='stats'] .centre, .stage[data-section='typing'] .centre { flex: 1 1 340px; }
   /* the tile column keeps its size and drops under the card when the window is too narrow for both */
   .side { flex: 1 1 260px; max-width: 360px; min-width: 0; }
   /* Badges needs room for five 84px slots: a wider panel, which also drops under the card when the window is narrow */

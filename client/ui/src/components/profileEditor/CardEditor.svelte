@@ -18,7 +18,7 @@
   import { customToken, savedTone, withSkin, type Std } from '../../lib/emoji'
   import { insertAt } from '../../lib/emojiComplete'
   import { renderMarkdown } from '../../lib/markdown'
-  import { BIO_LINE_BREAKS_MAX, BIO_MAX, charCount, isZalgo, nameProblem, normalBio, previewCard, previewUser, PRONOUNS_MAX } from '../../lib/profileDraft'
+  import { BIO_LINE_BREAKS_MAX, BIO_MAX, charCount, isZalgo, nameProblem, normalBio, previewCard, previewStats, previewUser, PRONOUNS_MAX } from '../../lib/profileDraft'
   import type { ProfileEditorState } from '../../lib/profileEditor.svelte'
   import type { CustomEmoji } from '../../lib/protocol/CustomEmoji'
   import { app } from '../../lib/store.svelte'
@@ -133,7 +133,7 @@
 
 {#if me && pu}
   <div class="card-editor">
-    <ProfileCard user={pu} card={pc} badges={st.profile.badges} showcase={st.shown} stats={st.profile.stats} serverId={null} preview
+    <ProfileCard user={pu} card={pc} badges={st.profile.badges} showcase={st.shown} stats={previewStats(st.profile.stats, st.draft)} serverId={null} preview
       editable={{ name: nameField, pronouns: pronounsField, bio: bioField, avatar: avatarPicture, banner: bannerPicture }} />
     {#if st.uploadError}<p class="up-err" role="alert">{st.uploadError}</p>{/if}
   </div>

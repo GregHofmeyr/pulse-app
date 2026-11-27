@@ -4,7 +4,7 @@
   import Avatar from '../Avatar.svelte'
   import Name from '../Name.svelte'
   import ProfileCard from '../ProfileCard.svelte'
-  import { previewCard, previewUser } from '../../lib/profileDraft'
+  import { previewCard, previewStats, previewUser } from '../../lib/profileDraft'
   import type { ProfileEditorState } from '../../lib/profileEditor.svelte'
   import { app } from '../../lib/store.svelte'
 
@@ -16,7 +16,7 @@
 
 {#if me && pu}
   <div class="you">
-    <ProfileCard user={pu} card={pc} badges={st.profile.badges} showcase={st.shown} stats={st.profile.stats} serverId={null} preview />
+    <ProfileCard user={pu} card={pc} badges={st.profile.badges} showcase={st.shown} stats={previewStats(st.profile.stats, st.draft)} serverId={null} preview />
     <div class="line" role="group" aria-label="In chat">
       <Avatar id={me.id} name={pu.display_name} user={pu} size={32} />
       <div class="said">

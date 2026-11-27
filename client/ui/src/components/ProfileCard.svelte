@@ -37,6 +37,7 @@
   import type { User } from '../lib/protocol/User'
   import type { CardProfile } from '../lib/protocol/CardProfile'
   import type { Badge } from '../lib/protocol/Badge'
+  import { CARD_STATS } from '../lib/cardStats'
   import type { ProfileStats } from '../lib/protocol/ProfileStats'
 
   let { user, card, badges, showcase = [], stats, serverId, size = 'quick', preview = false, loading = false, onViewFull, onClose, onEditAvatar, onEditBanner, editable }: {
@@ -62,6 +63,14 @@
      *  bio; `avatar` and `banner` (optional) in place of the pencil veils. */
     editable?: { name: Snippet; pronouns: Snippet; bio: Snippet; avatar?: Snippet; banner?: Snippet }
   } = $props()
+
+  // The stats lines to draw (#727): the owner's `shown` keys in order when the server sends them (a hidden stat comes as
+  // a neutral 0 or "", which never shows), else every line as before. A Steam line shows only with data.
+  const statRows = $derived.by(() => {
+    if (!stats) return []
+    const keys: readonly string[] = stats.shown ?? CARD_STATS
+    return keys.filter((k) => (k === 'steam_completion' ? stats.steam_completion != null : k === 'steam_recent' ? !!stats.steam_recent_minutes : (CARD_STATS as readonly string[]).includes(k)))
+  })
 
   // The showcase, in its order; names and icons come from the catalogue (fetched once, on first need).
   const shown = $derived(showcase.map((k) => badges.find((b) => b.key === k)).filter((b): b is Badge => !!b))
@@ -216,20 +225,21 @@
       <!-- where Member since and Voice will be -->
       <div class="panel skeleton stats-skeleton" aria-hidden="true"><span></span><span></span></div>
     {/if}
-    {#if stats || voiceRoom}
+    {#if statRows.length || voiceRoom}
       <dl class="panel info">
-        {#if stats}
-          <div><dt>Member since</dt><dd>{formatMemberSince(stats.member_since)}</dd></div>
-          <div><dt>Voice</dt><dd>{formatVoice(stats.voice_seconds)}</dd></div>
-          {#if stats.steam_completion != null}
+        {#each statRows as key (key)}
+          {#if key === 'member_since' && stats}
+            <div><dt>Member since</dt><dd>{formatMemberSince(stats.member_since)}</dd></div>
+          {:else if key === 'voice' && stats}
+            <div><dt>Voice</dt><dd>{formatVoice(stats.voice_seconds)}</dd></div>
+          {:else if key === 'steam_completion' && stats}
             <!-- Steam account completion rate (#379), while they share achievements -->
-            <div data-steam-completion><dt>Steam</dt><dd>{completionLine(stats.steam_completion, stats.steam_perfect_games)}</dd></div>
-          {/if}
-          {#if stats.steam_recent_minutes}
+            <div data-steam-completion><dt>Steam</dt><dd>{completionLine(stats.steam_completion!, stats.steam_perfect_games)}</dd></div>
+          {:else if key === 'steam_recent' && stats}
             <!-- Steam hours over the last two weeks (#383), while they share them -->
-            <div data-steam-hours><dt>Steam, 2 weeks</dt><dd>{hoursText(stats.steam_recent_minutes)}</dd></div>
+            <div data-steam-hours><dt>Steam, 2 weeks</dt><dd>{hoursText(stats.steam_recent_minutes!)}</dd></div>
           {/if}
-        {/if}
+        {/each}
         {#if voiceRoom}<div class="room"><Icon name="speaker" size={16} /><span>In {voiceRoom}</span></div>{/if}
       </dl>
     {/if}

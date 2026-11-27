@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ZALGO_MARKS, charCount, draftFrom, editsSince, isDirty, isZalgo, nameProblem, normalBio, previewCard, previewUser, toRequest, type Draft } from './profileDraft'
+import { ZALGO_MARKS, charCount, draftFrom, editsSince, isDirty, isZalgo, nameProblem, normalBio, previewCard, previewStats, previewUser, toRequest, type Draft } from './profileDraft'
 import type { Profile } from './protocol/Profile'
 import type { User } from './protocol/User'
 
@@ -43,7 +43,7 @@ describe('profileDraft', () => {
       avatarHash: 'a1', avatarStill: 'a1s', bannerHash: 'b1', bannerStill: null,
       themeTop: '#c2457a', themeBottom: '#3a1f5e', font: 'fredoka', colors: ['#ffbe7a', '#ff7fae'], effect: null,
       pronouns: 'they/them', bio: 'hi\nthere', displayName: profile.user.display_name, glow: true, typingText: '',
-      ringStyle: 'classic', ringColor: 'green',
+      ringStyle: 'classic', ringColor: 'green', cardStats: null,
     })
     expect(toRequest(d)).toEqual({
       avatar_hash: 'a1', banner_hash: 'b1', theme_top: '#c2457a', theme_bottom: '#3a1f5e',
@@ -107,9 +107,36 @@ describe('profileDraft', () => {
       { avatarHash: null }, { avatarStill: null }, { bannerHash: 'b2' }, { bannerStill: 'b2s' },
       { themeTop: '#000000' }, { themeBottom: '#000000' }, { font: null }, { colors: ['#ffbe7a'] },
       { colors: ['#ffbe7a', '#ff7faf'] }, { pronouns: 'she/her' }, { bio: 'hi' }, { glow: false }, { typingText: 'cooking' },
-      { ringStyle: 'dots' }, { ringColor: 'cyan' },
+      { ringStyle: 'dots' }, { ringColor: 'cyan' }, { cardStats: ['voice'] }, { cardStats: [] },
     ]
     for (const c of changes) expect(isDirty({ ...saved, ...c }, saved), JSON.stringify(c)).toBe(true)
+  })
+
+  it('toRequest_sends_card_stats_only_when_changed (#727)', () => {
+    const saved = draftFrom(profile)
+    expect(saved.cardStats).toBeNull()
+    expect('card_stats' in toRequest(saved, saved)).toBe(false)
+    // the same list in the default order is no change
+    const same = { ...saved, cardStats: ['member_since', 'voice', 'steam_completion', 'steam_recent'] }
+    expect('card_stats' in toRequest(same, saved)).toBe(false)
+    expect(isDirty(same, saved)).toBe(false)
+    // reordered, or some hidden, or all hidden: sent as the shown keys in order
+    expect(toRequest({ ...saved, cardStats: ['voice', 'member_since'] }, saved).card_stats).toEqual(['voice', 'member_since'])
+    expect(toRequest({ ...saved, cardStats: [] }, saved).card_stats).toEqual([])
+    // against a saved choice, an unchanged list is left out and a changed one sent
+    const chosen = draftFrom({ ...profile, stats: { ...profile.stats, shown: ['voice'] } })
+    expect(chosen.cardStats).toEqual(['voice'])
+    expect('card_stats' in toRequest({ ...chosen, cardStats: ['voice'] }, chosen)).toBe(false)
+    expect(toRequest({ ...chosen, cardStats: ['voice', 'steam_recent'] }, chosen).card_stats).toEqual(['voice', 'steam_recent'])
+    expect(editsSince(chosen, { ...chosen, cardStats: ['voice'] })).toEqual({})
+    expect(editsSince(chosen, { ...chosen, cardStats: [] })).toEqual({ cardStats: [] })
+  })
+
+  it('previewStats shows the draft\'s choice on the card (#727)', () => {
+    const d = { ...draftFrom(profile), cardStats: ['voice'] }
+    expect(previewStats(profile.stats, d)?.shown).toEqual(['voice'])
+    expect(previewStats(profile.stats, draftFrom(profile))).toBe(profile.stats)
+    expect(previewStats(null, d)).toBeNull()
   })
 
   it('empty pronouns and bio become null', () => {
