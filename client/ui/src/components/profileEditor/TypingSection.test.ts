@@ -81,4 +81,19 @@ describe('typing text section', () => {
     type(q<HTMLInputElement>('input[aria-label="Typing text"]'), 'scheming')
     expect(q('[data-typing]').textContent).toContain('is scheming')
   })
+  it('blank_display_name_falls_back_to_username', () => {
+    show()
+    st.draft.displayName = '  '
+    flushSync()
+    expect(q('.typing-who').textContent).toBe('jo')
+  })
+  it('problem_clears_once_valid', () => {
+    show()
+    const input = q<HTMLInputElement>('input[aria-label="Typing text"]')
+    type(input, 'x'.repeat(TYPING_TEXT_MAX + 1))
+    expect(document.querySelector('[role="alert"]')).toBeTruthy()
+    type(input, 'ok')
+    expect(document.querySelector('[role="alert"]')).toBeNull()
+    expect(input.getAttribute('aria-invalid')).toBe('false')
+  })
 })
