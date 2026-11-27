@@ -14,6 +14,7 @@
   import Loading from '../Loading.svelte'
   import CardEditor from './CardEditor.svelte'
   import LooksTiles from './LooksTiles.svelte'
+  import ShowUp from './ShowUp.svelte'
   import AppearanceSettings from '../AppearanceSettings.svelte'
   import EditorMenu from './EditorMenu.svelte'
   import { modal } from '../../lib/actions'
@@ -118,6 +119,7 @@
                The other sections show only the card until their own columns arrive. -->
           <div class="centre">
             <CardEditor state={st} />
+            {#if section === 'looks'}<ShowUp state={st} />{/if}
           </div>
           {#if section === 'looks'}
             <aside class="side" aria-label="Looks"><LooksTiles state={st} /></aside>
@@ -149,7 +151,7 @@
   .body { flex: 1; min-height: 0; display: flex; }
   .stage { flex: 1; min-width: 0; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 24px; }
   .stage[data-section='looks'] { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 24px; }
-  .centre { display: flex; justify-content: center; min-width: 0; }
+  .centre { display: flex; flex-direction: column; align-items: center; gap: 24px; min-width: 0; }
   .stage[data-section='looks'] .centre { flex: 1 1 340px; }
   /* the tile column keeps its size and drops under the card when the window is too narrow for both */
   .side { flex: 1 1 260px; max-width: 360px; min-width: 0; }
