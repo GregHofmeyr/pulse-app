@@ -35,12 +35,25 @@ describe('Name CSS', () => {
     }
   })
 
+  it('inline_names_dont_grow_the_line', () => {
+    expect(body(css, '.name.flow')).toMatch(/margin-block:\s*calc\(-1 \* var\(--name-pad, \.14em\)\)/)
+    expect(readFileSync(resolve(__dirname, 'WheelLine.svelte'), 'utf8')).toMatch(/<Name [^>]*\bflow\b/)
+  })
+
+  it('a font keeps its own scale', () => {
+    const u = { id: 'u', style: { font: 'press-start-2p', colors: [], effect: null } } as unknown as User
+    const out = nameCss(resolveNameStyle(u, { roleColor: null, showStyles: true }), true)
+    expect(out).toContain('--name-scale: 0.68')
+    expect(out).not.toContain('--name-scale: 1')
+  })
+
   it('rows_holding_names_dont_pin_height', () => {
     const rows: [string, string[]][] = [
       ['ChannelList.svelte', ['.row', '.occupant']],
       ['MemberList.svelte', ['.row']],
       ['ConversationList.svelte', ['.row', '.name']],
       ['UserTile.svelte', ['.name', '.text']],
+      ['CallBand.svelte', ['.people', '.who']],
     ]
     for (const [file, sels] of rows) {
       const c = style(file)

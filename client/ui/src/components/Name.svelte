@@ -9,7 +9,7 @@
 
   import type { User } from '../lib/protocol/User'
 
-  let { userId, serverId, text, interactive = true, size = 'normal', user, surface = 'chat', bg, play = false }: {
+  let { userId, serverId, text, interactive = true, size = 'normal', user, surface = 'chat', bg, play = false, flow = false }: {
     userId: string
     serverId: string | null
     text?: string
@@ -24,6 +24,8 @@
     /** Its name effect plays (#468): in the profile editor and while a full profile is open. Elsewhere it is still,
      *  and plays only while the name is hovered. */
     play?: boolean
+    /** The name sits inside running text, not a row of its own: its padding gives the glyphs paint room without growing the line (#727). */
+    flow?: boolean
   } = $props()
 
   const resolved = $derived(resolveNameStyle(user ?? userOf(app.state, userId), { roleColor: roleColorFor(app.state, serverId, userId), showStyles: appearance.showNameStyles, ...nameOpts(surface), ...(bg ? { bg } : {}) }))
@@ -42,9 +44,9 @@
 {/snippet}
 
 {#if interactive}
-  <button type="button" class="name" class:card={size === 'card'} class:fx-play={play} data-fx={fx} style={css} onclick={(e) => openCard(userId, serverId, e.currentTarget)}>{@render content()}</button>
+  <button type="button" class="name" class:card={size === 'card'} class:flow class:fx-play={play} data-fx={fx} style={css} onclick={(e) => openCard(userId, serverId, e.currentTarget)}>{@render content()}</button>
 {:else}
-  <span class="name" class:card={size === 'card'} class:fx-play={play} data-fx={fx} style={css}>{@render content()}</span>
+  <span class="name" class:card={size === 'card'} class:flow class:fx-play={play} data-fx={fx} style={css}>{@render content()}</span>
 {/if}
 
 <style>
@@ -55,6 +57,7 @@
        are clipped a little further out than the box. Rows that hold a name grow by it (min-height), a few px. */
     padding-block: var(--name-pad, .14em); overflow: clip; overflow-clip-margin: .35em; text-overflow: ellipsis; }
   /* line height in the card's own em: still the parent's 1.4 */
+  .name.flow { margin-block: calc(-1 * var(--name-pad, .14em)); }
   .name.card { font-size: calc(1.15em * var(--name-scale, 1)); line-height: calc(1.4em / (1.15 * var(--name-scale, 1))); }
   button.name { background: none; border: 0; padding: 0; margin: 0; font-family: inherit; font-weight: inherit; color: inherit; cursor: pointer; text-align: left; }
   button.name:hover { text-decoration: underline; }

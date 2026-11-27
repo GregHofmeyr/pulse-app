@@ -115,7 +115,7 @@
   const saveStyle = $derived(saving && saveBtn ? popoverStyle(saveBtn.getBoundingClientRect(), { width: 280, height: 170 }, { width: window.innerWidth, height: window.innerHeight }) : '')
 </script>
 
-{#snippet who()}{#if spin.spinner_id}<Name userId={spin.spinner_id} {serverId} />{:else}Someone{/if}{/snippet}
+{#snippet who()}{#if spin.spinner_id}<Name userId={spin.spinner_id} {serverId} flow />{:else}Someone{/if}{/snippet}
 
 {#snippet acts()}
   <span class="acts">
