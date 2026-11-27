@@ -164,9 +164,17 @@ describe('rankPlaces', () => {
   })
   it('stays instant over a few hundred places', () => {
     const many: Place[] = Array.from({ length: 600 }, (_, i) => ({ key: `c:${i}`, kind: 'text', id: `${i}`, name: `channel-${i}-chat`, serverId: 's', context: 'S', keys: [`channel-${i}-chat`] }))
-    const t0 = performance.now()
-    for (let i = 0; i < 10; i++) rankPlaces(many, 'ch 4')
-    expect((performance.now() - t0) / 10).toBeLessThan(16)
+    // Under a full parallel suite the CPU is shared, and a mean of a few runs can pass a frame on a busy machine alone.
+    // Load only ever adds time, so the fastest of several warmed-up runs is the ranking's own cost (well under 1 ms
+    // here): that has to fit in a frame. A real slowdown (an accidental n² pass) still fails it.
+    rankPlaces(many, 'ch 4') // warm up the JIT
+    let fastest = Infinity
+    for (let i = 0; i < 15; i++) {
+      const t0 = performance.now()
+      rankPlaces(many, 'ch 4')
+      fastest = Math.min(fastest, performance.now() - t0)
+    }
+    expect(fastest).toBeLessThan(16)
   })
 })
 
