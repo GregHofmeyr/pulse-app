@@ -157,6 +157,26 @@ mod tests {
         }
     }
 
+    /// The other strftime shapes the server emits (f1/plans text, ICS and S3 signing stamps), pinned so a jiff
+    /// upgrade that changes padding, names or `%Z` shows up here rather than in user-facing text or signatures.
+    #[test]
+    fn display_formats_are_stable() {
+        let t: Timestamp = "2026-03-05T07:08:09.987Z".parse().unwrap();
+        assert_eq!(
+            t.strftime("%a %-d %b %Y, %H:%M UTC").to_string(),
+            "Thu 5 Mar 2026, 07:08 UTC"
+        );
+        assert_eq!(t.strftime("%Y%m%dT%H%M%SZ").to_string(), "20260305T070809Z");
+        assert_eq!(t.strftime("%Y-%m-%dT%H:00").to_string(), "2026-03-05T07:00");
+        let signed = jiff::civil::DateTime::strptime("%Y%m%dT%H%M%SZ", "20260305T070809Z").unwrap();
+        assert_eq!(
+            Offset::UTC.to_timestamp(signed).unwrap().as_second(),
+            t.as_second()
+        );
+        let late = t - SignedDuration::from_hours(1);
+        assert_eq!(t - late, SignedDuration::from_hours(1));
+    }
+
     #[test]
     fn days_weeks_and_dates() {
         assert_eq!(days(2), SignedDuration::from_hours(48));
