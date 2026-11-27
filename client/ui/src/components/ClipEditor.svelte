@@ -41,6 +41,7 @@
   let sending = $state(false)
   let sendError = $state('')
   let triedPrepared = false
+  let retryPrepare = false // the sources came back while a preview was preparing: if it fails, try once more
   let destroyed = false
   let frameCb: number | null = null
 
@@ -64,25 +65,44 @@
     percent = 0
     problem = ''
     src = null
+    let failed = false
     try {
       const path = await api.preparePreview(source.id)
       const url = await playable(path)
       if (!destroyed) src = url
     } catch (e) {
+      failed = true
       if (!destroyed) problem = errorText(e) || UNREADABLE
     } finally {
       if (!destroyed) preparing = false
+      const again = failed && retryPrepare && !destroyed
+      retryPrepare = false
+      if (again) void prepare()
     }
+  }
+
+  function loadFilmstrip() {
+    api.clipFilmstrip(source.id).then((f) => { if (!destroyed) film = f ?? null }, () => {}) // the timeline works without it
   }
 
   onMount(() => {
     if (source.preview === 'direct') void playable(source.path).then((url) => { if (!destroyed && !triedPrepared) src = url })
     else void prepare()
-    api.clipFilmstrip(source.id).then((f) => { if (!destroyed) film = f ?? null }, () => {}) // the timeline works without it
+    loadFilmstrip()
     const off = listen<{ source: string; percent: number }>('clip://preview', (e) => {
       if (e.payload.source === source.id) percent = Math.round(e.payload.percent)
     })
-    return () => void off.then((f) => f())
+    // #545: an update's install failed after Pulse wound down, which cut short a preview or filmstrip in flight
+    const back = listen('clip://sources-back', () => {
+      if (destroyed) return
+      if (preparing) retryPrepare = true
+      else if (problem) void prepare()
+      if (!film) loadFilmstrip()
+    })
+    return () => {
+      void off.then((f) => f())
+      void back.then((f) => f())
+    }
   })
   onDestroy(() => {
     destroyed = true

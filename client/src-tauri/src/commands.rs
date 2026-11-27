@@ -379,18 +379,14 @@ impl Core {
         Some(found)
     }
 
-    /// Quitting: stop the clip jobs and close every editor source, then wait until their ffmpeg
-    /// runs have been dropped (and so killed). The runtime's tasks are never dropped at exit, and
-    /// neither OS kills a child with its parent. Files stay for next time (a paused job comes back
-    /// failed; stale source folders are cleared at the next sign-in).
+    /// Quitting (or an update's installer about to take over): stop the clip jobs and park every
+    /// editor source (closed to work, kept for [`Self::resume_clips`]), then wait until their
+    /// ffmpeg runs have been dropped (and so killed). The runtime's tasks are never dropped at
+    /// exit, and neither OS kills a child with its parent. Files stay for next time (a paused job
+    /// comes back failed; stale source folders are cleared at the next sign-in).
     pub async fn stop_clips(&self) {
         let jobs = self.clip_jobs.send_replace(None);
-        let work: Vec<_> = self
-            .clip_sources
-            .drain()
-            .into_iter()
-            .map(|(_, w)| w)
-            .collect();
+        let work = self.clip_sources.park();
         let jobs_done = async {
             if let Some(j) = jobs {
                 j.shutdown().await;
@@ -405,11 +401,16 @@ impl Core {
         tokio::join!(jobs_done, editor_done);
     }
 
-    /// An update's install failed after winding down (#460), which ran [`Self::stop_clips`]: load
-    /// the signed-in session's clip jobs again, as its Ready did (a job that was running comes
-    /// back failed, as after a restart). Nothing when they're still there or nobody is signed in.
+    /// An update's install failed after winding down (#460), which ran [`Self::stop_clips`]: the
+    /// editor's parked sources open again (#545), and the signed-in session's clip jobs load
+    /// again, as its Ready did (a job that was running comes back failed, as after a restart).
+    /// No jobs when they're still there or nobody is signed in.
     #[cfg_attr(not(windows), allow(dead_code))]
     pub(crate) async fn resume_clips(&self, app: &AppHandle) {
+        // the editor asks again for a preview or filmstrip that winding down cut short
+        if self.clip_sources.unpark() {
+            let _ = app.emit("clip://sources-back", ());
+        }
         let Ok((_, token)) = self.current() else {
             return;
         };
@@ -3759,6 +3760,9 @@ pub async fn prepare_preview(
         .lock_for(&source)
         .ok_or_else(|| editor::NO_PREVIEW.to_owned())?;
     let _one_at_a_time = work.lock().await;
+    if !core.clip_sources.is_current(&source, &work) {
+        return Err(editor::NO_PREVIEW.to_owned());
+    }
     let entry = core
         .clip_sources
         .get(&source)
@@ -3778,11 +3782,15 @@ pub async fn prepare_preview(
         );
     })
     .await;
-    if core.clip_sources.get(&source).is_none() {
-        // closed or signed out while (or just as) ffmpeg ran: nothing owns these files now, and
-        // ffmpeg has let go of them
-        editor::remove_dir_later(entry.dir);
-        return Err(editor::NO_PREVIEW.to_owned());
+    // closed or signed out while (or just as) ffmpeg ran: nothing owns these files now, and
+    // ffmpeg has let go of them (a parked source still owns its folder)
+    match core.clip_sources.after_run(&source) {
+        editor::AfterRun::Open => {}
+        editor::AfterRun::Parked => return Err(editor::NO_PREVIEW.to_owned()),
+        editor::AfterRun::Closed => {
+            editor::remove_dir_later(entry.dir);
+            return Err(editor::NO_PREVIEW.to_owned());
+        }
     }
     let out = out?;
     allow_asset(&app, &out)?;
@@ -3804,6 +3812,9 @@ pub async fn clip_filmstrip(
         .lock_for(&source)
         .ok_or_else(|| editor::NO_FILMSTRIP.to_owned())?;
     let _one_at_a_time = work.lock().await;
+    if !core.clip_sources.is_current(&source, &work) {
+        return Err(editor::NO_FILMSTRIP.to_owned());
+    }
     let entry = core
         .clip_sources
         .get(&source)
@@ -3813,10 +3824,15 @@ pub async fn clip_filmstrip(
         None => {
             let tools = ffmpeg_paths(&app)?;
             let out = editor::make_filmstrip(&tools.ffmpeg, &entry, work.closed()).await;
-            if core.clip_sources.get(&source).is_none() {
-                // closed while (or just as) ffmpeg ran: nothing owns these files now
-                editor::remove_dir_later(entry.dir);
-                return Err(editor::NO_FILMSTRIP.to_owned());
+            // closed while (or just as) ffmpeg ran: nothing owns these files now (a parked
+            // source still owns its folder)
+            match core.clip_sources.after_run(&source) {
+                editor::AfterRun::Open => {}
+                editor::AfterRun::Parked => return Err(editor::NO_FILMSTRIP.to_owned()),
+                editor::AfterRun::Closed => {
+                    editor::remove_dir_later(entry.dir);
+                    return Err(editor::NO_FILMSTRIP.to_owned());
+                }
             }
             let out = out?;
             allow_asset(&app, &out)?;
@@ -4537,7 +4553,57 @@ mod tests {
             "returned only after the preview let go"
         );
         assert!(core.clip_jobs.borrow().is_none());
-        assert!(core.clip_sources.ids().is_empty());
+        assert!(core.clip_sources.lock_for("a").is_none() && core.clip_sources.get("a").is_none());
+        assert!(
+            core.clip_sources.ids().contains("a"),
+            "parked: its folder isn't stale"
+        );
+    }
+
+    /// #545: an update's install that fails after winding down gives the editor its open sources
+    /// back. While wound down they take no new work (no ffmpeg may run while the installer
+    /// replaces it); afterwards previews and the filmstrip work again without reopening.
+    #[tokio::test]
+    async fn failed_install_gives_the_editor_its_sources_back() {
+        let root = tempfile::tempdir().unwrap();
+        let (core, _) = signed_in(
+            root.path(),
+            "https://pulse.example.com",
+            Some(UserId::new()),
+        );
+        let preview = root.path().join("sources/a/preview.mp4");
+        core.clip_sources.insert(
+            "a".into(),
+            source_entry(
+                root.path(),
+                "a",
+                std::path::Path::new("/v/a.mkv"),
+                Some(&preview),
+            ),
+        );
+        let before = core.clip_sources.lock_for("a").unwrap();
+        core.stop_clips().await;
+        assert!(
+            core.clip_sources.lock_for("a").is_none(),
+            "no new work while wound down"
+        );
+        assert!(core.clip_sources.get("a").is_none());
+
+        // what `resume_clips` does first (the rest, loading the jobs, needs an app)
+        assert!(core.clip_sources.unpark());
+        let back = core.clip_sources.get("a").expect("the source is back");
+        assert_eq!(back.preview.as_deref(), Some(preview.as_path()));
+        let work = core.clip_sources.lock_for("a").unwrap();
+        assert!(
+            !Arc::ptr_eq(&before, &work),
+            "fresh work, not the stopped one"
+        );
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(50), work.closed())
+                .await
+                .is_err(),
+            "its new work isn't closed"
+        );
     }
 
     /// An editor source on `path`, with a preview at `preview`.

@@ -203,17 +203,18 @@
   .ring-box[data-ring='on'] .vf { animation: ring-snap .18s ease-out; }
   @keyframes ring-snap { from { transform: scale(1.06); opacity: 0; } to { transform: scale(1); opacity: 1; } }
 
-  /* Liquid (§4.9): three soft blobs behind the avatar, swelling with the level and drifting. */
-  .liquid { inset: calc(var(--d) * -.05); opacity: .85; scale: calc(.88 + .12 * var(--lvl, .5)); transition: scale .1s linear; }
+  /* Liquid (§4.9): three blobs behind the avatar, swelling with the level and drifting. Solid to 80% and a wider swing
+     than the first cut, which was mostly hidden behind the avatar; the drift is smaller so it still fits the box. */
+  .liquid { inset: calc(var(--d) * -.1); opacity: .85; scale: calc(.82 + .18 * var(--lvl, .5)); transition: scale .1s linear; }
   .ring-box[data-ring='still'] .liquid { scale: 1; }
   .ring-box[data-ring='off'] .layer.liquid { transition: opacity .2s, scale .1s linear; }
-  .blob { position: absolute; inset: 0; border-radius: 50%; background: radial-gradient(circle closest-side, var(--speak) 55%, transparent 100%); }
+  .blob { position: absolute; inset: 0; border-radius: 50%; background: radial-gradient(circle closest-side, var(--speak) 80%, transparent 100%); }
   .ring-box[data-ring='on'] .b1 { animation: ring-b1 1.3s ease-in-out infinite; }
   .ring-box[data-ring='on'] .b2 { animation: ring-b2 1.7s ease-in-out infinite; }
   .ring-box[data-ring='on'] .b3 { animation: ring-b3 1.1s ease-in-out infinite; }
-  @keyframes ring-b1 { 0%, 100% { transform: none; } 50% { transform: translate(calc(var(--d) * .0625), calc(var(--d) * -.052)) scale(1.04); } }
-  @keyframes ring-b2 { 0%, 100% { transform: none; } 50% { transform: translate(calc(var(--d) * -.0625), calc(var(--d) * .042)) scale(1.05); } }
-  @keyframes ring-b3 { 0%, 100% { transform: none; } 50% { transform: translate(calc(var(--d) * .021), calc(var(--d) * .073)) scale(1.03); } }
+  @keyframes ring-b1 { 0%, 100% { transform: none; } 50% { transform: translate(calc(var(--d) * .04), calc(var(--d) * -.033)) scale(1.03); } }
+  @keyframes ring-b2 { 0%, 100% { transform: none; } 50% { transform: translate(calc(var(--d) * -.04), calc(var(--d) * .027)) scale(1.03); } }
+  @keyframes ring-b3 { 0%, 100% { transform: none; } 50% { transform: translate(calc(var(--d) * .013), calc(var(--d) * .04)) scale(1.02); } }
 
   /* Wave of dots (§4.10): a wave travels round; taller with the level (and faster: lib/ringLevels' playback rate). */
   .dots { inset: calc(var(--d) * -.16); }
