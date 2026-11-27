@@ -289,6 +289,12 @@ town's weather (#451). Change it and `just deploy`; places already looked up kee
                          DELETE FROM _sqlx_migrations WHERE version = 39; COMMIT;"
   ```
   (the example undoes `0039`; roll back newest first, one migration at a time).
+  - `0086_revoke_departed_makers_invites.sql` says "Rollback = nothing to undo": it's a one-off data fix, so there's
+    no schema to undo, but its row still blocks an older image. Delete row 86 with the server stopped (the invites it
+    revoked stay revoked; they were already refused on accept), or restore the deploy's backup.
+  - `0085_speaking_ring.sql` (no note) adds two nullable columns: `ALTER TABLE users DROP COLUMN ring_color;
+    ALTER TABLE users DROP COLUMN ring_style; DELETE FROM _sqlx_migrations WHERE version = 85;` in one transaction,
+    server stopped, after 86.
 - **Rehearse new migrations before deploying them.** Fetch a fresh backup and decrypt it on your machine, apply the
   new `server/migrations/*.sql` files to the copy with foreign keys off (as `server/src/db.rs` runs them; table
   rebuilds have a guard that fails with them on), check it, then delete the copy:
