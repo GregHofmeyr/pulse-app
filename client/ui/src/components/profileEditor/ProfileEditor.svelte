@@ -13,6 +13,7 @@
   import Icon from '../Icon.svelte'
   import Loading from '../Loading.svelte'
   import CardEditor from './CardEditor.svelte'
+  import LooksTiles from './LooksTiles.svelte'
   import AppearanceSettings from '../AppearanceSettings.svelte'
   import EditorMenu from './EditorMenu.svelte'
   import { modal } from '../../lib/actions'
@@ -113,11 +114,14 @@
         {:else if !st || !me || !pu || !pc}
           <Loading />
         {:else}
-          <!-- The inline-editing card; Task 4 adds "Where you show up" and the tile column.
-               Card stats shows only the card until Task 12 adds its right column. -->
+          <!-- The inline-editing card; Looks adds the picture tiles as its right column.
+               The other sections show only the card until their own columns arrive. -->
           <div class="centre">
             <CardEditor state={st} />
           </div>
+          {#if section === 'looks'}
+            <aside class="side" aria-label="Looks"><LooksTiles state={st} /></aside>
+          {/if}
         {/if}
       </div>
     </div>
@@ -144,7 +148,11 @@
   .confirm span { margin-right: auto; }
   .body { flex: 1; min-height: 0; display: flex; }
   .stage { flex: 1; min-width: 0; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 24px; }
+  .stage[data-section='looks'] { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 24px; }
   .centre { display: flex; justify-content: center; min-width: 0; }
+  .stage[data-section='looks'] .centre { flex: 1 1 340px; }
+  /* the tile column keeps its size and drops under the card when the window is too narrow for both */
+  .side { flex: 1 1 260px; max-width: 360px; min-width: 0; }
   .centre > :global(*) { max-width: 100%; }
   .appearance { min-width: 0; max-width: 720px; margin: 0 auto; }
   footer { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px; padding: 12px 20px; border-top: 1px solid var(--line-soft); flex-shrink: 0; }
