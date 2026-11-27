@@ -1,5 +1,5 @@
 <script lang="ts" module>
-  export type Section = 'profile' | 'appearance' | 'voice' | 'keybinds' | 'chat' | 'wheels' | 'notifications' | 'privacy' | 'sports' | 'deleted' | 'advanced' | 'about'
+  export type Section = 'profile' | 'voice' | 'keybinds' | 'chat' | 'wheels' | 'notifications' | 'privacy' | 'sports' | 'deleted' | 'advanced' | 'about'
 </script>
 
 <script lang="ts">
@@ -11,7 +11,7 @@
   import ChatSettings from './ChatSettings.svelte'
   import NotificationSettings from './NotificationSettings.svelte'
   import AdvancedSettings from './AdvancedSettings.svelte'
-  import AppearanceSettings from './AppearanceSettings.svelte'
+  import { openProfileEditor } from '../lib/profileEditor.svelte'
   import ProfileSettings from './ProfileSettings.svelte'
   import PrivacySettings from './PrivacySettings.svelte'
   import WheelSettings from './WheelSettings.svelte'
@@ -29,7 +29,6 @@
   let current = $state<Section>(untrack(() => section))
   const sections: { key: Section; label: string }[] = [
     { key: 'profile', label: 'Profile' },
-    { key: 'appearance', label: 'Appearance' },
     { key: 'voice', label: 'Voice & Audio' },
     { key: 'keybinds', label: 'Keybinds' },
     { key: 'chat', label: 'Chat' },
@@ -79,6 +78,8 @@
   }
   const close = () => void leave({ via: 'close', then: onClose })
   function go(s: Section) {
+    // Profile is the editor's now (#727): Settings closes, then the editor opens on Looks
+    if (s === 'profile' && current !== 'profile') return void leave({ via: 'close', then: () => { onClose(); openProfileEditor() } })
     if (s !== current) void leave({ via: s, then: () => (current = s) })
     else if (waiting) waiting = { via: s, then: () => {} }
   }
@@ -119,7 +120,6 @@
       </div>
     {/if}
     {#if current === 'profile'}<ProfileSettings bind:dirty={profileDirty} bind:settling={profileSettling} />
-    {:else if current === 'appearance'}<AppearanceSettings />
     {:else if current === 'voice'}<VoiceSettings />{:else if current === 'keybinds'}<KeybindSettings />{:else if current === 'chat'}<ChatSettings />{:else if current === 'wheels'}<WheelSettings />{:else if current === 'notifications'}<NotificationSettings />{:else if current === 'privacy'}<PrivacySettings />{:else if current === 'sports'}<SportsSettings />{:else if current === 'deleted'}<DeletedServers />{:else if current === 'about'}<AboutSettings />{:else}<AdvancedSettings />{/if}
   </div>
 </div>

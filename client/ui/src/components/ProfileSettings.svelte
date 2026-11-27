@@ -13,21 +13,20 @@
   import Segmented from './Segmented.svelte'
   import BadgeIcon from './BadgeIcon.svelte'
   import { app, loadProfile } from '../lib/store.svelte'
-  import { setProfile } from '../lib/state'
-  import { api, errorText } from '../lib/tauri'
+  import { errorText } from '../lib/tauri'
+  import { ProfileEditorState } from '../lib/profileEditor.svelte'
   import { TYPING_SUGGESTIONS, typingTextProblem } from '../lib/typingLine'
-  import { BIO_LINE_BREAKS_MAX, BIO_MAX, charCount, draftFrom, editsSince, isDirty, isZalgo, nameProblem, normalBio, previewCard, previewUser, PRONOUNS_MAX, toRequest, type Draft } from '../lib/profileDraft'
+  import { BIO_LINE_BREAKS_MAX, BIO_MAX, charCount, isZalgo, nameProblem, normalBio, previewCard, previewUser, PRONOUNS_MAX } from '../lib/profileDraft'
   import { clickOutside, radioKeys } from '../lib/actions'
   import { cardVars, presetFor, THEME_PRESETS } from '../lib/cardTheme'
-  import { SHOWCASE_MAX, badgeStore, defaultShowcase, fallbackName } from '../lib/badges.svelte'
+  import { SHOWCASE_MAX, badgeStore, fallbackName } from '../lib/badges.svelte'
   import { railDrag } from '../lib/railDrag'
   import type { Badge } from '../lib/protocol/Badge'
   import { NAME_FONTS } from '../lib/nameFonts'
   import { NAME_EFFECTS } from '../lib/nameEffects'
   import { lightenForName, NAME_GRADIENTS, NAME_SOLIDS, type NamePreset } from '../lib/nameStyle'
   import type { CropRect } from '../lib/crop'
-  import type { Profile } from '../lib/protocol/Profile'
-  import { perFrame } from '../lib/perFrame'
+    import { perFrame } from '../lib/perFrame'
   import Loading from './Loading.svelte'
   import SpeakingRing from './SpeakingRing.svelte'
   import { motion, observe } from '../lib/animate.svelte'
@@ -54,33 +53,29 @@
   const ACCEPT = 'image/png,image/jpeg,image/gif,image/webp'
   const SAVED_MS = 2000
 
-  let profile = $state.raw<Profile | null>(null)
-  let saved = $state.raw<Draft | null>(null)
-  let draft = $state<Draft | null>(null)
+  // The working copy is the editor's shared state (lib/profileEditor.svelte.ts); this pane is one view of it.
+  let st = $state.raw<ProfileEditorState | null>(null)
+  const profile = $derived(st?.profile ?? null)
+  const draft = $derived(st?.draft ?? null)
   let loadError = $state<string | null>(null)
   // "Custom" picked while the colours still match a preset: show the pickers anyway.
   let customTheme = $state(false)
   let customColour = $state(false)
   let cropping = $state<{ file: File; kind: Kind } | null>(null)
-  let uploading = $state<Record<Kind, boolean>>({ avatar: false, banner: false })
-  let uploadError = $state<Record<Kind, string | null>>({ avatar: null, banner: null })
-  let saving = $state(false)
-  let saveError = $state<string | null>(null)
+  const uploading = $derived(st?.uploading ?? { avatar: false, banner: false })
+  const uploadError = $derived(st?.uploadErrors ?? { avatar: null, banner: null })
+  const saving = $derived(st?.saving ?? false)
+  const saveError = $derived(st?.error || null)
   let justSaved = $state(false)
   let savedTimer: ReturnType<typeof setTimeout> | undefined
   let bioBox = $state<EmojiBox>()
   let gone = false
-  /** Bumped per kind by each upload, Remove and Reset: an upload that lands after a newer one of these is dropped. */
-  const gen: Record<Kind, number> = { avatar: 0, banner: 0 }
 
   // The card's badges (#467's Badges tab): up to SHOWCASE_MAX held badges in order, or `auto` (the rarest five, which
   // follows later unlocks). Saved with the rest.
-  let showcase = $state<string[]>([])
-  let showcaseAuto = $state(true)
-  let savedShowcase = $state.raw<{ keys: string[]; auto: boolean }>({ keys: [], auto: true })
+  const showcaseAuto = $derived(st?.showcase === 'auto')
   const held = $derived(new Map<string, Badge>((profile?.badges ?? []).map((b) => [b.key, b])))
-  const shownBadges = $derived(showcaseAuto ? defaultShowcase(profile?.badges ?? []) : showcase)
-  const showcaseChanged = $derived(showcaseAuto !== savedShowcase.auto || (!showcaseAuto && showcase.join() !== savedShowcase.keys.join()))
+  const shownBadges = $derived(st?.shown ?? [])
   const wantsCatalogue = $derived(held.size > 0)
   $effect(() => {
     if (wantsCatalogue) untrack(() => void badgeStore.load())
@@ -89,9 +84,8 @@
   const me = $derived(app.state.me)
   const pu = $derived(me && draft ? previewUser(me, draft) : null)
   const pc = $derived(draft ? previewCard(draft) : null)
-  const profileChanged = $derived(!!draft && !!saved && isDirty(draft, saved))
-  const changed = $derived(profileChanged || showcaseChanged)
-  const busy = $derived(uploading.avatar || uploading.banner)
+  const changed = $derived(st?.dirty ?? false)
+  const busy = $derived(st?.busy ?? false)
   $effect(() => {
     dirty = changed || busy
   })
@@ -121,7 +115,7 @@
   const typingError = $derived(draft ? typingTextProblem(draft.typingText) : null)
   /** Your name as the draft has it, for "<name> is …" (#652). */
   const typingName = $derived(draft && me ? draft.displayName.trim() || me.username : '')
-  const invalid = $derived(bioOver || bioBreaksOver || pronounsOver || !!nameError || !!typingError)
+  const invalid = $derived(st?.invalid ?? false)
   // Accounts from before display names have their username as one: nudge once (#47), until dismissed.
   const NUDGE_KEY = (id: string) => `pulse.nameNudgeDismissed.${id}`
   let nudgeGone = $state(false)
@@ -194,23 +188,11 @@
     return () => ro.disconnect()
   }
 
-  function take(p: Profile) {
-    profile = p
-    saved = draftFrom(p)
-    draft = draftFrom(p)
-    customTheme = false
-    customColour = false
-    const mine = new Set(p.badges.map((b) => b.key))
-    savedShowcase = { keys: (p.showcase ?? []).filter((k) => mine.has(k)), auto: !p.showcase_chosen }
-    showcase = [...savedShowcase.keys]
-    showcaseAuto = savedShowcase.auto
-  }
-
   function load(id: string) {
     loadError = null
     loadProfile(id).then(
-      (p) => !gone && !profile && p.user.id === app.state.me?.id && take(p),
-      (e) => !gone && !profile && (loadError = errorText(e)),
+      (p) => !gone && !st && p.user.id === app.state.me?.id && (st = new ProfileEditorState(p)),
+      (e) => !gone && !st && (loadError = errorText(e)),
     )
   }
   // Loads once you are known (you may not be yet when the editor opens).
@@ -231,6 +213,7 @@
   const allPickers = [pickers.top, pickers.bottom, ...pickers.colours]
   onDestroy(() => {
     gone = true
+    st?.dispose()
     clearTimeout(savedTimer)
     for (const p of allPickers) p.cancel()
   })
@@ -242,40 +225,15 @@
   }
 
   /** Upload the cropped picture and stage it. A refusal leaves the draft as it was. */
-  async function upload(crop: CropRect) {
+  function upload(crop: CropRect) {
     const pick = cropping
     cropping = null
-    if (!pick) return
-    const { file, kind } = pick
-    const g = ++gen[kind]
-    uploadError[kind] = null
-    uploading[kind] = true
-    try {
-      const bytes = new Uint8Array(await file.arrayBuffer())
-      const info = await (kind === 'avatar' ? api.uploadAvatar(bytes, crop) : api.uploadBanner(bytes, crop))
-      if (!draft || gone || gen[kind] !== g) return // Reset or Remove since: dropped
-      if (kind === 'avatar') {
-        draft.avatarHash = info.hash
-        draft.avatarStill = info.still_hash
-      } else {
-        draft.bannerHash = info.hash
-        draft.bannerStill = info.still_hash
-      }
-    } catch (e) {
-      if (!gone && gen[kind] === g) uploadError[kind] = errorText(e)
-    } finally {
-      if (!gone && gen[kind] === g) uploading[kind] = false
-    }
+    if (pick && st) void st.upload(pick.kind, pick.file, crop)
   }
 
   /** Clears the picture, and drops an upload of it still in flight. */
   function remove(kind: Kind) {
-    if (!draft) return
-    gen[kind]++
-    uploading[kind] = false
-    uploadError[kind] = null
-    if (kind === 'avatar') draft.avatarHash = draft.avatarStill = null
-    else draft.bannerHash = draft.bannerStill = null
+    st?.remove(kind)
   }
 
   function setTheme(top: string, bottom: string) {
@@ -337,21 +295,18 @@
   }
   function ownShowcase(): string[] {
     // the first edit to the rarest five starts from them
-    if (showcaseAuto) {
-      showcaseAuto = false
-      showcase = defaultShowcase(profile?.badges ?? [])
-    }
-    return showcase
+    if (st!.showcase === 'auto') st!.showcase = st!.shown
+    return st!.showcase as string[]
   }
   function moveBadge(key: string, to: number) {
     const list = ownShowcase().filter((k) => k !== key)
     list.splice(Math.max(0, Math.min(to, list.length)), 0, key)
-    showcase = list
+    st!.showcase = list
   }
   function toggleBadge(key: string) {
     const list = ownShowcase()
-    if (list.includes(key)) showcase = list.filter((k) => k !== key)
-    else if (list.length < SHOWCASE_MAX) showcase = [...list, key]
+    if (list.includes(key)) st!.showcase = list.filter((k) => k !== key)
+    else if (list.length < SHOWCASE_MAX) st!.showcase = [...list, key]
   }
   function badgeKeys(e: KeyboardEvent, key: string) {
     // Alt+← / Alt+→ move the focused badge (the keyboard's drag)
@@ -368,61 +323,33 @@
   }
 
   function reset() {
-    if (!profile) return
+    if (!st) return
     for (const p of allPickers) p.cancel()
-    gen.avatar++
-    gen.banner++
-    uploading = { avatar: false, banner: false }
-    take(profile)
-    uploadError = { avatar: null, banner: null }
-    saveError = null
-    showBio(saved!.bio)
+    customTheme = false
+    customColour = false
+    st.reset()
+    showBio(st.saved.bio)
   }
 
   function save() {
     for (const p of allPickers) p.flush()
-    if (!draft || saving || !changed || invalid || busy) return
-    const p = send($state.snapshot(draft), profileChanged, showcaseChanged ? (showcaseAuto ? [] : [...showcase]) : null)
+    if (!st || st.saving || !changed || invalid || busy) return
+    const was = st
+    const p = st.save().then(() => {
+      if (gone || !was.lastSave || was.saving || was.error) return
+      // the preview's custom pickers stay open while their colours were edited meanwhile
+      const kept = was.lastSave.kept
+      customTheme = customTheme && ('themeTop' in kept || 'themeBottom' in kept)
+      customColour = customColour && 'colors' in kept
+      if (!('bio' in kept)) showBio(was.profile.card.bio ?? '')
+      justSaved = true
+      clearTimeout(savedTimer)
+      savedTimer = setTimeout(() => (justSaved = false), SAVED_MS)
+    })
     settling = p
     void p.finally(() => {
       if (!gone && settling === p) settling = null
     })
-  }
-
-  /** Sends `sent` (when `withProfile`) and the card's badges (`keys`, `[]` for the rarest five; null when unchanged);
-   *  edits made while it is on its way are kept on top of the answer. */
-  async function send(sent: Draft, withProfile: boolean, keys: string[] | null) {
-    saving = true
-    saveError = null
-    const sentShowcase = { keys: [...showcase], auto: showcaseAuto }
-    try {
-      if (keys) await api.setBadgeShowcase(keys)
-      const answer = withProfile ? await api.updateProfile(toRequest(sent)) : await loadProfile(app.state.me!.id)
-      // The cache gets the answer even if the editor has gone meanwhile: the save went through.
-      app.state = setProfile(app.state, answer)
-      if (gone) return
-      const edits = draft ? editsSince(sent, $state.snapshot(draft)) : {}
-      const keepTheme = customTheme && ('themeTop' in edits || 'themeBottom' in edits)
-      const keepColour = customColour && 'colors' in edits
-      const nowShowcase = { keys: [...showcase], auto: showcaseAuto }
-      take(answer)
-      // a badge reorder made meanwhile stays too
-      if (nowShowcase.auto !== sentShowcase.auto || nowShowcase.keys.join() !== sentShowcase.keys.join()) {
-        showcase = nowShowcase.keys
-        showcaseAuto = nowShowcase.auto
-      }
-      Object.assign(draft!, edits)
-      customTheme = keepTheme
-      customColour = keepColour
-      if (!('bio' in edits)) showBio(answer.card.bio ?? '')
-      justSaved = true
-      clearTimeout(savedTimer)
-      savedTimer = setTimeout(() => (justSaved = false), SAVED_MS)
-    } catch (e) {
-      if (!gone) saveError = errorText(e)
-    } finally {
-      if (!gone) saving = false
-    }
   }
 </script>
 
@@ -681,7 +608,7 @@
                 {/each}
               </ol>
               <div class="row">
-                <button type="button" class="btn btn-secondary" disabled={showcaseAuto} data-tip="Your five rarest, following new ones as you earn them" onclick={() => (showcaseAuto = true)}>Rarest five</button>
+                <button type="button" class="btn btn-secondary" disabled={showcaseAuto} data-tip="Your five rarest, following new ones as you earn them" onclick={() => st && (st.showcase = 'auto')}>Rarest five</button>
                 {#if showcaseAuto}<span class="muted">Showing your rarest five</span>{/if}
               </div>
             </div>
@@ -733,7 +660,7 @@
 
 {#if cropping}
   {#key cropping}
-    <CropDialog file={cropping.file} kind={cropping.kind} onApply={(c) => void upload(c)} onCancel={() => (cropping = null)} />
+    <CropDialog file={cropping.file} kind={cropping.kind} onApply={upload} onCancel={() => (cropping = null)} />
   {/key}
 {/if}
 

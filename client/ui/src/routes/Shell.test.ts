@@ -33,6 +33,7 @@ vi.mock('../lib/stream/room', () => ({ StreamRoom: { connect: async () => room, 
 import Shell from './Shell.svelte'
 import LivePopover from '../components/LivePopover.svelte'
 import { app, startListening } from '../lib/store.svelte'
+import { closeProfileEditor } from '../lib/profileEditor.svelte'
 import { applyEvent, applyReady, emptyState } from '../lib/state'
 import { inviteLinks } from '../lib/inviteLinks.svelte'
 import { CONN_PILL_DELAY_MS } from '../lib/conn'
@@ -517,15 +518,17 @@ describe('account menu', () => {
     expect(document.querySelector('.me .me-avatar')!.closest('button')!.getAttribute('aria-label')).toBe('Your profile')
   })
 
-  it('Edit profile on your card opens Settings on Profile', () => {
+  it('Edit profile on your card opens the profile editor (#727)', () => {
     const me = { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
     app.state = { ...emptyState(), me }
     cmp = mount(Shell, { target: document.body, props: { user: me, onLogout: () => {} } })
     flushSync()
     editProfile()
     flushSync()
-    expect(document.querySelector('[aria-current=page]')?.textContent).toContain('Profile')
+    expect(document.querySelector('[role=dialog][aria-label="Edit profile"]')).not.toBeNull()
+    expect(document.querySelector('[role=dialog][aria-label="Settings"]')).toBeNull()
     expect(profileUi.edit).toBe(false)
+    closeProfileEditor()
   })
 
   it('esc_closes_the_server_mute_menu', async () => {

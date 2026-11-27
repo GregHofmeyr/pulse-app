@@ -17,6 +17,7 @@ vi.mock('@tauri-apps/api/core', () => ({
 }))
 
 import Settings from './Settings.svelte'
+import { closeProfileEditor, profileEditor } from '../lib/profileEditor.svelte'
 import { motion, setAnimateMode } from '../lib/animate.svelte'
 import { previews, setShowPreviews } from '../lib/linkPreviews.svelte'
 import { app, resetState } from '../lib/store.svelte'
@@ -121,16 +122,12 @@ describe('Settings dialog', () => {
 })
 
 describe('Settings sections', () => {
-  it('Profile and Appearance sections are listed first', () => {
+  it('Profile is listed first (it opens the editor), the default is still Voice & Audio', () => {
     cmp = mount(Settings, { target: document.body, props: { onClose: () => {} } })
     flushSync()
     const labels = [...document.querySelectorAll('nav button')].map((b) => b.textContent)
-    expect(labels.slice(0, 2)).toEqual(['Profile', 'Appearance'])
-    // the default is still Voice & Audio
+    expect(labels.slice(0, 2)).toEqual(['Profile', 'Voice & Audio'])
     expect(document.querySelector('nav button[aria-current=page]')!.textContent).toBe('Voice & Audio')
-    ;([...document.querySelectorAll('nav button')][1] as HTMLButtonElement).click()
-    flushSync()
-    expect(document.querySelector('input[role=switch]')).not.toBeNull()
   })
 })
 
@@ -223,5 +220,30 @@ describe('Settings: leaving the profile editor', () => {
     esc()
     expect(onClose).toHaveBeenCalledTimes(1)
     expect(document.body.textContent).not.toContain(confirmText)
+  })
+})
+
+describe('Settings: Profile and Appearance (#727)', () => {
+  const navLabels = () => [...document.querySelectorAll('nav button')].map((b) => b.textContent?.trim())
+
+  it('no_appearance_entry', () => {
+    cmp = mount(Settings, { target: document.body, props: { onClose: () => {}, section: 'voice' } })
+    flushSync()
+    expect(navLabels()).not.toContain('Appearance')
+    expect(navLabels()).toContain('Profile')
+  })
+
+  it('profile_entry_opens_editor_and_closes_settings', async () => {
+    closeProfileEditor()
+    const onClose = vi.fn()
+    cmp = mount(Settings, { target: document.body, props: { onClose, section: 'voice' } })
+    flushSync()
+    ;([...document.querySelectorAll('nav button')].find((b) => b.textContent?.trim() === 'Profile') as HTMLButtonElement).click()
+    flushSync()
+    await Promise.resolve()
+    expect(onClose).toHaveBeenCalledTimes(1)
+    expect(profileEditor.open).toBe(true)
+    expect(profileEditor.section).toBe('looks')
+    closeProfileEditor()
   })
 })

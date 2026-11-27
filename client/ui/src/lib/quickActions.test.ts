@@ -18,6 +18,7 @@ const ctx = (o: Partial<ActionContext> = {}): ActionContext => ({
   leave: vi.fn(),
   goLive: vi.fn(),
   openSettings: vi.fn(),
+  openProfileEditor: vi.fn(),
   openInbox: vi.fn(),
   ...o,
 })
@@ -74,6 +75,17 @@ describe('the action registry', () => {
     expect(c.openSettings).toHaveBeenCalledWith('keybinds')
     run('settings')
     expect(c.openSettings).toHaveBeenCalledWith('voice')
+  })
+  it('Profile and Appearance open the profile editor on Looks and App appearance (#727)', () => {
+    const c = ctx()
+    const list = allActions(c)
+    list.find((a) => a.id === 'settings:profile')!.run(c)
+    expect(c.openProfileEditor).toHaveBeenLastCalledWith('looks')
+    list.find((a) => a.id === 'settings:appearance')!.run(c)
+    expect(c.openProfileEditor).toHaveBeenLastCalledWith('appearance')
+    expect(c.openSettings).not.toHaveBeenCalled()
+    expect(list.find((a) => a.id === 'settings:profile')!.label).toBe('Settings: Profile')
+    expect(matchActions(list, 'theme').map((a) => a.id)).toContain('settings:appearance')
   })
   it('Inbox opens the inbox (#306), found after > and close by its name or "mentions"', () => {
     const c = ctx()
