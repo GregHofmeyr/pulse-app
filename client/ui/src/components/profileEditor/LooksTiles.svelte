@@ -2,13 +2,13 @@
   // The Looks section's right column (#727): picture tiles in four short groups. A tile's face is the current choice
   // as a picture, not a label: your avatar and banner, your name in its style, the theme as a miniature card, the glow
   // on or off, your ring on a sample avatar, the ring colour. Avatar and banner open the card's own Change / Remove menu
-  // (ImageMenu); Glow toggles; Theme opens its popover. Name style opens its popover too; the Speaking ring tiles open theirs once it exists
-  // (`open` holds which); until then they only highlight.
+  // (ImageMenu); Glow toggles; Theme opens its popover. Name style and both Speaking ring tiles open their popovers (`open` holds which).
   import Avatar from '../Avatar.svelte'
   import Name from '../Name.svelte'
   import SpeakingRing from '../SpeakingRing.svelte'
   import CardThemePopover from './CardThemePopover.svelte'
   import NameStylePopover from './NameStylePopover.svelte'
+  import RingPopover from './RingPopover.svelte'
   import ImageMenu from './ImageMenu.svelte'
   import MiniCard from './MiniCard.svelte'
   import { cardVars } from '../../lib/cardTheme'
@@ -92,6 +92,7 @@
 
 {#if open === 'name'}<NameStylePopover state={st} onClose={() => (open = null)} />{/if}
 {#if open === 'theme'}<CardThemePopover state={st} onClose={() => (open = null)} />{/if}
+{#if open === 'ring'}<RingPopover state={st} onClose={() => (open = null)} />{/if}
 
 <style>
   .tiles { display: flex; flex-direction: column; gap: 16px; min-width: 0; }

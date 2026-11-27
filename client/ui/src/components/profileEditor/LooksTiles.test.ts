@@ -96,6 +96,15 @@ describe('the Looks tiles', () => {
     click(tile('Name style'))
     expect(q('[role=dialog][aria-label="Name style"]')).not.toBeNull()
   })
+  it('both_ring_tiles_open_the_speaking_ring_popover', () => {
+    for (const label of ['Ring style', 'Ring colour']) {
+      show()
+      click(tile(label))
+      expect(q('[role=dialog][aria-label="Speaking ring"]')).not.toBeNull()
+      click(q('[role=dialog] button[aria-label="Cancel"]'))
+      expect(document.querySelector('[role=dialog][aria-label="Speaking ring"]')).toBeNull()
+    }
+  })
 })
 
 describe('tile faces', () => {
