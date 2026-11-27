@@ -24,6 +24,7 @@ vi.stubGlobal('matchMedia', fakeMatchMedia(false).matchMedia)
 import QuoteComposer from './QuoteComposer.svelte'
 import { app } from '../lib/store.svelte'
 import { applyEvent, emptyState, holdThread } from '../lib/state'
+import { nextTask } from '../lib/testSettle'
 
 const alex = { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
 const sam = { id: 'U2', username: 'sam', display_name: 'sam', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
@@ -42,7 +43,6 @@ function show(props: Record<string, unknown> = {}) {
   cmp = mount(QuoteComposer, { target: document.body, props: { channelId: 'C1', serverId: 'S1', onDone, ...props } })
   flushSync()
 }
-const settle = () => new Promise((r) => setTimeout(r, 0))
 const calls = (cmd: string) => invoke.mock.calls.filter((c) => c[0] === cmd)
 const rows = () => [...document.querySelectorAll<HTMLElement>('.qline')]
 const type = (el: HTMLInputElement | HTMLTextAreaElement, v: string) => { el.value = v; el.dispatchEvent(new Event('input', { bubbles: true })); flushSync() }
@@ -78,7 +78,7 @@ async function dropOn(el: Element | null, paths = [CAT], position = { x: 10, y: 
   dragTo(el, 'enter', position, paths)
   dragTo(el, 'over', position)
   fireDrag({ type: 'drop', paths, position })
-  await settle(); await settle(); flushSync()
+  await nextTask(); await nextTask(); flushSync()
 }
 const lit = () => rows().map((r) => r.classList.contains('drop'))
 
@@ -103,7 +103,7 @@ describe('QuoteComposer', () => {
     show()
     type(textOf(0), 'hello')
     enter(textOf(0))
-    await settle()
+    await nextTask()
     expect(calls('post_quote')).toHaveLength(0)
     expect(document.body.textContent).toContain('Who said it?')
   })
@@ -128,7 +128,7 @@ describe('QuoteComposer', () => {
     expect(use.textContent).toContain('Use “Grandpa”')
     use.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true })); use.click(); flushSync()
     enter(textOf(1))
-    await settle()
+    await nextTask()
     const [c] = calls('post_quote')
     const a = c[1] as { channelId: string; body: { lines: unknown[]; today: string; nonce: string } }
     expect(a.channelId).toBe('C1')
@@ -144,7 +144,7 @@ describe('QuoteComposer', () => {
   it('strips typed quote marks', async () => {
     show()
     type(textOf(0), '“hello”'); pickMember(0, 'sam'); enter(textOf(0))
-    await settle()
+    await nextTask()
     const body = (calls('post_quote')[0][1] as { body: { lines: { text: string }[] } }).body
     expect(body.lines[0].text).toBe('hello')
   })
@@ -153,14 +153,14 @@ describe('QuoteComposer', () => {
     invoke.mockImplementation(async (cmd) => (cmd === 'upload_quote_media' ? { hash: H, content_type: 'image/webp', width: 10, height: 10, frames: 4, animated: true, still_hash: S } : undefined))
     show()
     paste(textOf(0), imageFile())
-    await settle(); flushSync()
+    await nextTask(); flushSync()
     expect(calls('upload_quote_media')).toHaveLength(1)
     expect(rows()[0].querySelector('textarea.qtext')).toBeNull()
     expect(rows()[0].querySelector<HTMLImageElement>('img.thumb')!.getAttribute('src')).toContain(S)
     pickMember(0, 'sam')
     type(rows()[0].querySelector<HTMLInputElement>('input.caption')!, 'a cat')
     enter(rows()[0].querySelector<HTMLInputElement>('input.caption')!)
-    await settle()
+    await nextTask()
     const body = (calls('post_quote')[0][1] as { body: { lines: unknown[] } }).body
     expect(body.lines).toEqual([{ id: null, speaker_id: 'U2', speaker_name: null, text: null, media_hash: H, caption: 'a cat' }])
   })
@@ -170,7 +170,7 @@ describe('QuoteComposer', () => {
     show()
     type(textOf(0), 'keep me')
     paste(textOf(0), imageFile())
-    await settle(); flushSync()
+    await nextTask(); flushSync()
     expect(rows()[0].textContent).toContain('too big')
     expect(textOf(0).value).toBe('keep me')
     expect(rows()).toHaveLength(1)
@@ -182,10 +182,10 @@ describe('QuoteComposer', () => {
     expect(textOf(0).value).toBe('hello')
     rows()[0].querySelector<HTMLElement>('.chip')!.click(); flushSync()
     pickMember(0, 'kim')
-    enter(textOf(0)); await settle()
+    enter(textOf(0)); await nextTask()
     expect(document.body.textContent).toContain('This line has 3 awards. Changing who said it removes them.')
     expect(calls('edit_quote')).toHaveLength(0)
-    document.querySelector<HTMLButtonElement>('button.confirm')!.click(); await settle()
+    document.querySelector<HTMLButtonElement>('button.confirm')!.click(); await nextTask()
     const [c] = calls('edit_quote')
     expect(c[1]).toEqual({ messageId: 'M1', body: { lines: [{ id: 'L1', speaker_id: 'U3', speaker_name: null, text: 'hello', media_hash: null, caption: null }] } })
   })
@@ -193,7 +193,7 @@ describe('QuoteComposer', () => {
   it('says 1 award in the singular', async () => {
     show({ editing: quoteMsg([eline({ awards: 1, awarders: ['U1'] })]) })
     rows()[0].querySelector<HTMLElement>('.chip')!.click(); flushSync()
-    pickMember(0, 'kim'); enter(textOf(0)); await settle()
+    pickMember(0, 'kim'); enter(textOf(0)); await nextTask()
     expect(document.body.textContent).toContain('This line has 1 award. Changing who said it removes them.')
   })
 
@@ -202,7 +202,7 @@ describe('QuoteComposer', () => {
     const w = rows()[0].querySelector<HTMLElement>('.chip')!; w.click(); flushSync()
     const who = whoOf(0); who.focus(); type(who, 'grandpa  JOE')
     ;[...rows()[0].querySelectorAll<HTMLElement>('[role=option]')].find((o) => o.textContent?.includes('not on Pulse yet'))!.click(); flushSync()
-    enter(textOf(0)); await settle()
+    enter(textOf(0)); await nextTask()
     expect(document.body.textContent).not.toContain('Changing who said it')
     expect(calls('edit_quote')).toHaveLength(1)
     textOf(0).dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); flushSync()
@@ -213,13 +213,13 @@ describe('QuoteComposer', () => {
     let n = 0
     invoke.mockImplementation(async (cmd) => { if (cmd === 'post_quote' && n++ === 0) throw 'network down'; return undefined })
     show()
-    type(textOf(0), 'hi'); pickMember(0, 'sam'); enter(textOf(0)); await settle()
+    type(textOf(0), 'hi'); pickMember(0, 'sam'); enter(textOf(0)); await nextTask()
     expect(document.body.textContent).toContain('network down')
-    enter(textOf(0)); await settle()
+    enter(textOf(0)); await nextTask()
     const ns = calls('post_quote').map((c) => (c[1] as { body: { nonce: string } }).body.nonce)
     expect(ns).toHaveLength(2)
     expect(ns[0]).toBe(ns[1])
-    type(textOf(0), 'again'); pickMember(0, 'sam'); enter(textOf(0)); await settle()
+    type(textOf(0), 'again'); pickMember(0, 'sam'); enter(textOf(0)); await nextTask()
     expect((calls('post_quote')[2][1] as { body: { nonce: string } }).body.nonce).not.toBe(ns[0])
   })
 
@@ -250,7 +250,7 @@ describe('QuoteComposer', () => {
 
   it('refocuses the text box after posting', async () => {
     show()
-    type(textOf(0), 'hi'); pickMember(0, 'sam'); enter(textOf(0)); await settle()
+    type(textOf(0), 'hi'); pickMember(0, 'sam'); enter(textOf(0)); await nextTask()
     expect(document.activeElement).toBe(textOf(0))
     expect(textOf(0).value).toBe('')
   })
@@ -334,7 +334,7 @@ describe('QuoteComposer', () => {
     document.body.appendChild(second)
     const other = mount(QuoteComposer, { target: second, props: { channelId: 'C1', serverId: 'S1', editing: quoteMsg([eline()]) } })
     flushSync()
-    await settle()
+    await nextTask()
     expect(drag.handlers).toHaveLength(2)
     await dropOn(second.querySelector('textarea.qtext'))
     expect(calls('read_quote_image')).toHaveLength(1)
@@ -349,7 +349,7 @@ describe('QuoteComposer', () => {
     show()
     const input = rows()[0].querySelector<HTMLInputElement>('input[type=file]')!
     Object.defineProperty(input, 'files', { value: [imageFile()], configurable: true })
-    input.dispatchEvent(new Event('change', { bubbles: true })); await settle(); flushSync()
+    input.dispatchEvent(new Event('change', { bubbles: true })); await nextTask(); flushSync()
     expect(calls('upload_quote_media')).toHaveLength(1)
     expect(rows()[0].querySelector('img.thumb')).not.toBeNull()
   })
@@ -358,12 +358,12 @@ describe('QuoteComposer', () => {
     invoke.mockImplementation(async (cmd) => (cmd === 'upload_quote_media' ? uploaded : undefined))
     show()
     type(textOf(0), '  a cat  ')
-    paste(textOf(0), imageFile()); await settle(); flushSync()
+    paste(textOf(0), imageFile()); await nextTask(); flushSync()
     expect(rows()[0].querySelector<HTMLInputElement>('input.caption')!.value).toBe('a cat')
     unmount(cmp!); document.body.innerHTML = ''; invoke.mockClear()
     show()
     type(textOf(0), 'x'.repeat(201))
-    paste(textOf(0), imageFile()); await settle(); flushSync()
+    paste(textOf(0), imageFile()); await nextTask(); flushSync()
     expect(calls('upload_quote_media')).toHaveLength(0)
     expect(textOf(0).value).toHaveLength(201)
     expect(rows()[0].textContent).toContain('too long for a caption')
@@ -375,23 +375,23 @@ describe('QuoteComposer', () => {
     show()
     addLine()
     type(textOf(0), 'hi'); pickMember(0, 'sam')
-    paste(textOf(1), imageFile()); await settle(); flushSync()
+    paste(textOf(1), imageFile()); await nextTask(); flushSync()
     expect(document.querySelector<HTMLButtonElement>('button.post')!.disabled).toBe(true)
-    enter(textOf(0)); await settle()
+    enter(textOf(0)); await nextTask()
     expect(document.body.textContent).toContain('Wait for the image to finish uploading.')
     expect(calls('post_quote')).toHaveLength(0)
-    done(uploaded); await settle()
+    done(uploaded); await nextTask()
   })
 
   it('a typed but unpicked name resolves to the member it names, else stays a plain name', async () => {
     show()
     type(textOf(0), 'hi')
     const w = whoOf(0); w.focus(); type(w, ' SAM ')
-    enter(textOf(0)); await settle()
+    enter(textOf(0)); await nextTask()
     expect((calls('post_quote')[0][1] as { body: { lines: { speaker_id: string | null }[] } }).body.lines[0].speaker_id).toBe('U2')
     type(textOf(0), 'yo')
     const w2 = whoOf(0); w2.focus(); type(w2, 'sa')
-    enter(textOf(0)); await settle()
+    enter(textOf(0)); await nextTask()
     const l = (calls('post_quote')[1][1] as { body: { lines: { speaker_id: string | null; speaker_name: string | null }[] } }).body.lines[0]
     expect(l).toMatchObject({ speaker_id: null, speaker_name: 'sa' })
   })
@@ -401,11 +401,11 @@ describe('QuoteComposer', () => {
     type(textOf(0), 'hi')
     const name = '😀'.repeat(32)
     const w = whoOf(0); w.focus(); type(w, name)
-    enter(textOf(0)); await settle()
+    enter(textOf(0)); await nextTask()
     expect((calls('post_quote')[0][1] as { body: { lines: { speaker_name: string }[] } }).body.lines[0].speaker_name).toBe(name)
     type(textOf(0), 'yo')
     const w2 = whoOf(0); w2.focus(); type(w2, '😀'.repeat(33))
-    enter(textOf(0)); await settle()
+    enter(textOf(0)); await nextTask()
     expect(calls('post_quote')).toHaveLength(1)
     expect(document.body.textContent).toContain('at most 32')
   })
@@ -414,7 +414,7 @@ describe('QuoteComposer', () => {
     show()
     type(textOf(0), 'hi')
     const w = whoOf(0); w.focus(); type(w, '..')
-    enter(textOf(0)); await settle()
+    enter(textOf(0)); await nextTask()
     expect(calls('post_quote')).toHaveLength(0)
     expect(document.body.textContent).toContain('A name needs more than dots.')
     // Focus goes to the line's who field (the chip, once a name is picked) to fix it.
@@ -426,7 +426,7 @@ describe('QuoteComposer', () => {
     show({ editing: quoteMsg([eline()]) })
     type(textOf(0), '')
     rows()[0].querySelector<HTMLElement>('.chip')!.click(); flushSync()
-    enter(textOf(0)); await settle()
+    enter(textOf(0)); await nextTask()
     expect(document.body.textContent).toContain('Add the words or an image.')
     expect(calls('edit_quote')).toHaveLength(0)
   })
@@ -434,7 +434,7 @@ describe('QuoteComposer', () => {
   it('several awarded changes name their lines', async () => {
     show({ editing: quoteMsg([eline({ awards: 2, awarders: ['U1', 'U3'], text: 'first' }), eline({ id: 'L2', awards: 1, awarders: ['U1'], text: 'second' })]) })
     for (const n of [0, 1]) { rows()[n].querySelector<HTMLElement>('.chip')!.click(); flushSync(); pickMember(n, 'kim') }
-    enter(textOf(0)); await settle()
+    enter(textOf(0)); await nextTask()
     const t = document.querySelector('.warn')!.textContent!
     expect(t).toContain('“first” This line has 2 awards. Changing who said it removes them.')
     expect(t).toContain('“second” This line has 1 award. Changing who said it removes them.')
@@ -446,7 +446,7 @@ describe('QuoteComposer', () => {
     invoke.mockImplementation(async (cmd) => (cmd === 'upload_quote_media' ? { ...uploaded, hash: n++ ? S : H } : undefined))
     show()
     type(textOf(0), 'a cat')
-    paste(textOf(0), imageFile()); await settle(); flushSync()
+    paste(textOf(0), imageFile()); await nextTask(); flushSync()
     const cap = () => rows()[0].querySelector<HTMLInputElement>('input.caption')!
     expect(cap().value).toBe('a cat')
     await dropOn(rows()[0].querySelector('.row'))
@@ -459,10 +459,10 @@ describe('QuoteComposer', () => {
     let n = 0
     invoke.mockImplementation(async (cmd) => (cmd === 'upload_quote_media' ? { ...uploaded, hash: n++ ? S : H } : undefined))
     show()
-    paste(textOf(0), imageFile()); await settle(); flushSync()
+    paste(textOf(0), imageFile()); await nextTask(); flushSync()
     const cap = () => rows()[0].querySelector<HTMLInputElement>('input.caption')!
     type(cap(), 'a dog')
-    paste(cap(), imageFile()); await settle(); flushSync()
+    paste(cap(), imageFile()); await nextTask(); flushSync()
     expect(calls('upload_quote_media')).toHaveLength(2)
     expect(rows()[0].querySelector<HTMLImageElement>('img.thumb')!.getAttribute('src')).toContain(S)
     expect(cap().value).toBe('a dog')
@@ -474,11 +474,11 @@ describe('QuoteComposer', () => {
     invoke.mockImplementation((cmd) => (cmd === 'upload_quote_media' ? (n++ ? new Promise((r) => (done = r)) : Promise.resolve(uploaded)) : Promise.resolve(undefined)))
     show()
     type(textOf(0), 'a cat')
-    paste(textOf(0), imageFile()); await settle(); flushSync()
+    paste(textOf(0), imageFile()); await nextTask(); flushSync()
     const cap = () => rows()[0].querySelector<HTMLInputElement>('input.caption')!
     await dropOn(rows()[0].querySelector('.row'))
     type(cap(), 'a cat, napping')
-    done({ ...uploaded, hash: S }); await settle(); flushSync()
+    done({ ...uploaded, hash: S }); await nextTask(); flushSync()
     expect(rows()[0].querySelector<HTMLImageElement>('img.thumb')!.getAttribute('src')).toContain(S)
     expect(cap().value).toBe('a cat, napping')
   })
@@ -488,9 +488,9 @@ describe('QuoteComposer', () => {
     invoke.mockImplementation((cmd) => (cmd === 'upload_quote_media' ? new Promise((r) => (done = r)) : Promise.resolve(undefined)))
     show()
     type(textOf(0), 'a cat')
-    paste(textOf(0), imageFile()); await settle(); flushSync()
+    paste(textOf(0), imageFile()); await nextTask(); flushSync()
     type(textOf(0), 'a cat, napping')
-    done(uploaded); await settle(); flushSync()
+    done(uploaded); await nextTask(); flushSync()
     expect(rows()[0].querySelector('img.thumb')).not.toBeNull()
     expect(rows()[0].querySelector<HTMLInputElement>('input.caption')!.value).toBe('a cat, napping')
   })
@@ -500,11 +500,11 @@ describe('QuoteComposer', () => {
     let n = 0
     invoke.mockImplementation((cmd) => (cmd === 'upload_quote_media' ? (n++ ? new Promise((r) => (done = r)) : Promise.resolve(uploaded)) : Promise.resolve(undefined)))
     show()
-    paste(textOf(0), imageFile()); await settle(); flushSync()
+    paste(textOf(0), imageFile()); await nextTask(); flushSync()
     await dropOn(rows()[0].querySelector('.row'))
     rows()[0].querySelector<HTMLButtonElement>('button[aria-label="Remove image"]')!.click(); flushSync()
     type(textOf(0), 'never mind the picture')
-    done({ ...uploaded, hash: S }); await settle(); flushSync()
+    done({ ...uploaded, hash: S }); await nextTask(); flushSync()
     expect(rows()[0].querySelector('img.thumb')).toBeNull()
     expect(textOf(0).value).toBe('never mind the picture')
   })
@@ -512,11 +512,11 @@ describe('QuoteComposer', () => {
   it('a caption over 200 characters is refused when posting', async () => {
     invoke.mockImplementation(async (cmd) => (cmd === 'upload_quote_media' ? uploaded : undefined))
     show()
-    paste(textOf(0), imageFile()); await settle(); flushSync()
+    paste(textOf(0), imageFile()); await nextTask(); flushSync()
     pickMember(0, 'sam')
     const cap = rows()[0].querySelector<HTMLInputElement>('input.caption')!
     type(cap, 'x'.repeat(201))
-    enter(cap); await settle()
+    enter(cap); await nextTask()
     expect(calls('post_quote')).toHaveLength(0)
     expect(document.body.textContent).toContain('A caption can be at most 200 characters.')
     expect(cap.value).toHaveLength(201)
@@ -528,7 +528,7 @@ describe('QuoteComposer', () => {
   it('changing another line while the warning is up takes the warning down', async () => {
     show({ editing: twoAwarded() })
     rows()[0].querySelector<HTMLElement>('.chip')!.click(); flushSync(); pickMember(0, 'kim')
-    enter(textOf(0)); await settle()
+    enter(textOf(0)); await nextTask()
     expect(warning()).not.toBeNull()
     rows()[1].querySelector<HTMLElement>('.chip')!.click(); flushSync()
     expect(warning()).toBeNull()
@@ -536,7 +536,7 @@ describe('QuoteComposer', () => {
 
   const warnFor0 = async () => {
     rows()[0].querySelector<HTMLElement>('.chip')?.click(); flushSync(); pickMember(0, 'kim')
-    enter(textOf(0)); await settle()
+    enter(textOf(0)); await nextTask()
     expect(warning()).not.toBeNull()
   }
   it('a typed name resolving takes the warning down', async () => {
@@ -571,7 +571,7 @@ describe('QuoteComposer', () => {
     rows()[0].querySelector<HTMLElement>('.chip')!.click(); flushSync(); pickMember(0, 'kim')
     app.state = { ...app.state, messages: { C1: [quoteMsg([eline({ awards: 1, awarders: ['U3'] })])] } }
     flushSync()
-    enter(textOf(0)); await settle()
+    enter(textOf(0)); await nextTask()
     expect(calls('edit_quote')).toHaveLength(0)
     expect(document.body.textContent).toContain('This line has 1 award. Changing who said it removes them.')
   })
@@ -584,7 +584,7 @@ describe('QuoteComposer', () => {
     rows()[0].querySelector<HTMLElement>('.chip')!.click(); flushSync(); pickMember(0, 'kim')
     app.state = applyEvent(app.state, { t: 'QuoteAwardChanged', d: { channel_id: 'C1', message_id: 'M1', line_id: 'L1', user_id: 'U3', given: true, count: 1, awarders: ['U3'] } }, 0)
     flushSync()
-    enter(textOf(0)); await settle()
+    enter(textOf(0)); await nextTask()
     expect(calls('edit_quote')).toHaveLength(0)
     expect(document.body.textContent).toContain('This line has 1 award. Changing who said it removes them.')
   })
@@ -594,15 +594,15 @@ describe('QuoteComposer', () => {
     show({ editing: m })
     app.state = { ...app.state, messages: { C1: [m] } }
     for (const n of [0, 1]) { rows()[n].querySelector<HTMLElement>('.chip')!.click(); flushSync(); pickMember(n, 'kim') }
-    enter(textOf(0)); await settle()
+    enter(textOf(0)); await nextTask()
     expect(warning()!.textContent).not.toContain('“first”')
     // line 1 gains an award while the warning for line 2 is up
     app.state = { ...app.state, messages: { C1: [quoteMsg([eline({ text: 'first', awards: 1, awarders: ['U3'] }), eline({ id: 'L2', awards: 1, awarders: ['U1'], text: 'second' })])] } }
     flushSync()
-    document.querySelector<HTMLButtonElement>('button.confirm')!.click(); await settle()
+    document.querySelector<HTMLButtonElement>('button.confirm')!.click(); await nextTask()
     expect(calls('edit_quote')).toHaveLength(0)
     expect(warning()!.textContent).toContain('“first” This line has 1 award.')
-    document.querySelector<HTMLButtonElement>('button.confirm')!.click(); await settle()
+    document.querySelector<HTMLButtonElement>('button.confirm')!.click(); await nextTask()
     expect(calls('edit_quote')).toHaveLength(1)
   })
 
@@ -610,8 +610,8 @@ describe('QuoteComposer', () => {
     let n = 0
     invoke.mockImplementation(async (cmd) => { if (cmd === 'post_quote' && n++ === 0) throw 'network down'; return undefined })
     show()
-    type(textOf(0), 'hi'); pickMember(0, 'sam'); enter(textOf(0)); await settle()
-    type(textOf(0), 'hi there'); enter(textOf(0)); await settle()
+    type(textOf(0), 'hi'); pickMember(0, 'sam'); enter(textOf(0)); await nextTask()
+    type(textOf(0), 'hi there'); enter(textOf(0)); await nextTask()
     const ns = calls('post_quote').map((c) => (c[1] as { body: { nonce: string } }).body.nonce)
     expect(ns).toHaveLength(2)
     expect(ns[0]).not.toBe(ns[1])

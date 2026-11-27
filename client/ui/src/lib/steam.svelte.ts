@@ -69,5 +69,3 @@ export function steamNote(st: SteamStatus | null): string | null {
   if (st.link.private) return 'Make your Steam game details public to share achievements.'
   return null
 }
-
-export { completionLine, formatRate, hoursText } from './achievements'

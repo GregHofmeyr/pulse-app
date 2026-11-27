@@ -11,12 +11,12 @@ import DeleteServer from './DeleteServer.svelte'
 import ServerSettings from './ServerSettings.svelte'
 import { app } from '../lib/store.svelte'
 import { emptyState } from '../lib/state'
+import { nextTask } from '../lib/testSettle'
 
 const me = { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
 const server = { id: 'S1', name: 'Main Hall', icon_hash: null, owner_id: 'U1' }
 
 let cmp: ReturnType<typeof mount> | undefined
-const settle = () => new Promise((r) => setTimeout(r, 0))
 const deleteButton = () => [...document.querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent === 'Delete server')!
 function type(value: string) {
   const input = document.querySelector<HTMLInputElement>('input[aria-label="Server name"]')!
@@ -48,7 +48,7 @@ describe('DeleteServer', () => {
     flushSync()
     type('Main Hall')
     deleteButton().click()
-    await settle()
+    await nextTask()
     flushSync()
     expect(invoke).toHaveBeenCalledWith('delete_server', { serverId: 'S1', name: 'Main Hall' })
     expect(onDeleted).toHaveBeenCalledTimes(1)
@@ -61,7 +61,7 @@ describe('DeleteServer', () => {
     flushSync()
     type('Main Hall')
     deleteButton().click()
-    await settle()
+    await nextTask()
     flushSync()
     expect(document.querySelector('[role=alert]')).not.toBeNull()
     expect(onDeleted).not.toHaveBeenCalled()

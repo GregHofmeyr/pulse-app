@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 // Editing a queued image before it's sent (#290): the Edit button on an image's chip, the editor's crop, turns and
 // keys, and the edit taking the original's place in the queue with its spoiler mark.
-import { flushSync, mount, tick, unmount } from 'svelte'
+import { flushSync, mount, unmount } from 'svelte'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const calls: { cmd: string; args: unknown; opts?: unknown }[] = []
@@ -20,6 +20,7 @@ import { app } from '../lib/store.svelte'
 import { emptyState } from '../lib/state'
 import type { StagedFile } from '../lib/tauri'
 import { plusItem } from './plusMenuHarness'
+import { settle } from '../lib/testSettle'
 
 const file = (id: string, name: string, extra: Partial<StagedFile> = {}): StagedFile => ({
   id, name, size: 1000, content_type: 'image/webp', kind: 'image', width: 400, height: 300, preview: 'data:image/png;base64,AA', ...extra,
@@ -56,11 +57,6 @@ afterEach(() => {
   document.body.innerHTML = ''
   vi.restoreAllMocks()
 })
-
-const settle = async () => {
-  for (let i = 0; i < 5; i++) await tick()
-  flushSync()
-}
 
 /** The picture arrives (the core's bytes, read as a data URL) and decodes at `w` × `h`. */
 async function decoded(w = 400, h = 300) {

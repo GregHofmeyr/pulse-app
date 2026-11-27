@@ -23,11 +23,12 @@ vi.mock('@tauri-apps/api/event', () => ({
 
 import { app, startListening } from './store.svelte'
 import { emptyState, type AppState } from './state'
-import { startVoiceListening, voice } from './voice.svelte'
+import { startVoiceListening } from './voice.svelte'
 import { reloadMixer, setNotch } from './mixer.svelte'
 import { joinSounds, setJoinSoundMute } from './joinSounds.svelte'
 import { soundboard } from './soundboard.svelte'
 import type { Member } from './protocol/Member'
+import { nextTask } from './testSettle'
 
 const user = (id: string) => ({ id, username: id, display_name: id, avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } })
 const member = (id: string, join_sound?: string): Member => ({ user: user(id) as Member['user'], nickname: null, ...(join_sound ? { join_sound } : {}) })
@@ -42,7 +43,6 @@ const connection = (channel_id: string | null, conn: string) => h.handlers['voic
 /** What was played, in order: cues by name, and soundboard plays (other commands, like the mixer's, left out). */
 const plays = () => h.calls.filter((c) => c.cmd === 'play_sound' || c.cmd === 'soundboard_play')
 const cmds = () => plays().map((c) => (c.cmd === 'play_sound' ? `cue:${c.args.name}` : c.cmd))
-const flush = () => new Promise((r) => setTimeout(r, 0))
 
 function state(): AppState {
   return {
@@ -84,7 +84,7 @@ describe('someone else joins your call', () => {
     setNotch('calls', 'master', 80)
     setNotch('calls', 'join_sounds', 150)
     joined('U2', 'V1', play)
-    await flush()
+    await nextTask()
     expect(cmds()).toEqual(['soundboard_play'])
     expect(plays()[0].args).toMatchObject({ hash: 'hA', callsPercent: 80, soundboardPercent: 150, soundPercent: 120, soundId: 'A', player: 'U2' })
     // the joiner's ring lights while it plays
@@ -106,7 +106,7 @@ describe('someone else joins your call', () => {
     setJoinSoundMute('U2', true)
     joined('U2', 'V1', play)
     joined('U4', 'V1', play)
-    await flush()
+    await nextTask()
     expect(cmds()).toEqual(['cue:join', 'soundboard_play'])
     expect(JSON.parse(localStorage.getItem('pulse.joinSounds.mutes')!)).toEqual({ U2: true })
   })
@@ -114,7 +114,7 @@ describe('someone else joins your call', () => {
   it('a join sound that can’t be played becomes the cue', async () => {
     h.failPlay = true
     joined('U2', 'V1', play)
-    await flush()
+    await nextTask()
     expect(cmds()).toEqual(['soundboard_play', 'cue:join'])
   })
 
@@ -135,7 +135,7 @@ describe('you join', () => {
     connection('V1', 'connected')
     expect(cmds(), 'the cue waits').toEqual([])
     joined('ME', 'V1', play)
-    await flush()
+    await nextTask()
     expect(cmds()).toEqual(['soundboard_play'])
     expect(plays()[0].args).toMatchObject({ hash: 'hA', player: 'ME' })
   })
@@ -144,7 +144,7 @@ describe('you join', () => {
     connection('V1', 'connecting')
     joined('ME', 'V1', play)
     connection('V1', 'connected')
-    await flush()
+    await nextTask()
     expect(cmds()).toEqual(['soundboard_play'])
     expect(soundboard.playing.has('ME')).toBe(true)
   })
@@ -154,7 +154,7 @@ describe('you join', () => {
     connection('V1', 'connected')
     connection('V2', 'connecting')
     joined('ME', 'V1', play)
-    await flush()
+    await nextTask()
     expect(cmds()).toEqual([])
     connection('V2', 'connected')
     joined('ME', 'V2')

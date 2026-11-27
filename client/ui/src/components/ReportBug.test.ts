@@ -6,6 +6,7 @@ const invoke = vi.fn(async (_cmd: string, _args?: unknown): Promise<unknown> => 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (cmd: string, args?: never) => invoke(cmd, args) }))
 
 import ReportBug from './ReportBug.svelte'
+import { settleTask } from '../lib/testSettle'
 
 let cmp: ReturnType<typeof mount> | undefined
 function show(props: Record<string, unknown> = {}) {
@@ -26,13 +27,12 @@ const dialog = () => document.querySelector<HTMLElement>('[role=dialog]')!
 const radio = (name: string) => [...dialog().querySelectorAll<HTMLButtonElement>('[role=radio]')].find((b) => b.textContent?.trim() === name)!
 const area = () => dialog().querySelector('textarea')!
 const button = (name: string) => [...dialog().querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent?.trim() === name)
-const settle = async () => { await new Promise((r) => setTimeout(r, 0)); flushSync() }
 function type(text: string) {
   area().value = text
   area().dispatchEvent(new Event('input', { bubbles: true }))
   flushSync()
 }
-const send = async () => { button('Send')!.click(); flushSync(); await settle() }
+const send = async () => { button('Send')!.click(); flushSync(); await settleTask(0) }
 
 describe('Report a bug / Suggest an idea (#218)', () => {
   it('opens on Bug, with the Bug / Idea switch at the top', () => {

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { flushSync, mount, tick, unmount } from 'svelte'
+import { flushSync, mount, unmount } from 'svelte'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 // Imported with the file, not inside a test: loading the compiler is slow, and a busy machine pushed it past the test timeout (#177).
@@ -22,6 +22,7 @@ import { closeCard, profileUi } from '../lib/profileCard.svelte'
 import { setShowPreviews } from '../lib/linkPreviews.svelte'
 import { setNameReadability, setTheme } from '../lib/theme.svelte'
 import { contrast, toHex } from '../lib/color'
+import { flushMicrotasks } from '../lib/testSettle'
 
 const ce = (id: string, name: string): CustomEmoji => ({
   id, server_id: 'S1', name, hash: id.repeat(64).slice(0, 64), still_hash: null, animated: false, added_by: null, created_at: '2026-10-01T00:00:00Z',
@@ -77,7 +78,6 @@ const press = (key: string, init: KeyboardEventInit = {}) => {
   box()!.dispatchEvent(e)
   return e
 }
-async function settle() { for (let i = 0; i < 5; i++) await Promise.resolve(); await tick() }
 /** Svelte's event delegation keeps the last event for one 0 ms timer, armed only when none is pending (module state:
  *  whether a test sees it depends on what ran before). Run it, so a timer count is the component's own timers. */
 const runSvelteEventTimer = () => vi.advanceTimersByTime(0)
@@ -109,7 +109,7 @@ describe('MessageItem errors', () => {
     btn('Edit').click(); flushSync()
     type('changed text')
     press('Enter')
-    await settle()
+    await flushMicrotasks(6)
     expect(box()).not.toBeNull()
     expect(value()).toBe('changed text')
     expect(alert()?.textContent).toBe('edit refused')
@@ -127,7 +127,7 @@ describe('MessageItem errors', () => {
     btn('Edit').click(); flushSync()
     type('changed text')
     press('Enter')
-    await settle()
+    await flushMicrotasks(6)
     expect(onEdit).toHaveBeenCalledWith('changed text')
     expect(box()).toBeNull()
     expect(alert()).toBeNull()
@@ -137,7 +137,7 @@ describe('MessageItem errors', () => {
     onDelete.mockRejectedValue('cannot delete')
     show()
     deleteNow()
-    await settle()
+    await flushMicrotasks(6)
     expect(alert()?.textContent).toBe('cannot delete')
     vi.advanceTimersByTime(INLINE_ERROR_MS - 1); flushSync()
     expect(alert()).not.toBeNull()
@@ -148,9 +148,9 @@ describe('MessageItem errors', () => {
   it('a_newer_error_restarts_the_clock', async () => {
     onDelete.mockRejectedValue('cannot delete')
     show()
-    deleteNow(); await settle()
+    deleteNow(); await flushMicrotasks(6)
     vi.advanceTimersByTime(INLINE_ERROR_MS - 1000)
-    deleteNow(); await settle()
+    deleteNow(); await flushMicrotasks(6)
     vi.advanceTimersByTime(INLINE_ERROR_MS - 1000); flushSync()
     expect(alert()).not.toBeNull()
     vi.advanceTimersByTime(1000); flushSync()
@@ -160,7 +160,7 @@ describe('MessageItem errors', () => {
   it('unmounting_clears_the_timer', async () => {
     onDelete.mockRejectedValue('cannot delete')
     show()
-    deleteNow(); await settle()
+    deleteNow(); await flushMicrotasks(6)
     runSvelteEventTimer()
     expect(vi.getTimerCount()).toBe(1)
     unmount(cmp!); cmp = undefined
@@ -172,12 +172,12 @@ describe('MessageItem errors', () => {
     invoke.mockImplementation((cmd: string) => (cmd === 'add_reaction' || cmd === 'remove_reaction' ? new Promise((_, rej) => (refuse = rej)) : Promise.resolve(undefined)))
     show()
     document.querySelector<HTMLButtonElement>('.chip:not(.add)')!.click()
-    await settle()
+    await flushMicrotasks(6)
     expect(refuse).toBeDefined()
     runSvelteEventTimer()
     unmount(cmp!); cmp = undefined
     refuse('reaction refused')
-    await settle()
+    await flushMicrotasks(6)
     expect(vi.getTimerCount()).toBe(0)
   })
 
@@ -186,13 +186,13 @@ describe('MessageItem errors', () => {
     show()
     btn('Edit').click(); flushSync()
     type('changed text')
-    press('Enter'); await settle()
+    press('Enter'); await flushMicrotasks(6)
     expect(alert()?.textContent).toBe('edit refused')
     let finish!: () => void
     onEdit.mockImplementationOnce(() => new Promise<void>((done) => (finish = done)))
-    press('Enter'); await settle(); flushSync()
+    press('Enter'); await flushMicrotasks(6); flushSync()
     expect(alert()).toBeNull()
-    finish(); await settle(); flushSync()
+    finish(); await flushMicrotasks(6); flushSync()
     expect(box()).toBeNull()
   })
 
@@ -201,7 +201,7 @@ describe('MessageItem errors', () => {
     show()
     btn('Edit').click(); flushSync()
     type('changed text')
-    press('Enter'); await settle()
+    press('Enter'); await flushMicrotasks(6)
     expect(alert()?.textContent).toBe('edit refused')
     // the Edit button is hidden while the box is open: reopening goes through Esc
     press('Escape'); flushSync()
@@ -218,9 +218,9 @@ describe('MessageItem errors', () => {
     type('changed text')
     press('Enter')
     press('Enter')
-    await settle()
+    await flushMicrotasks(6)
     expect(onEdit).toHaveBeenCalledTimes(1)
-    finish(); await settle(); flushSync()
+    finish(); await flushMicrotasks(6); flushSync()
     expect(box()).toBeNull()
   })
 
@@ -231,7 +231,7 @@ describe('MessageItem errors', () => {
     })
     show()
     document.querySelector<HTMLButtonElement>('.chip:not(.add)')!.click()
-    await settle()
+    await flushMicrotasks(6)
     expect(alert()?.textContent).toBe('reaction refused')
     vi.advanceTimersByTime(INLINE_ERROR_MS); flushSync()
     expect(alert()).toBeNull()
@@ -242,7 +242,7 @@ describe('MessageItem edit box', () => {
   const edit = async (content: string) => {
     show(content)
     btn('Edit').click(); flushSync()
-    await settle()
+    await flushMicrotasks(6)
   }
 
   it('shows custom emoji as images, keeping the tokens as the text', async () => {
@@ -269,7 +269,7 @@ describe('MessageItem edit box', () => {
     box()!.dispatchEvent(new InputEvent('input', { bubbles: true }))
     flushSync()
     expect(press('Enter').defaultPrevented).toBe(true)
-    await settle()
+    await flushMicrotasks(6)
     expect(onEdit).toHaveBeenCalledWith('hi <:pog:1> more')
     expect(box()).toBeNull()
   })
@@ -278,7 +278,7 @@ describe('MessageItem edit box', () => {
     await edit('one')
     caretAt(3)
     press('Enter', { shiftKey: true })
-    await settle(); flushSync()
+    await flushMicrotasks(6); flushSync()
     expect(value()).toBe('one\n')
     expect(onEdit).not.toHaveBeenCalled()
     expect(box()).not.toBeNull()
@@ -298,7 +298,7 @@ describe('MessageItem edit box', () => {
     await edit('hello')
     type('changed')
     expect(press('Enter', { isComposing: true }).defaultPrevented).toBe(false)
-    await settle()
+    await flushMicrotasks(6)
     expect(onEdit).not.toHaveBeenCalled()
     expect(box()).not.toBeNull()
   })
@@ -306,9 +306,9 @@ describe('MessageItem edit box', () => {
   it('undo and redo work in the edit box', async () => {
     await edit('hello')
     type('changed')
-    press('z', { ctrlKey: true }); await settle(); flushSync()
+    press('z', { ctrlKey: true }); await flushMicrotasks(6); flushSync()
     expect(value()).toBe('hello')
-    press('y', { ctrlKey: true }); await settle(); flushSync()
+    press('y', { ctrlKey: true }); await flushMicrotasks(6); flushSync()
     expect(value()).toBe('changed')
   })
 
@@ -329,7 +329,7 @@ describe('MessageItem edit box', () => {
     expect(data.get('text/plain')).toBe('hi <:pog:1>')
     caretAt(value().length)
     expect(clip('paste', new Map([['text/plain', ' <:pog:1>'], ['text/html', '<b>x</b>']])).defaultPrevented).toBe(true)
-    await settle(); flushSync()
+    await flushMicrotasks(6); flushSync()
     expect(value()).toBe('hi <:pog:1> <:pog:1>')
     expect(box()!.querySelectorAll('img')).toHaveLength(2)
     expect(box()!.querySelector('b')).toBeNull()
@@ -357,10 +357,10 @@ describe('MessageItem edit box', () => {
     flushSync()
     press('Enter')
     press('Enter')
-    await settle()
+    await flushMicrotasks(6)
     expect(onEdit).toHaveBeenCalledTimes(1)
     expect(onEdit).toHaveBeenCalledWith('oh hi <:pog:1>')
-    finish(); await settle(); flushSync()
+    finish(); await flushMicrotasks(6); flushSync()
     expect(box()).toBeNull()
   })
 
@@ -370,12 +370,12 @@ describe('MessageItem edit box', () => {
     await edit('hello')
     type('changed')
     press('Enter')
-    await settle()
+    await flushMicrotasks(6)
     expect(press('Escape').defaultPrevented).toBe(true)
     flushSync()
     expect(box()).not.toBeNull()
     expect(onEditClosed).not.toHaveBeenCalled()
-    fail('edit refused'); await settle(); flushSync()
+    fail('edit refused'); await flushMicrotasks(6); flushSync()
     expect(alert()?.textContent).toBe('edit refused') // the reason shows, the text is still there
     expect(value()).toBe('changed')
     expect(document.activeElement).toBe(box()) // focus stays to fix it
@@ -385,9 +385,9 @@ describe('MessageItem edit box', () => {
     await edit('hello')
     press('Escape'); flushSync()
     expect(onEditClosed).toHaveBeenCalledTimes(1)
-    btn('Edit').click(); flushSync(); await settle()
+    btn('Edit').click(); flushSync(); await flushMicrotasks(6)
     type('changed')
-    press('Enter'); await settle(); flushSync()
+    press('Enter'); await flushMicrotasks(6); flushSync()
     expect(onEditClosed).toHaveBeenCalledTimes(2)
   })
 
@@ -400,7 +400,7 @@ describe('MessageItem edit box', () => {
 
   it('emoji the app learns about after the box opened show as images', async () => {
     show('hi <:zap:9>')
-    btn('Edit').click(); flushSync(); await settle()
+    btn('Edit').click(); flushSync(); await flushMicrotasks(6)
     expect(box()!.querySelector('img')).toBeNull()
     app.state = { ...app.state, customEmoji: { ...app.state.customEmoji, '9': ce('9', 'zap') } }
     flushSync()
@@ -414,7 +414,7 @@ describe('MessageItem edit box', () => {
     const e = new Event('paste', { bubbles: true, cancelable: true }) as ClipboardEvent
     Object.defineProperty(e, 'clipboardData', { value: { getData: (t: string) => (t === 'text/plain' ? 'abcdef' : '') } })
     box()!.dispatchEvent(e)
-    await settle(); flushSync()
+    await flushMicrotasks(6); flushSync()
     expect(value()).toBe('x'.repeat(3998) + 'ab')
   })
 
@@ -424,11 +424,11 @@ describe('MessageItem edit box', () => {
     await edit('hello')
     type('changed')
     press('Enter')
-    await settle()
+    await flushMicrotasks(6)
     const other = document.createElement('input')
     document.body.append(other)
     other.focus() // e.g. another message's edit box, or a search field
-    finish(); await settle(); flushSync()
+    finish(); await flushMicrotasks(6); flushSync()
     expect(box()).toBeNull()
     expect(onEditClosed).not.toHaveBeenCalled()
     expect(document.activeElement).toBe(other)
@@ -678,7 +678,7 @@ describe('link previews', () => {
     document.body.innerHTML = ''
     showEmbeds(true)
     btn('Remove previews').click()
-    await settle()
+    await flushMicrotasks(6)
     expect(invoke).toHaveBeenCalledWith('hide_embed', { messageId: 'M1', url: null })
   })
 
@@ -707,7 +707,7 @@ describe('link previews', () => {
       showHidden(true)
       openMenu()
       menuItem('Show previews again')!.click()
-      await settle()
+      await flushMicrotasks(6)
       expect(invoke).toHaveBeenCalledWith('show_embeds', { messageId: 'M1' })
       expect(document.querySelector('[role=menu]')).toBeNull()
     })
@@ -732,7 +732,7 @@ describe('link previews', () => {
       invoke.mockImplementation(async (c: string) => { if (c === 'show_embeds') throw 'nope' })
       openMenu()
       menuItem('Show previews again')!.click()
-      await settle()
+      await flushMicrotasks(6)
       expect(alert()?.textContent).toBe('nope')
     })
   })
@@ -741,7 +741,7 @@ describe('link previews', () => {
     showEmbeds(true)
     invoke.mockImplementation(async (c: string) => { if (c === 'hide_embed') throw 'nope' })
     btn('Remove previews').click()
-    await settle()
+    await flushMicrotasks(6)
     expect(alert()?.textContent).toBe('nope')
   })
 })

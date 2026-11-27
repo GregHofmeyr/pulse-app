@@ -14,9 +14,6 @@ use pulse_protocol::rest::{
 use serde_json::json;
 use tokio_tungstenite::tungstenite::Message as Ws;
 
-type Socket =
-    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
-
 /// alex's server "Main" (sam has joined; jo hasn't) and its #general.
 struct World {
     app: TestApp,

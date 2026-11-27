@@ -66,6 +66,15 @@
   --presence-off: #5b5f6b;
   /* The cut-out ring around avatars, presence dots and speaking rings (the panel they usually sit on). */
   --ring: var(--bg-1);
+  /* Speaking rings (#651): the palette people pick from. Green is today's ring; each reads at 3:1 on --bg-1. */
+  --speak-green: var(--ok);
+  --speak-blue: #8b9cff;
+  --speak-gold: #e8b04a;
+  --speak-pink: #f06fb0;
+  --speak-cyan: #4fc8e8;
+  --speak-orange: #f0884f;
+  --speak-white: #e8e9ed;
+  --speak-purple: #b07cf0;
   /* Row hover on a message, quote or clip, and a quote line's (a touch stronger). */
   --hover-tint: rgba(255, 255, 255, .02);
   --hover-tint-strong: rgba(255, 255, 255, .03);
@@ -169,6 +178,15 @@
   --ok-deep: #3a7d5a;
   --presence-off: #4e5570;
   --ring: var(--bg-1);
+  /* Speaking rings (#651): the palette people pick from. Green is today's ring; each reads at 3:1 on --bg-1. */
+  --speak-green: var(--ok);
+  --speak-blue: #8b9cff;
+  --speak-gold: #e8b04a;
+  --speak-pink: #f06fb0;
+  --speak-cyan: #4fc8e8;
+  --speak-orange: #f0884f;
+  --speak-white: #e8e9ed;
+  --speak-purple: #b07cf0;
   --hover-tint: rgba(160, 180, 255, .03);
   --hover-tint-strong: rgba(160, 180, 255, .045);
   --veil: rgba(17, 20, 30, .8);
@@ -253,6 +271,15 @@
   --ok-deep: #3a7d5a;
   --presence-off: #55575f;
   --ring: var(--bg-1);
+  /* Speaking rings (#651): the palette people pick from. Green is today's ring; each reads at 3:1 on --bg-1. */
+  --speak-green: var(--ok);
+  --speak-blue: #8b9cff;
+  --speak-gold: #e8b04a;
+  --speak-pink: #f06fb0;
+  --speak-cyan: #4fc8e8;
+  --speak-orange: #f0884f;
+  --speak-white: #e8e9ed;
+  --speak-purple: #b07cf0;
   --hover-tint: rgba(255, 255, 255, .035);
   --hover-tint-strong: rgba(255, 255, 255, .05);
   --veil: rgba(0, 0, 0, .8);
@@ -337,6 +364,15 @@
   --ok-deep: #3f8a60;
   --presence-off: #6e5a5c;
   --ring: var(--bg-1);
+  /* Speaking rings (#651): the palette people pick from. Green is today's ring; each reads at 3:1 on --bg-1. */
+  --speak-green: var(--ok);
+  --speak-blue: #8b9cff;
+  --speak-gold: #e8b04a;
+  --speak-pink: #f06fb0;
+  --speak-cyan: #4fc8e8;
+  --speak-orange: #f0884f;
+  --speak-white: #e8e9ed;
+  --speak-purple: #b07cf0;
   --hover-tint: rgba(255, 200, 190, .03);
   --hover-tint-strong: rgba(255, 200, 190, .045);
   --veil: rgba(35, 23, 26, .8);
@@ -419,6 +455,15 @@
   --ok-deep: #3f8a60;
   --presence-off: #6b6158;
   --ring: var(--bg-1);
+  /* Speaking rings (#651): the palette people pick from. Green is today's ring; each reads at 3:1 on --bg-1. */
+  --speak-green: var(--ok);
+  --speak-blue: #8b9cff;
+  --speak-gold: #e8b04a;
+  --speak-pink: #f06fb0;
+  --speak-cyan: #4fc8e8;
+  --speak-orange: #f0884f;
+  --speak-white: #e8e9ed;
+  --speak-purple: #b07cf0;
   --hover-tint: rgba(255, 225, 200, .03);
   --hover-tint-strong: rgba(255, 225, 200, .045);
   --veil: rgba(30, 26, 23, .8);
@@ -501,6 +546,15 @@
   --ok-deep: #3f8a60;
   --presence-off: #6a5866;
   --ring: var(--bg-1);
+  /* Speaking rings (#651): the palette people pick from. Green is today's ring; each reads at 3:1 on --bg-1. */
+  --speak-green: var(--ok);
+  --speak-blue: #8b9cff;
+  --speak-gold: #e8b04a;
+  --speak-pink: #f06fb0;
+  --speak-cyan: #4fc8e8;
+  --speak-orange: #f0884f;
+  --speak-white: #e8e9ed;
+  --speak-purple: #b07cf0;
   --hover-tint: rgba(255, 215, 245, .03);
   --hover-tint-strong: rgba(255, 215, 245, .045);
   --veil: rgba(33, 23, 31, .8);
@@ -585,6 +639,16 @@
   --ok-deep: #2f9468;
   --presence-off: #9a8fab;
   --ring: var(--bg-1);
+  /* Speaking rings (#651): deeper shades so each reads at 3:1 on --bg-1 (--ok is too pale for a ring here); white is
+     the ink, since white can't show on a light panel. */
+  --speak-green: #1f8f55;
+  --speak-blue: #4a5fd6;
+  --speak-gold: #9a6a00;
+  --speak-pink: #c2307a;
+  --speak-cyan: #0a7f9e;
+  --speak-orange: #b8541a;
+  --speak-white: var(--text);
+  --speak-purple: #7d45cc;
   --hover-tint: rgba(110, 50, 140, .035);
   --hover-tint-strong: rgba(110, 50, 140, .055);
   --veil: rgba(244, 235, 246, .8);
@@ -671,6 +735,16 @@
   --ok-deep: #2f8f5c;
   --presence-off: #8e929e;
   --ring: var(--bg-1);
+  /* Speaking rings (#651): deeper shades so each reads at 3:1 on --bg-1 (--ok is too pale for a ring here); white is
+     the ink, since white can't show on a light panel. */
+  --speak-green: #1f8f55;
+  --speak-blue: #4a5fd6;
+  --speak-gold: #9a6a00;
+  --speak-pink: #c2307a;
+  --speak-cyan: #0a7f9e;
+  --speak-orange: #b8541a;
+  --speak-white: var(--text);
+  --speak-purple: #7d45cc;
   --hover-tint: rgba(20, 24, 40, .035);
   --hover-tint-strong: rgba(20, 24, 40, .055);
   --veil: rgba(244, 244, 246, .8);
@@ -1012,5 +1086,5 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.4; }
 .settings-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
 .settings-list-item { display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 6px 10px; border-radius: var(--radius-md); background: var(--bg-2); }
 
-/* A load in progress (components/Loading.svelte) and an empty list: quiet, left-aligned, the same size. */
-.loading, .empty-note { margin: 0; color: var(--text-3); font-size: 13px; }
+/* A load in progress (components/Loading.svelte): quiet, left-aligned. */
+.loading { margin: 0; color: var(--text-3); font-size: 13px; }

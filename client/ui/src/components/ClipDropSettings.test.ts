@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 // Settings › Chat › Clip drop (#382): its own switch, apart from Game activity (off there leaves it on and usable), the
 // folders it watches, each change saved and told to the core. Windows only.
-import { flushSync, mount, tick, unmount } from 'svelte'
+import { flushSync, mount, unmount } from 'svelte'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const invoke = vi.fn(async (_cmd: string, _args?: unknown): Promise<unknown> => undefined)
@@ -13,6 +13,7 @@ import { clipDropPrefs } from '../lib/clipDropPrefs.svelte'
 import { gamePrefs } from '../lib/gamePrefs.svelte'
 import { app } from '../lib/store.svelte'
 import { emptyState } from '../lib/state'
+import { settle } from '../lib/testSettle'
 
 let cmp: ReturnType<typeof mount> | undefined
 const realUA = navigator.userAgent
@@ -22,10 +23,6 @@ const told = () => invoke.mock.calls.filter((c) => c[0] === 'set_clip_drop').map
 const button = (text: string) => [...document.querySelectorAll('button')].find((b) => b.textContent?.trim() === text)
 const folderPaths = () => [...document.querySelectorAll('.folders .path')].map((e) => e.textContent)
 const defaults = ['C:\\Users\\alex\\Videos\\Captures', 'C:\\Users\\alex\\Videos']
-const settle = async () => {
-  for (let i = 0; i < 3; i++) await tick()
-  flushSync()
-}
 function show(c: typeof ClipDropSettings | typeof ChatSettings = ClipDropSettings) {
   cmp = mount(c, { target: document.body })
   flushSync()
@@ -79,12 +76,12 @@ describe('Clip drop settings', () => {
 
   it('the defaults show; adding one, removing one and going back to the defaults are told', async () => {
     show()
-    await settle()
+    await settle(3)
     expect(folderPaths()).toEqual(defaults)
     expect(button('Use the defaults')).toBeUndefined()
 
     button('Add a folder')!.click()
-    await settle()
+    await settle(3)
     expect(told().at(-1)).toEqual({ on: true, folders: [...defaults, 'D:\\Clips'] })
     expect(folderPaths()).toEqual([...defaults, 'D:\\Clips'])
 

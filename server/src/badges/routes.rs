@@ -91,24 +91,16 @@ async fn set_showcase(
 const SEEN_MAX: usize = 200;
 
 /// `POST /me/badges/seen`: the caller's trophy case showed these badges, at these tiers; they
-/// aren't [NEW] now. A badge earned or a tier reached since stays [NEW] (#129). No body (an older
-/// client) marks everything seen.
+/// aren't [NEW] now. A badge earned or a tier reached since stays [NEW] (#129).
 async fn seen(
     State(s): State<AppState>,
     AuthUser(me): AuthUser,
-    req: Option<Json<MarkBadgesSeenRequest>>,
+    Json(req): Json<MarkBadgesSeenRequest>,
 ) -> AppResult<StatusCode> {
     if !s.limits.mutate_user.hit(&me.to_string()) {
         return Err(AppError::TooManyRequests(None));
     }
     let id = me.to_string();
-    let Some(Json(req)) = req else {
-        sqlx::query("UPDATE user_badges SET seen = 1 WHERE user_id = ? AND seen = 0")
-            .bind(&id)
-            .execute(&s.db)
-            .await?;
-        return Ok(StatusCode::NO_CONTENT);
-    };
     if req.badges.len() > SEEN_MAX {
         return Err(AppError::BadRequest("Too many badges.".into()));
     }

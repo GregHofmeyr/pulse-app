@@ -12,6 +12,7 @@ import LiveCard from './LiveCard.svelte'
 import { stream } from '../lib/stream/stream.svelte'
 import type { SoundStatus } from '../lib/stream/sound'
 import { reloadSelfPreview } from '../lib/stream/selfTile.svelte'
+import { flushMicrotasks } from '../lib/testSettle'
 
 const live = (audio = true) => ({ channelId: 'V1', res: 720 as const, fps: 60 as const, audio, audioMuted: false, label: 'Game', encoderWarning: false, allowGhosts: true, sound: 'app' as const })
 const status = (s: Partial<SoundStatus>): SoundStatus => ({ tier: 'app', app: 'Firefox', heard: false, ms: 1000, ...s })
@@ -23,10 +24,6 @@ const open = () => {
 }
 const meta = () => document.querySelector('.meta')!.textContent!.replace(/\s+/g, ' ').trim()
 const note = () => document.querySelector('[data-note="no-sound"]')
-const settle = async () => {
-  for (let i = 0; i < 5; i++) await Promise.resolve()
-  flushSync()
-}
 
 describe('LiveCard sound', () => {
   beforeEach(() => {
@@ -77,7 +74,7 @@ describe('LiveCard sound', () => {
     const btn = note()!.querySelector('button')!
     expect(btn.textContent!.trim()).toBe('Use everything except Pulse and Discord')
     btn.click()
-    await settle()
+    await flushMicrotasks()
     expect(invoke).toHaveBeenCalledWith('stream_audio_sound', { sound: 'everything' })
     expect(stream.live!.sound).toBe('everything')
   })

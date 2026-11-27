@@ -6,7 +6,7 @@
   import type { Sound } from '../lib/protocol/Sound'
   import { app } from '../lib/store.svelte'
   import { mediaUrl } from '../lib/emoji'
-  import { isNotFound, isRateLimited, previewPercents, searchSounds, soundSections, TIDY_THRESHOLD, type Section } from '../lib/soundboard'
+  import { isNotFound, isRateLimited, previewPercents, searchSounds, soundSections, TIDY_THRESHOLD } from '../lib/soundboard'
   import { playToCall, setSoundboardVolume, soundboard } from '../lib/soundboard.svelte'
   import { joinSoundOf } from '../lib/joinSounds'
   import { mixer } from '../lib/mixer.svelte'

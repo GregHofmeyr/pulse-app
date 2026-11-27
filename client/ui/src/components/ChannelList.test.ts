@@ -19,13 +19,14 @@ import { startVoiceListening, voice, voiceApi } from '../lib/voice.svelte'
 import type { Ready } from '../lib/protocol/Ready'
 import { HOVER_DELAY_MS } from '../lib/hoverPrefetch'
 import { categoryUi, requestCreateCategory } from '../lib/categoryUi.svelte'
-import { drafts, REFUSED_HOLD_MS, resetSaves } from '../lib/layoutDraft.svelte'
+import { REFUSED_HOLD_MS, resetSaves } from '../lib/layoutDraft.svelte'
 import { isCollapsed, resetCollapsed, setCollapsed } from '../lib/sidebarSections.svelte'
 import { testReady } from '../lib/testReady'
 import type { Category } from '../lib/protocol/Category'
 import type { Channel } from '../lib/protocol/Channel'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
+import { settle } from '../lib/testSettle'
 
 const me = { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
 const sam = { id: 'U2', username: 'sam', display_name: 'sam', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
@@ -225,16 +226,15 @@ describe('ChannelList joining', () => {
 const flags = { muted: false, deafened: false }
 const st = (channel_id: string | null, connection: string) => ({ kind: 'state', channel_id, connection, controls: flags })
 const stage = (s: string) => ({ kind: 'stage', stage: s, attempt: null })
-const settle = async () => { await tick(); flushSync() }
 
 describe('voice listener rules', () => {
   it('a_second_click_on_the_channel_being_joined_does_not_restart_it', async () => {
     invoke.mockReturnValue(new Promise(() => {}))
     void voiceApi.join('V1')
-    await settle()
+    await settle(1)
     emit(stage('connecting'))
     void voiceApi.join('V1')
-    await settle()
+    await settle(1)
     expect(invoke.mock.calls.filter(([c]) => c === 'join_voice')).toHaveLength(1)
     expect(voice.stage.stage).toBe('connecting')
     expect(voice.joining).toBe('V1')
@@ -252,12 +252,12 @@ describe('voice listener rules', () => {
     let rejectJoin!: (e: unknown) => void
     invoke.mockImplementation((c: string) => (c === 'join_voice' ? new Promise((_, rej) => (rejectJoin = rej)) : Promise.resolve()))
     const joining = voiceApi.join('V1')
-    await settle()
+    await settle(1)
     expect(rejectJoin).toBeDefined()
     void voiceApi.leave()
     rejectJoin("couldn't connect to voice: x")
     await joining
-    await settle()
+    await settle(1)
     expect(voice.joinFailed).toBeNull()
     expect(voice.error).toBe('')
   })
@@ -266,16 +266,16 @@ describe('voice listener rules', () => {
     let cancel!: (e: unknown) => void
     invoke.mockImplementation((c: string) => (c === 'join_voice' ? new Promise((_, rej) => (cancel = rej)) : Promise.resolve()))
     const joining = voiceApi.join('V1')
-    await settle()
+    await settle(1)
     cancel('cancelled') // e.g. signed out: no newer join replaced it
     await joining
-    await settle()
+    await settle(1)
     expect(voice.joining).toBeNull()
     expect(voice.joinFailed).toBeNull()
     expect(voice.stage).toEqual({ stage: 'disconnected', attempt: null })
     expect(document.querySelectorAll('.occupant.pending')).toHaveLength(0)
     void voiceApi.join('V1')
-    await settle()
+    await settle(1)
     expect(invoke.mock.calls.filter(([c]) => c === 'join_voice')).toHaveLength(2)
   })
 
@@ -305,12 +305,12 @@ describe('voice listener rules', () => {
     // the cancelled join's disconnect lands late, then audio starts: channelId is unset, the row must stay
     emit(st(null, 'disconnected'))
     emit(stage('starting_audio'))
-    await settle()
+    await settle(1)
     expect(voice.joining).toBe('V2')
     expect(rows('Games')).toHaveLength(1)
     emit(st('V2', 'connected'))
     emit(stage('connected'))
-    await settle()
+    await settle(1)
     expect(voice.joining).toBeNull()
   })
 
@@ -325,14 +325,14 @@ describe('voice listener rules', () => {
   it('leaving_settles_when_the_server_list_drops_you', async () => {
     app.state = applyEvent(app.state, { t: 'VoiceJoined', d: { channel_id: 'V1', user_id: 'U1', flags } }, 0)
     voice.channelId = 'V1'
-    await settle()
+    await settle(1)
     invoke.mockResolvedValue(undefined)
     void voiceApi.leave()
-    await settle()
+    await settle(1)
     expect(voice.leaving).toBe('V1')
     expect(rows('Lounge')).toHaveLength(0)
     app.state = applyEvent(app.state, { t: 'VoiceLeft', d: { channel_id: 'V1', user_id: 'U1' } } as never, 0)
-    await settle()
+    await settle(1)
     expect(voice.leaving).toBeNull()
   })
 })
@@ -508,10 +508,6 @@ const type = (input: HTMLInputElement, value: string) => {
   input.dispatchEvent(new Event('input', { bubbles: true }))
 }
 const savedLayout = () => invoke.mock.calls.filter(([c]) => c === 'save_layout').map(([, a]) => (a as { layout: unknown }).layout)
-const flush = async () => {
-  for (let i = 0; i < 4; i++) await tick()
-  flushSync()
-}
 
 describe('ChannelList by categories', () => {
   beforeEach(() => {
@@ -566,7 +562,7 @@ describe('ChannelList by categories', () => {
     expect(input.classList.contains('input-sm')).toBe(true)
     type(input, typed)
     press(input, 'Enter')
-    await flush()
+    await settle(4)
     expect(invoke).toHaveBeenCalledWith('create_channel', { serverId: 'S1', kind, name, categoryId: 'C2' })
     expect(document.querySelector('input[aria-label="New channel name"]')).toBeNull()
     if (kind === 'voice') expect(onSelect).not.toHaveBeenCalled()
@@ -613,18 +609,18 @@ describe('ChannelList by categories', () => {
     invoke.mockRejectedValueOnce('That name is too long')
     type(field, 'Games')
     press(field, 'Enter')
-    await flush()
+    await settle(4)
     expect(invoke).toHaveBeenCalledWith('rename_category', { categoryId: 'C2', name: 'Games' })
     expect(document.querySelector('.cat[data-category="C2"] .err')?.textContent).toBe('That name is too long')
     invoke.mockResolvedValueOnce(cat('C2', 'Games', 1))
     press(field, 'Enter')
-    await flush()
+    await settle(4)
     expect(document.querySelector('input[aria-label="Rename category Gaming"]')).toBeNull()
     expect(document.activeElement).toBe(headingOf('C2'))
 
     rightClick(headingOf('C2'))
     menuItem('Delete category').click()
-    await flush()
+    await settle(4)
     expect(invoke).toHaveBeenCalledWith('delete_category', { categoryId: 'C2' })
   })
 
@@ -660,7 +656,7 @@ describe('ChannelList by categories', () => {
     rightClick(headingOf('C1'))
     expect(menuItem('Move up').disabled).toBe(true)
     menuItem('Move down').click()
-    await flush()
+    await settle(4)
     expect(savedLayout()).toEqual([{ revision: 3, uncategorised: ['T0'], categories: [{ id: 'C2', channels: ['Q1', 'V2'] }, { id: 'C1', channels: ['T1', 'T2'] }, { id: 'C3', channels: ['V1'] }] }])
     // the draft shows at once
     expect(headings().map((h) => h.textContent?.trim())).toEqual(['Gaming', 'Text Channels', 'Voice Channels'])
@@ -672,19 +668,19 @@ describe('ChannelList by categories', () => {
     showLive()
     rowOf('T2').focus()
     press(rowOf('T2'), 'ArrowDown', { altKey: true })
-    await flush()
+    await settle(4)
     expect(savedLayout()).toEqual([{ revision: 3, uncategorised: ['T0'], categories: [{ id: 'C1', channels: ['T1'] }, { id: 'C2', channels: ['T2', 'Q1', 'V2'] }, { id: 'C3', channels: ['V1'] }] }])
     expect(rowNames(document.querySelector('.cat[data-category="C2"]')!)).toEqual(['memes', 'quotes', 'Games'])
     expect(document.activeElement).toBe(rowOf('T2'))
     // up out of the first category into the top area
     rowOf('T1').focus()
     press(rowOf('T1'), 'ArrowUp', { altKey: true })
-    await flush()
+    await settle(4)
     expect(rowNames(document.querySelector('.cat.top')!)).toEqual(['welcome', 'general'])
     expect(document.activeElement).toBe(rowOf('T1'))
     // a voice row moves too
     press(rowOf('V1'), 'ArrowUp', { altKey: true })
-    await flush()
+    await settle(4)
     expect(rowNames(document.querySelector('.cat[data-category="C2"]')!)).toEqual(['memes', 'quotes', 'Games', 'Lounge'])
     // at the very top nothing moves
     const before = savedLayout().length
@@ -697,17 +693,17 @@ describe('ChannelList by categories', () => {
     const said = () => document.querySelector('[aria-live="polite"][data-moves]')?.textContent?.trim()
     expect(said()).toBe('')
     press(rowOf('T2'), 'ArrowDown', { altKey: true })
-    await flush()
+    await settle(4)
     expect(said()).toBe('Moved #memes to Gaming, position 1')
     press(rowOf('T1'), 'ArrowUp', { altKey: true })
-    await flush()
+    await settle(4)
     expect(said()).toBe('Moved #general above the categories, position 2')
     press(rowOf('V1'), 'ArrowUp', { altKey: true })
-    await flush()
+    await settle(4)
     expect(said()).toBe('Moved Lounge to Gaming, position 4')
     rightClick(headingOf('C1'))
     menuItem('Move down').click()
-    await flush()
+    await settle(4)
     expect(said()).toBe('Moved the Text Channels category to position 2')
   })
 
@@ -715,7 +711,7 @@ describe('ChannelList by categories', () => {
     showLive()
     headingOf('C3').focus()
     press(headingOf('C3'), 'ArrowUp', { altKey: true })
-    await flush()
+    await settle(4)
     expect(headings().map((h) => h.textContent?.trim())).toEqual(['Text Channels', 'Voice Channels', 'Gaming'])
     expect(document.activeElement).toBe(headingOf('C3'))
   })
@@ -729,7 +725,7 @@ describe('ChannelList by categories', () => {
     expect(rowNames(document.querySelector('.cat[data-category="C1"]')!)).toEqual(['general'])
     rowOf('T1').focus()
     press(rowOf('T1'), 'ArrowDown', { altKey: true })
-    await flush()
+    await settle(4)
     expect(isCollapsed('cat:C1')).toBe(false)
     expect(rowNames(document.querySelector('.cat[data-category="C1"]')!)).toEqual(['memes', 'general'])
     expect(document.activeElement).toBe(rowOf('T1'))
@@ -744,21 +740,21 @@ describe('ChannelList by categories', () => {
       invoke.mockImplementation((c: string) => (c === 'save_layout' ? Promise.reject('Someone else changed the list first') : Promise.resolve(undefined)))
       rowOf('T2').focus()
       press(rowOf('T2'), 'ArrowDown', { altKey: true })
-      await flush()
-      await flush()
+      await settle(4)
+      await settle(4)
       // nothing else arrived: after the hold for it (#198), back in its own category (a new element), still focused
       vi.advanceTimersByTime(REFUSED_HOLD_MS)
-      await flush()
-      await flush()
+      await settle(4)
+      await settle(4)
       expect(rowNames(document.querySelector('.cat[data-category="C1"]')!)).toEqual(['general', 'memes'])
       expect(document.activeElement).toBe(rowOf('T2'))
       headingOf('C3').focus()
       press(headingOf('C3'), 'ArrowUp', { altKey: true })
-      await flush()
-      await flush()
+      await settle(4)
+      await settle(4)
       vi.advanceTimersByTime(REFUSED_HOLD_MS)
-      await flush()
-      await flush()
+      await settle(4)
+      await settle(4)
       expect(headings().map((h) => h.textContent?.trim())).toEqual(['Text Channels', 'Gaming', 'Voice Channels'])
       expect(document.activeElement).toBe(headingOf('C3'))
     } finally {
@@ -782,7 +778,7 @@ describe('ChannelList by categories', () => {
     expect(choices.map((b) => b.textContent?.trim())).toEqual(['No category', 'Text Channels', 'Gaming', 'Voice Channels'])
     expect(choices.map((b) => b.getAttribute('aria-checked'))).toEqual(['false', 'false', 'true', 'false'])
     choices[1].click()
-    await flush()
+    await settle(4)
     // to the end of Text Channels
     expect(savedLayout()).toEqual([{ revision: 3, uncategorised: ['T0'], categories: [{ id: 'C1', channels: ['T1', 'T2', 'Q1'] }, { id: 'C2', channels: ['V2'] }, { id: 'C3', channels: ['V1'] }] }])
     expect(document.querySelector('[data-moves]')!.textContent).toBe('Moved #quotes to Text Channels, position 3')
@@ -797,7 +793,7 @@ describe('ChannelList by categories', () => {
     flushSync()
     const flyout = document.querySelector<HTMLElement>('[role=menu][aria-label="Move #general to"]')!
     ;[...flyout.querySelectorAll<HTMLButtonElement>('[role^=menuitem]')][0].click()
-    await flush()
+    await settle(4)
     expect(savedLayout()).toEqual([{ revision: 3, uncategorised: ['T0', 'T1'], categories: [{ id: 'C1', channels: ['T2'] }, { id: 'C2', channels: ['Q1', 'V2'] }, { id: 'C3', channels: ['V1'] }] }])
   })
 
@@ -832,7 +828,7 @@ describe('ChannelList by categories', () => {
     invoke.mockResolvedValueOnce(cat('C9', 'Raid Night', 3))
     type(input, '  Raid Night ')
     press(input, 'Enter')
-    await flush()
+    await settle(4)
     expect(invoke).toHaveBeenCalledWith('create_category', { serverId: 'S1', name: 'Raid Night' })
     expect(document.querySelector('input[aria-label="New category name"]')).toBeNull()
     requestCreateCategory('S1')
@@ -851,5 +847,30 @@ describe('ChannelList by categories', () => {
     expect(document.querySelector('[data-category]')).toBeNull()
     rightClick(headings()[0])
     expect(document.querySelector('[role=menu]')).toBeNull()
+  })
+})
+
+// #651: the 22px occupant avatars always show the static Classic ring, in the person's ring colour
+describe('speaking rings in the list', () => {
+  it('occupant_ring_is_static_classic_in_the_persons_colour', () => {
+    if (cmp) unmount(cmp)
+    document.body.innerHTML = ''
+    const gold = { ...sam, ring_style: 'bars', ring_color: 'gold' }
+    app.state = applyReady(emptyState(), { ...ready, members: [{ server_id: 'S1', members: [{ user: me, nickname: null }, { user: gold, nickname: null }] }] })
+    app.state = applyEvent(app.state, { t: 'VoiceJoined', d: { channel_id: 'V1', user_id: 'U2', flags: { muted: false, deafened: false } } } as never, Date.now())
+    cmp = mount(ChannelList, {
+      target: document.body,
+      props: { serverId: 'S1', activeChannelId: null, voiceChannelId: null, speaking: new Set<string>(['U2']), onSelect: () => {}, onJoinVoice: () => {}, onMessage: () => {}, onVoiceSettings: () => {} },
+    })
+    flushSync()
+    const ring = document.querySelector<HTMLElement>('.occupant[data-user="U2"] .ring')!
+    expect(ring.classList.contains('speaking')).toBe(true)
+    expect(ring.style.getPropertyValue('--speak')).toBe('var(--speak-gold)')
+    // no animated ring here, whatever their style
+    expect(ring.querySelector('.ring-box')).toBeNull()
+    const css = readFileSync(resolve(__dirname, 'ChannelList.svelte'), 'utf8').match(/<style>([\s\S]*)<\/style>/)![1]
+    const rule = css.match(/\.ring\.speaking \{([^}]*)\}/)![1]
+    expect(rule).toMatch(/box-shadow: 0 0 0 2px var\(--ring\), 0 0 0 4px var\(--speak\)/)
+    expect(rule).not.toMatch(/transition|animation/)
   })
 })

@@ -6,6 +6,16 @@ import type { BuildFacets } from './protocol/BuildFacets'
 import type { EmbedThumb } from './protocol/EmbedThumb'
 import type { Event } from './protocol/Event'
 import type { Message } from './protocol/Message'
+import { build_limits } from './protocol/limits'
+
+/** The server's `build_limits` (generated into protocol/limits.ts, #415). The server counts code points; inputs capped
+ *  with `maxlength` count UTF-16 units, so the client is only ever stricter. */
+export const BUILD_LIMITS = {
+  titleChars: build_limits.TITLE_CHARS,
+  notesChars: build_limits.NOTES_CHARS,
+  maxScreenshots: build_limits.MAX_SCREENSHOTS,
+  linkChars: build_limits.LINK_CHARS,
+} as const
 
 /** Which builds of a channel a feed shows: one game (id), archived ones too, ones with these words, and/or only the ones
  *  you starred (the Favourites section's own feed, #617). */
@@ -37,11 +47,6 @@ export function buildFilter(f: BuildFilter): BuildFilter {
 export function buildFeedKey(channelId: string, f: BuildFilter): string {
   const n = buildFilter(f)
   return JSON.stringify([channelId, n.game ?? '', n.archived ? 1 : 0, n.q ?? '', ...(n.favourite ? [1] : [])])
-}
-
-/** A channel's feed for a filter, if started. */
-export function buildFeedOf(s: AppState, channelId: string, f: BuildFilter): BuildFeed | undefined {
-  return s.buildFeeds[buildFeedKey(channelId, f)]
 }
 
 /** Whether a build belongs in a feed with this filter, by its game, archived state and your star (a feed with words is

@@ -245,14 +245,16 @@ town's weather (#451). Change it and `just deploy`; places already looked up kee
 - Releases run one at a time (the workflow's concurrency group). When pushes to `main` land back to back, GitHub keeps
   only the newest waiting run, so a middle commit can end up with no image at all: deploy the newer one.
 - Build inputs are pinned too. When bumping the Rust version, change it in three places together: `rust-toolchain.toml`
-  (CI, the Windows release and local builds) and the `rust:<version>-bookworm@sha256:…` line in `server.Dockerfile`.
+  (CI, the Windows release and local builds), the `rust:<version>-bookworm@sha256:…` line in `server.Dockerfile`, and
+  the version quoted under "Pinned build inputs" in `SECURITY.md`.
   Dependabot opens PRs for each (rust-toolchain, docker); the digest is the multi-arch index digest. The Tauri CLI is
   an exact devDependency of `client/ui` (`@tauri-apps/cli` in its `package.json`, on the `tauri` crate's minor version):
   the Windows release runs that one, so bump the two together. GitHub Actions are
   pinned to commit SHAs with a `# vX.Y.Z` comment, and `ci.yml` checks the LLVM apt key against its published fingerprint.
 - Node and pnpm are pinned to exact versions (`node-version` / `version` of the setup actions) in `ci.yml` and
-  `release-windows.yml`. Dependabot doesn't bump those inputs: to bump, take the newest release of the same major
-  (`https://nodejs.org/dist/index.json`, `npm view pnpm@<major> version`), change it in both workflows, and let CI run.
+  `release-windows.yml`; pnpm's is also the `packageManager` field of `client/ui/package.json`. Dependabot doesn't bump
+  those: to bump, take the newest release of the same major (`https://nodejs.org/dist/index.json`,
+  `npm view pnpm@<major> version`), change it in both workflows (and `packageManager` for pnpm), and let CI run.
 - Bumping LiveKit or Caddy: Dependabot opens a PR for new tags (`.github/dependabot.yml`). To do it by hand,
   take the digest of the multi-arch **index**, not of one platform: `docker manifest inspect <image>:<tag> -v`, or
   `HEAD /v2/<repo>/manifests/<tag>` on the registry with the OCI index and manifest-list `Accept` headers and read
@@ -287,6 +289,12 @@ town's weather (#451). Change it and `just deploy`; places already looked up kee
                          DELETE FROM _sqlx_migrations WHERE version = 39; COMMIT;"
   ```
   (the example undoes `0039`; roll back newest first, one migration at a time).
+  - `0086_revoke_departed_makers_invites.sql` says "Rollback = nothing to undo": it's a one-off data fix, so there's
+    no schema to undo, but its row still blocks an older image. Delete row 86 with the server stopped (the invites it
+    revoked stay revoked; they were already refused on accept), or restore the deploy's backup.
+  - `0085_speaking_ring.sql` (no note) adds two nullable columns: `ALTER TABLE users DROP COLUMN ring_color;
+    ALTER TABLE users DROP COLUMN ring_style; DELETE FROM _sqlx_migrations WHERE version = 85;` in one transaction,
+    server stopped, after 86.
 - **Rehearse new migrations before deploying them.** Fetch a fresh backup and decrypt it on your machine, apply the
   new `server/migrations/*.sql` files to the copy with foreign keys off (as `server/src/db.rs` runs them; table
   rebuilds have a guard that fails with them on), check it, then delete the copy:
@@ -518,7 +526,7 @@ from the backups in R2 and the password manager. Have NordPass open: the backup 
    | `R2_ACCOUNT_ID`, `R2_BUCKET`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` | NordPass (or a new backups token, section 8 step 2) |
    | `BACKUP_PING_URL` | NordPass / healthchecks.io (optional) |
    | `CLIPS_R2_BUCKET`, `CLIPS_R2_ACCESS_KEY_ID`, `CLIPS_R2_SECRET_ACCESS_KEY` | NordPass (or a new clips token, section 9 step 2) |
-   | `PULSE_LAUNCH_DATE`, `PULSE_INVITE_DECOY`, `PULSE_UPDATE_RESCUE`, `PULSE_PLANS_COUNTRY` | NordPass copy of the old `.env` (empty is the default) |
+   | `PULSE_LAUNCH_DATE`, `PULSE_INVITE_DECOY`, `PULSE_PLANS_COUNTRY` | NordPass copy of the old `.env` (empty is the default) |
    | `GIPHY_API_KEY`, `PULSE_STEAM_API_KEY`, `PULSE_DEADLOCK_API_KEY`, `PULSE_API_SPORTS_KEY` | NordPass (optional; or new keys from each site, section 6) |
 
    The R2 values have to be in before step 5: the restore fetches the backups through the server.

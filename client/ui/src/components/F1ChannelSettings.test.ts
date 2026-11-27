@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 // Server settings › F1 (#386): the owner picks one of the server's text channels or none (the default); everyone else
 // reads the choice.
-import { flushSync, mount, tick, unmount } from 'svelte'
+import { flushSync, mount, unmount } from 'svelte'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const invoke = vi.fn(async (_cmd: string, _args?: unknown): Promise<unknown> => undefined)
@@ -13,14 +13,11 @@ import { app } from '../lib/store.svelte'
 import { emptyState } from '../lib/state'
 import { f1Status, resetF1 } from '../lib/f1.svelte'
 import type { Channel } from '../lib/protocol/Channel'
+import { settle } from '../lib/testSettle'
 
 let cmp: ReturnType<typeof mount> | undefined
 const ch = (id: string, kind: Channel['kind'], position: number, server_id = 'S1') => ({ id, server_id, kind, name: id.toLowerCase(), position }) as unknown as Channel
 const status = (channel_id: string | null, picks_close = 'lights_out') => ({ channel_id, next: null, season_table: [], picks_close })
-const settle = async () => {
-  for (let i = 0; i < 4; i++) await tick()
-  flushSync()
-}
 
 beforeEach(() => {
   resetF1()
@@ -49,17 +46,17 @@ function open(owner: string) {
 describe('F1ChannelSettings', () => {
   it("the owner picks among this server's text channels; none by default", async () => {
     open('U1')
-    await settle()
+    await settle(4)
     const select = selectTrigger()!
     expect(selectLabels(select)).toEqual(['None (no F1 cards)', '#general', '#paddock'])
     expect(selectValue(select)).toBe('')
     chooseOption(select, 'PADDOCK')
-    await settle()
+    await settle(4)
     expect(invoke).toHaveBeenCalledWith('set_f1_channel', { serverId: 'S1', channelId: 'PADDOCK', picksClose: null })
     // the banner's copy follows at once
     expect(f1Status.byServer.S1.channel_id).toBe('PADDOCK')
     chooseOption(select, '')
-    await settle()
+    await settle(4)
     expect(invoke).toHaveBeenLastCalledWith('set_f1_channel', { serverId: 'S1', channelId: null, picksClose: null })
   })
 
@@ -70,12 +67,12 @@ describe('F1ChannelSettings', () => {
       return undefined
     })
     open('U1')
-    await settle()
+    await settle(4)
     const close = selectTrigger('Predictions close')!
     expect(selectLabels(close)).toEqual(['At lights out', 'When qualifying starts'])
     expect(selectValue(close)).toBe('lights_out')
     chooseOption(close, 'qualifying')
-    await settle()
+    await settle(4)
     expect(invoke).toHaveBeenLastCalledWith('set_f1_channel', { serverId: 'S1', channelId: 'GENERAL', picksClose: 'qualifying' })
     expect(selectValue(close)).toBe('qualifying')
     expect(f1Status.byServer.S1.picks_close).toBe('qualifying')
@@ -83,14 +80,14 @@ describe('F1ChannelSettings', () => {
 
   it('with no channel there is no predictions choice', async () => {
     open('U1')
-    await settle()
+    await settle(4)
     expect(selectTrigger('Predictions close')).toBeNull()
   })
 
   it('anyone else reads the choice', async () => {
     invoke.mockImplementation(async (cmd: string) => (cmd === 'f1_status' ? status('GENERAL') : undefined))
     open('U9')
-    await settle()
+    await settle(4)
     expect(selectTrigger()).toBeNull()
     expect(document.body.textContent).toContain('F1 cards go to #general. Predictions close at lights out.')
   })

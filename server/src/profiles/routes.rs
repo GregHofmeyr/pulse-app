@@ -94,7 +94,9 @@ async fn save(
         "UPDATE users SET avatar_hash = ?, banner_hash = ?, theme_top = ?, theme_bottom = ?, \
          name_font = ?, name_color = ?, name_effect = ?, pronouns = ?, bio = ?, \
          display_name = COALESCE(?, display_name), card_glow = COALESCE(?, card_glow), \
-         typing_text = CASE WHEN ? THEN ? ELSE typing_text END WHERE id = ?",
+         typing_text = CASE WHEN ? THEN ? ELSE typing_text END, \
+         ring_style = CASE WHEN ? THEN ? ELSE ring_style END, \
+         ring_color = CASE WHEN ? THEN ? ELSE ring_color END WHERE id = ?",
     )
     .bind(&v.avatar_hash)
     .bind(&v.banner_hash)
@@ -110,6 +112,11 @@ async fn save(
     // absent keeps it; blank clears it (#652)
     .bind(v.typing_text.is_some())
     .bind(v.typing_text.flatten())
+    // absent keeps them; the defaults store NULL (#651)
+    .bind(v.ring_style.is_some())
+    .bind(v.ring_style.flatten())
+    .bind(v.ring_color.is_some())
+    .bind(v.ring_color.flatten())
     .bind(me.to_string())
     .execute(&mut *tx)
     .await?;

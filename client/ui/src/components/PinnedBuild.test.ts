@@ -17,6 +17,7 @@ import { forgetPinnedBuild, notePinnedBuildEvent, pinBuild, pinnedBuild } from '
 import { app, handleReady, resetState, ui } from '../lib/store.svelte'
 import { applyEvent } from '../lib/state'
 import { testMe, testReady } from '../lib/testReady'
+import { nextTask } from '../lib/testSettle'
 
 const sam = { id: 'U2', username: 'sam', display_name: 'sam', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
 const ready = () =>
@@ -35,10 +36,9 @@ const build = (id: string, b: Partial<Build> = {}): Message => ({
 })
 
 let cmp: ReturnType<typeof mount> | undefined
-const settle = () => new Promise((r) => setTimeout(r, 0))
 async function flush() {
   flushSync()
-  await settle()
+  await nextTask()
   flushSync()
 }
 const event = (e: Event) => {

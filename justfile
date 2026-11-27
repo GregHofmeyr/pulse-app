@@ -1,6 +1,8 @@
 set dotenv-load := true
 
-# everything CI runs
+# the local checks: Rust fmt/clippy/tests, the generated protocol types, the UI's check and tests, and the ffmpeg
+# script self-test. Not all of CI: `deploy-check` covers the deploy job; cargo-deny, pnpm audit, the server image and
+# the Windows workflows run only in CI.
 check: fmt-check clippy test types-check ui-check fetch-ffmpeg-test
 
 fmt-check:
@@ -111,7 +113,7 @@ deploy-check:
     caddy_image=$(docker compose --env-file /tmp/pulse-ci.env -f deploy/compose.yml config --images | grep '^caddy:') && \
         docker run --rm -e PULSE_DOMAIN=example.com -e ACME_EMAIL=ci@example.com \
         -v "$PWD/deploy/Caddyfile:/etc/caddy/Caddyfile:ro" "$caddy_image" caddy validate --config /etc/caddy/Caddyfile
-    docker run --rm -v "$PWD:/mnt" -w /mnt koalaman/shellcheck:v0.11.0 deploy/*.sh
+    docker run --rm -v "$PWD:/mnt" -w /mnt koalaman/shellcheck:v0.11.0 deploy/*.sh scripts/fetch-ffmpeg*.sh
     bash deploy/deploy-selftest.sh
     bash deploy/backup-selftest.sh
     bash deploy/publish-update-selftest.sh
@@ -140,7 +142,7 @@ disk:
     echo "$out"
     used=$(awk 'NR==1 {sub("%", "", $5); print $5}' <<<"$out")
     if [ "$used" -ge 80 ]; then echo "WARNING: server disk ${used}% full" >&2; exit 1; fi
-    du -sh target ../pulse-app-*/target 2>/dev/null || true
+    du -sh target .claude/worktrees/*/target 2>/dev/null || true
 
 # back up, then run image TAG (a 7-char commit or `latest`) once its provenance (built by release-server.yml on main) checks out; prints the commit that's live
 deploy $tag="latest":

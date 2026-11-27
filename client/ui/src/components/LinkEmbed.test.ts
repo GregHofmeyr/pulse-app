@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { flushSync, mount, tick, unmount } from 'svelte'
+import { flushSync, mount, unmount } from 'svelte'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { LinkEmbed as Embed } from '../lib/protocol/LinkEmbed'
 
@@ -15,6 +15,7 @@ import { voice } from '../lib/voice.svelte'
 import { forgetEmbedOrigin, player } from '../lib/linkPreviews.svelte'
 import { watchPrefs } from '../lib/watchParty.svelte'
 import type { WatchParty } from '../lib/protocol/WatchParty'
+import { flushMicrotasks } from '../lib/testSettle'
 
 const HASH = 'a'.repeat(64)
 const yt = (over: Partial<Embed> = {}): Embed => ({
@@ -32,7 +33,6 @@ function show(embed: Embed, { mine = false, messageId = 'M1', channelId = null a
   flushSync()
   return host
 }
-async function settle() { for (let i = 0; i < 5; i++) await Promise.resolve(); await tick(); flushSync() }
 const iframes = () => [...document.querySelectorAll('iframe')]
 
 beforeEach(() => {
@@ -51,7 +51,7 @@ describe('LinkEmbed', () => {
   it('renders provider text as text, never as HTML', async () => {
     const evil = '<img src=x onerror="alert(1)">'
     const host = show(yt({ title: evil, description: evil, author: evil, site_name: evil }))
-    await settle()
+    await flushMicrotasks(6)
     expect(host.textContent).toContain(evil)
     const imgs = [...host.querySelectorAll('img')]
     expect(imgs).toHaveLength(1) // only the thumbnail
@@ -61,7 +61,7 @@ describe('LinkEmbed', () => {
 
   it('the title links to the URL, opening outside the app', async () => {
     const host = show(yt())
-    await settle()
+    await flushMicrotasks(6)
     const a = [...host.querySelectorAll('a')].find((x) => x.textContent === 'A video')!
     expect(a.getAttribute('href')).toBe('https://www.youtube.com/watch?v=dQw4w9WgXcQ')
     expect(a.getAttribute('target')).toBe('_blank')
@@ -70,7 +70,7 @@ describe('LinkEmbed', () => {
 
   it('clicking play swaps the thumbnail for our embed page', async () => {
     const host = show(yt({ start: 30 }))
-    await settle()
+    await flushMicrotasks(6)
     expect(iframes()).toHaveLength(0)
     host.querySelector<HTMLButtonElement>('button.play')!.click()
     flushSync()
@@ -91,7 +91,7 @@ describe('LinkEmbed', () => {
   for (const state of ['ended', 'error'] as const) {
     it(`the player saying it ${state === 'ended' ? 'ended' : 'failed (its pop-out closed)'} brings the card back`, async () => {
       const host = show(yt())
-      await settle()
+      await flushMicrotasks(6)
       host.querySelector<HTMLButtonElement>('button.play')!.click()
       flushSync()
       const f = host.querySelector('iframe')!
@@ -111,7 +111,7 @@ describe('LinkEmbed', () => {
   it("ignores a player message from another origin, another card's player, or anything that isn't one", async () => {
     const a = show(yt())
     const b = show(yt({ url: 'https://youtu.be/aaaaaaaaaaa', provider_id: 'aaaaaaaaaaa' }), { messageId: 'M2' })
-    await settle()
+    await flushMicrotasks(6)
     a.querySelector<HTMLButtonElement>('button.play')!.click()
     flushSync()
     const f = a.querySelector('iframe')!
@@ -127,7 +127,7 @@ describe('LinkEmbed', () => {
 
   it('an open player can be closed back to its card', async () => {
     const host = show(yt())
-    await settle()
+    await flushMicrotasks(6)
     expect(host.querySelector('button.close-player')).toBeNull()
     host.querySelector<HTMLButtonElement>('button.play')!.click()
     flushSync()
@@ -143,7 +143,7 @@ describe('LinkEmbed', () => {
   it('starting a second player stops the first', async () => {
     const a = show(yt())
     const b = show(yt({ url: 'https://youtu.be/aaaaaaaaaaa', provider_id: 'aaaaaaaaaaa' }), { messageId: 'M2' })
-    await settle()
+    await flushMicrotasks(6)
     a.querySelector<HTMLButtonElement>('button.play')!.click()
     flushSync()
     expect(a.querySelector('iframe')).not.toBeNull()
@@ -157,7 +157,7 @@ describe('LinkEmbed', () => {
   it('without an embed origin the play control opens the link instead', async () => {
     origin = null
     const host = show(yt())
-    await settle()
+    await flushMicrotasks(6)
     const play = host.querySelector<HTMLAnchorElement>('a.play')!
     expect(play).not.toBeNull()
     expect(play.getAttribute('href')).toBe('https://www.youtube.com/watch?v=dQw4w9WgXcQ')
@@ -172,7 +172,7 @@ describe('LinkEmbed', () => {
 
   it('Instagram opens the pop-out window', async () => {
     const host = show(yt({ url: 'https://www.instagram.com/reel/Abc_12/', provider: 'instagram', provider_id: 'reel:Abc_12', title: null, thumb: null, site_name: 'Instagram' }))
-    await settle()
+    await flushMicrotasks(6)
     expect(host.textContent).toContain('Instagram · reel')
     host.querySelector<HTMLButtonElement>('button.play')!.click()
     flushSync()
@@ -186,7 +186,7 @@ describe('LinkEmbed', () => {
   it('YouTube refusing to play framed (error 153) moves it to the pop-out window, and the rest follow', async () => {
     const host = show(yt({ start: 42 }))
     const other = show(yt({ url: 'https://youtu.be/aaaaaaaaaaa', provider_id: 'aaaaaaaaaaa' }), { messageId: 'M2' })
-    await settle()
+    await flushMicrotasks(6)
     host.querySelector<HTMLButtonElement>('button.play')!.click()
     flushSync()
     const f = host.querySelector('iframe')!
@@ -205,7 +205,7 @@ describe('LinkEmbed', () => {
 
   it('any other player error only brings the card back', async () => {
     const host = show(yt())
-    await settle()
+    await flushMicrotasks(6)
     host.querySelector<HTMLButtonElement>('button.play')!.click()
     flushSync()
     fromPage({ pulse: 'player', state: 'error', code: 150 }, host.querySelector('iframe')!.contentWindow)
@@ -219,7 +219,7 @@ describe('LinkEmbed', () => {
 
   it("a playing Twitch clip can move to the pop-out window (its refusal can't be seen from outside)", async () => {
     const host = show(yt({ url: 'https://clips.twitch.tv/FunnyClip', provider: 'twitch', provider_id: 'FunnyClip', site_name: 'Twitch' }))
-    await settle()
+    await flushMicrotasks(6)
     host.querySelector<HTMLButtonElement>('button.play')!.click()
     flushSync()
     expect(iframes()).toHaveLength(1)
@@ -237,28 +237,28 @@ describe('LinkEmbed', () => {
 
   it('a generic card has no play control', async () => {
     const host = show(yt({ url: 'https://example.com/a', provider: 'generic', kind: 'card', provider_id: null, site_name: 'Example' }))
-    await settle()
+    await flushMicrotasks(6)
     expect(host.querySelector('.play')).toBeNull()
     expect(host.textContent).toContain('Example')
   })
 
   it('“Remove preview” only for the sender, and it hides this link', async () => {
     const theirs = show(yt())
-    await settle()
+    await flushMicrotasks(6)
     expect(theirs.querySelector('button[aria-label="Remove preview"]')).toBeNull()
     const mine = show(yt(), { mine: true, messageId: 'M9' })
-    await settle()
+    await flushMicrotasks(6)
     mine.querySelector<HTMLButtonElement>('button[aria-label="Remove preview"]')!.click()
-    await settle()
+    await flushMicrotasks(6)
     expect(invoke).toHaveBeenCalledWith('hide_embed', { messageId: 'M9', url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ' })
   })
 
   it('a failed hide reports through onError', async () => {
     const host = show(yt(), { mine: true })
-    await settle()
+    await flushMicrotasks(6)
     invoke.mockImplementationOnce(async () => { throw 'not allowed' })
     host.querySelector<HTMLButtonElement>('button[aria-label="Remove preview"]')!.click()
-    await settle()
+    await flushMicrotasks(6)
     expect(onError).toHaveBeenCalledWith('not allowed')
   })
 
@@ -271,7 +271,7 @@ describe('LinkEmbed', () => {
       disconnect() {}
     })
     const host = show(yt())
-    await settle()
+    await flushMicrotasks(6)
     host.querySelector<HTMLButtonElement>('button.play')!.click()
     flushSync()
     expect(opts?.rootMargin).toBe('400px')
@@ -313,16 +313,16 @@ describe('LinkEmbed', () => {
 
       it('on a Spotify card in the chat of the call you are in', async () => {
         const host = show(jam(), { channelId: 'V1' })
-        await settle()
+        await flushMicrotasks(6)
         shareBtn(host)!.click()
-        await settle()
+        await flushMicrotasks(6)
         expect(invoke).toHaveBeenCalledWith('share_to_stage', { channelId: 'V1', url: 'https://open.spotify.com/socialsession/ABC123abc123' })
       })
 
       it('says "On the stage" while that very link is up there', async () => {
         app.state = { ...app.state, stageShares: { V1: [{ id: 'SH1', channel_id: 'V1', shared_by: 'U2', shared_at: '', expires_at: '', embed: jam() }] } }
         const host = show(jam(), { channelId: 'V1' })
-        await settle()
+        await flushMicrotasks(6)
         expect(shareBtn(host)).toBeUndefined()
         expect(host.textContent).toContain('On the stage')
         expect(shareBtn(show(sp(), { channelId: 'V1' }))).toBeDefined()
@@ -342,10 +342,10 @@ describe('LinkEmbed', () => {
 
       it('a refusal shows as the message\'s error', async () => {
         const host = show(sp(), { channelId: 'V1' })
-        await settle()
+        await flushMicrotasks(6)
         invoke.mockImplementationOnce(async () => { throw { kind: 'rejected', message: "that isn't a Spotify link" } })
         shareBtn(host)!.click()
-        await settle()
+        await flushMicrotasks(6)
         expect(onError).toHaveBeenCalledOnce()
       })
     })
@@ -353,14 +353,14 @@ describe('LinkEmbed', () => {
     it('no coloured bar down the left edge of any card', async () => {
       for (const e of [sp(), yt()]) {
         const host = show(e)
-        await settle()
+        await flushMicrotasks(6)
         expect(host.querySelector<HTMLElement>('.embed')!.style.getPropertyValue('--brand')).toBe('')
       }
     })
 
     it('a track: kind, title, artist, uncovered artwork and “Listen on Spotify”', async () => {
       const host = show(sp())
-      await settle()
+      await flushMicrotasks(6)
       expect(host.querySelector('.label')!.textContent).toContain('Spotify · Track')
       expect(host.textContent).toContain('A song')
       expect(host.querySelector('.sub')!.textContent).toBe('alex')
@@ -376,7 +376,7 @@ describe('LinkEmbed', () => {
 
     it('the attribution is the single-colour Spotify icon', async () => {
       const host = show(sp())
-      await settle()
+      await flushMicrotasks(6)
       const icon = host.querySelector('.label svg[role="img"]')!
       expect(icon.getAttribute('aria-label')).toBe('Spotify')
       expect(icon.querySelector('path')!.getAttribute('fill')).toBe('currentColor')
@@ -385,7 +385,7 @@ describe('LinkEmbed', () => {
 
     it('“Play” starts the inline player through our embed page', async () => {
       const host = show(sp())
-      await settle()
+      await flushMicrotasks(6)
       const play = [...host.querySelectorAll('button')].find((b) => b.textContent?.trim() === 'Play')!
       play.click()
       flushSync()
@@ -396,7 +396,7 @@ describe('LinkEmbed', () => {
     it('without an embed origin there is no Play, only the link out', async () => {
       origin = null
       const host = show(sp())
-      await settle()
+      await flushMicrotasks(6)
       expect([...host.querySelectorAll('button')].some((b) => b.textContent?.trim() === 'Play')).toBe(false)
       expect(link(host, 'Listen on Spotify')).toBeDefined()
     })
@@ -404,7 +404,7 @@ describe('LinkEmbed', () => {
     it('an artist says “Open Spotify”; a podcast is named so', async () => {
       const a = show(sp({ url: `https://open.spotify.com/artist/${SP}`, provider_id: `artist:${SP}` }))
       const p = show(sp({ url: `https://open.spotify.com/show/${SP}`, provider_id: `show:${SP}` }), { messageId: 'M2' })
-      await settle()
+      await flushMicrotasks(6)
       expect(link(a, 'Open Spotify')).toBeDefined()
       expect(link(a, 'Listen on Spotify')).toBeUndefined()
       expect(p.querySelector('.label')!.textContent).toContain('Spotify · Podcast')
@@ -413,7 +413,7 @@ describe('LinkEmbed', () => {
 
     it('a Jam: “Join the Jam”, our subtitle, “Open Spotify” and no player', async () => {
       const host = show(jam())
-      await settle()
+      await flushMicrotasks(6)
       expect(host.querySelector('.label')!.textContent).toContain('Spotify · Jam')
       expect(host.querySelector('.title')!.textContent).toBe('Join the Jam')
       expect(host.querySelector('.sub')!.textContent).toMatch(/together/i)
@@ -430,7 +430,7 @@ describe('LinkEmbed', () => {
   it('asks the core for the embed origin once', async () => {
     show(yt())
     show(yt(), { messageId: 'M2' })
-    await settle()
+    await flushMicrotasks(6)
     expect(invoke.mock.calls.filter(([c]) => c === 'embed_origin')).toHaveLength(1)
   })
 })
@@ -458,9 +458,9 @@ describe('watch party (#384)', () => {
 
   it('a YouTube card starts one in the voice channel you are in, from any chat', async () => {
     const host = show(yt({ provider_id: 'dQw4w9WgXcQ' }), { channelId: 'C9' })
-    await settle()
+    await flushMicrotasks(6)
     btn(host, 'Start watch party')!.click()
-    await settle()
+    await flushMicrotasks(6)
     expect(invoke).toHaveBeenCalledWith('start_watch_party', { channelId: 'V1', source: 'youtube', videoId: 'dQw4w9WgXcQ', title: 'A video' })
   })
 
@@ -469,9 +469,9 @@ describe('watch party (#384)', () => {
     for (const [id, source, videoId] of [['video:123', 'twitch_video', '123'], ['channel:alex', 'twitch_channel', 'alex'], ['FunnyClip-1', 'twitch_clip', 'FunnyClip-1']]) {
       invoke.mockClear()
       const host = show(tw(id))
-      await settle()
+      await flushMicrotasks(6)
       btn(host, 'Start watch party')!.click()
-      await settle()
+      await flushMicrotasks(6)
       expect(invoke).toHaveBeenCalledWith('start_watch_party', { channelId: 'V1', source, videoId, title: 'A video' })
     }
     expect(btn(show(tw('video:v1')), 'Start watch party')).toBeUndefined()
@@ -496,7 +496,7 @@ describe('watch party (#384)', () => {
     let host = show(yt())
     expect(btn(host, 'Play in watch party')).toBeDefined()
     btn(host, 'Add to queue')!.click()
-    await settle()
+    await flushMicrotasks(6)
     expect(invoke).toHaveBeenCalledWith('watch_party_action', { channelId: 'V1', action: { action: 'enqueue', source: 'youtube', video_id: 'dQw4w9WgXcQ', title: 'A video' } })
     // sam hosts, alex watches: queue only
     app.state = { ...app.state, watchParties: { V1: party({ host_id: 'U2', viewers: ['U2', 'U1'] }) } }

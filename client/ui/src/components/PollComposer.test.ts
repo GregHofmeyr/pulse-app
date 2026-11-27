@@ -22,6 +22,7 @@ import PollComposer, { forgetPollDrafts } from './PollComposer.svelte'
 import { app, resetState } from '../lib/store.svelte'
 import { emptyState } from '../lib/state'
 import { resetPolls } from '../lib/polls.svelte'
+import { flushMicrotasks } from '../lib/testSettle'
 
 let cmp: ReturnType<typeof mount> | undefined
 let closed = 0
@@ -40,7 +41,6 @@ function fill(field: HTMLInputElement, value: string) {
   field.dispatchEvent(new Event('input'))
   flushSync()
 }
-const flush = async () => { for (let i = 0; i < 5; i++) await Promise.resolve(); flushSync() }
 
 beforeEach(() => {
   resetState()
@@ -98,7 +98,7 @@ describe('PollComposer', () => {
     ;[...pop().querySelectorAll<HTMLButtonElement>('[role="radio"]')].find((b) => b.textContent === '1 week')!.click()
     flushSync()
     button('Post poll')!.click()
-    await flush()
+    await flushMicrotasks()
     expect(invoke).toHaveBeenCalledWith('create_poll', {
       channelId: 'C1',
       request: { question: 'Where to eat?', options: ['Pizza', 'Sushi'], multi: false, anonymous: true, ends_in: 'week' },
@@ -129,7 +129,7 @@ describe('PollComposer', () => {
     refuse = 'Too many requests'
     open({ question: 'Q?', options: ['a', 'b'] })
     button('Post poll')!.click()
-    await flush()
+    await flushMicrotasks()
     expect(pop().querySelector('[role="alert"]')!.textContent).toBe('Too many requests')
     expect(closed).toBe(0)
   })
@@ -154,7 +154,7 @@ describe('PollComposer', () => {
     open({ question: 'Lunch?', options: ['Pizza', 'Pizza'] })
     expect(optionFields().map((f) => f.value)).toEqual(['Pizza', 'Pizza'])
     button('Post poll')!.click()
-    await flush()
+    await flushMicrotasks()
     expect(invoke).toHaveBeenCalledWith('create_poll', expect.objectContaining({
       request: expect.objectContaining({ options: ['Pizza', 'Pizza'] }),
     }))

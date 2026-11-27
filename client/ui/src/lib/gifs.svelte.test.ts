@@ -9,9 +9,9 @@ vi.mock('@tauri-apps/api/core', () => ({
 }))
 
 import { gifFavs, loadGifFavs, resetGifFavs, toggleGifFav } from './gifs.svelte'
+import { microtasks } from './testSettle'
 
 const g = (id: string) => ({ id, title: id, width: 10, height: 10 })
-const flush = async () => { for (let i = 0; i < 10; i++) await Promise.resolve() }
 const pending = (cmd: string) => calls.filter((c) => c.cmd === cmd)
 
 beforeEach(() => {
@@ -25,16 +25,16 @@ describe('favourite GIFs', () => {
     const star = toggleGifFav(g('a'))
     expect(gifFavs.list.map((x) => x.id)).toEqual(['a'])
     pending('gif_favourites')[0].resolve([]) // read before the star
-    await flush()
+    await microtasks(10)
     expect(gifFavs.list.map((x) => x.id)).toEqual(['a'])
     pending('set_gif_favourite')[0].resolve(undefined)
     await star
-    await flush()
+    await microtasks(10)
     const again = pending('gif_favourites')
     expect(again).toHaveLength(2)
     again[1].resolve([g('a'), g('b')])
     await load
-    await flush()
+    await microtasks(10)
     expect(gifFavs.list.map((x) => x.id)).toEqual(['a', 'b'])
     expect(gifFavs.loaded).toBe(true)
   })
@@ -42,11 +42,11 @@ describe('favourite GIFs', () => {
   it('a quick star then unstar goes out in that order', async () => {
     const one = toggleGifFav(g('a'))
     const two = toggleGifFav(g('a'))
-    await flush()
+    await microtasks(10)
     expect(pending('set_gif_favourite').map((c) => c.args!.on)).toEqual([true]) // the unstar waits
     pending('set_gif_favourite')[0].resolve(undefined)
     await one
-    await flush()
+    await microtasks(10)
     expect(pending('set_gif_favourite').map((c) => c.args!.on)).toEqual([true, false])
     pending('set_gif_favourite')[1].resolve(undefined)
     await two
@@ -56,7 +56,7 @@ describe('favourite GIFs', () => {
   it('a refusal puts back only that GIF', async () => {
     const a = toggleGifFav(g('a'))
     const b = toggleGifFav(g('b'))
-    await flush()
+    await microtasks(10)
     const [ca, cb] = pending('set_gif_favourite')
     cb.resolve(undefined)
     await b

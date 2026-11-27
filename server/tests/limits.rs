@@ -254,9 +254,6 @@ async fn oversized_usernames_never_become_limiter_keys() {
     );
 }
 
-type Socket =
-    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
-
 /// Connect and complete the handshake (returns once Ready arrived).
 async fn hello(app: &TestApp, token: &str) -> Socket {
     let mut ws = tokio_tungstenite::connect_async(app.ws_url("/gateway"))

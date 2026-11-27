@@ -5,7 +5,6 @@ import { flushSync } from 'svelte'
 export function selectTrigger(label?: string, root: ParentNode = document): HTMLButtonElement | null {
   return root.querySelector<HTMLButtonElement>(label ? `.select .trigger[aria-label="${label}"]` : '.select .trigger')
 }
-export const allSelectTriggers = (root: ParentNode = document) => [...root.querySelectorAll<HTMLButtonElement>('.select .trigger')]
 
 /** The value shown on the button ('' for null). */
 export const selectValue = (t: HTMLButtonElement) => t.dataset.value ?? ''

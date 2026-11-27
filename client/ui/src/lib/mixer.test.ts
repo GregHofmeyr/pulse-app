@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it } from 'vitest'
 import {
-  MAX_GAIN, MIXER_KEY, MIXER_SECTIONS, defaultMixer, gainToPercent, loadMixer, migrateMixer, mixGain, normalizeMixer,
+  MAX_GAIN, MIXER_KEY, MIXER_SECTIONS, defaultMixer, loadMixer, mixGain, normalizeMixer,
   percentToGain, resetSection, saveMixer, soundGain, soundMasterGain, soundSectionOf, ringtoneGain,
 } from './mixer'
 import { SOUND_NAMES } from './voiceui'
@@ -17,15 +17,6 @@ describe('the gain curve (mirrors the core’s percent_to_gain)', () => {
     expect(percentToGain(50)).toBeCloseTo(0.1, 4)
     expect(percentToGain(500)).toBe(percentToGain(200))
     expect(percentToGain(-3)).toBe(0)
-  })
-  it('gainToPercent inverts it, keeping loudness', () => {
-    expect(gainToPercent(0)).toBe(0)
-    expect(gainToPercent(1)).toBe(100)
-    expect(gainToPercent(0.5)).toBe(85) // -6 dB
-    expect(gainToPercent(percentToGain(137))).toBe(137)
-    expect(gainToPercent(1e-9)).toBe(1) // audible stays above off
-    expect(gainToPercent(100)).toBe(200)
-    expect(gainToPercent(NaN)).toBe(0)
   })
   it('mixGain multiplies and caps at the safe maximum', () => {
     expect(mixGain(100, 100)).toBe(1)
@@ -98,46 +89,21 @@ describe('prefs', () => {
     expect(loadMixer()).toEqual(p)
   })
 
-  it('migrates today’s keys: off sounds → 0, the old volume → the three sound masters (same loudness)', () => {
+  it('ignores the pre-mixer keys left in storage: the defaults load, nothing is written', () => {
     localStorage.setItem('pulse.sounds', JSON.stringify({ set: 'goofy', volume_pct: 50, off: ['join', 'badge'] }))
     localStorage.setItem('pulse.soundboard', JSON.stringify({ volume_pct: 40 }))
     localStorage.setItem('pulse.clipVolume', JSON.stringify({ volume: 0.5, muted: true }))
-    const p = loadMixer()
-    expect([p.callSounds.master, p.streamSounds.master, p.notifications.master]).toEqual([85, 85, 85])
-    expect(p.callSounds.join).toBe(0)
-    expect(p.notifications.badge).toBe(0)
-    expect(p.callSounds.leave).toBe(100)
-    expect(p.calls.soundboard).toBe(40) // already on the dB curve
-    expect(p.calls.master).toBe(100)
-    expect(p.media).toEqual({ clips: 85, clipsMuted: true })
-    // migrated once: the record is written, the old keys left alone
-    expect(JSON.parse(localStorage.getItem(MIXER_KEY)!)).toEqual(p)
-    expect(JSON.parse(localStorage.getItem('pulse.sounds')!).set).toBe('goofy')
+    expect(loadMixer()).toEqual(defaultMixer())
+    expect(localStorage.getItem(MIXER_KEY)).toBeNull()
   })
 
-  it('an old sound volume of 0 makes all three masters 0, not 1 %', () => {
-    localStorage.setItem('pulse.sounds', JSON.stringify({ volume_pct: 0, off: [] }))
-    const p = loadMixer()
-    expect([p.callSounds.master, p.streamSounds.master, p.notifications.master]).toEqual([0, 0, 0])
-  })
-
-  it('an old full volume and clip volume carry over as 100 %', () => {
-    expect(migrateMixer({ sounds: { volume_pct: 100, off: [] }, soundboard: { volume_pct: 100 }, clipVolume: { volume: 1, muted: false } }))
-      .toEqual(defaultMixer())
-  })
-
-  it('a newer record (after a downgrade) is read as the old keys say, and left in place', () => {
-    localStorage.setItem('pulse.sounds', JSON.stringify({ volume_pct: 100, off: ['live'] }))
+  it('a newer record (after a downgrade) gives the defaults and is left in place', () => {
     localStorage.setItem(MIXER_KEY, JSON.stringify({ v: 2, calls: { master: 5 } }))
-    const p = loadMixer()
-    expect(p.v).toBe(1)
-    expect(p.calls.master).toBe(100)
-    expect(p.streamSounds.live).toBe(0)
+    expect(loadMixer()).toEqual(defaultMixer())
     expect(JSON.parse(localStorage.getItem(MIXER_KEY)!).v).toBe(2) // not overwritten on load
   })
 
-  it('a corrupt record falls back to the defaults, not to the pre-mixer settings', () => {
-    localStorage.setItem('pulse.sounds', JSON.stringify({ volume_pct: 100, off: ['live'] }))
+  it('a corrupt record falls back to the defaults', () => {
     localStorage.setItem(MIXER_KEY, '{not json')
     expect(loadMixer()).toEqual(defaultMixer())
     localStorage.setItem(MIXER_KEY, JSON.stringify({ v: 'one' }))

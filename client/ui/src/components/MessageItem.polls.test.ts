@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 // A poll in the chat (#157): the card's states (before you vote, after, as its creator, closed, anonymous), voting,
 // End poll in the message's menu (its creator's, while open), no Edit, and the ended line's See poll.
-import { flushSync, mount, tick, unmount } from 'svelte'
+import { flushSync, mount, unmount } from 'svelte'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Message } from '../lib/protocol/Message'
 import type { Poll } from '../lib/protocol/Poll'
@@ -14,6 +14,7 @@ import { motion } from '../lib/animate.svelte'
 import { app, ui } from '../lib/store.svelte'
 import { emptyState } from '../lib/state'
 import { resetPolls } from '../lib/polls.svelte'
+import { flushMicrotasks } from '../lib/testSettle'
 
 const NOW = Date.parse('2026-11-09T10:00:00.000Z')
 const view = (over: Partial<Poll> = {}): Poll => ({
@@ -45,7 +46,6 @@ const card = () => document.querySelector<HTMLElement>('.poll')!
 const rows = () => [...card().querySelectorAll<HTMLElement>('.opt')].map((r) => r.textContent!.replace(/\s+/g, ' ').trim())
 const choose = (label: string) => [...card().querySelectorAll<HTMLButtonElement>('button.choose')].find((b) => b.textContent!.trim() === label)!
 const menuItems = () => [...document.querySelectorAll<HTMLButtonElement>('[role=menu][aria-label="Message actions"] > [role=menuitem]')].map((b) => b.textContent!.trim())
-async function settle() { for (let i = 0; i < 5; i++) await Promise.resolve(); await tick() }
 
 beforeEach(() => {
   vi.useFakeTimers()
@@ -79,7 +79,7 @@ describe('the poll card', () => {
     show(msg(view({ voters: 1 })))
     invoke.mockResolvedValueOnce(view({ voters: 2, mine: [1], results: tallies([1, 1, 0], [['U3'], ['U1'], []]) }))
     choose('Apex').click()
-    await settle()
+    await flushMicrotasks(6)
     flushSync()
     expect(invoke).toHaveBeenCalledWith('vote_poll', { messageId: 'M1', options: [1] })
     // the answer lands on the held message, which the chat passes back down
@@ -98,12 +98,12 @@ describe('the poll card', () => {
     show(msg(view({ mine: [0], voters: 1, results: tallies([1, 0, 0]) })))
     invoke.mockResolvedValueOnce(view())
     choose('Valheim').click()
-    await settle()
+    await flushMicrotasks(6)
     expect(invoke).toHaveBeenLastCalledWith('vote_poll', { messageId: 'M1', options: [] })
     unmount(cmp!)
     show(msg(view({ multi: true, mine: [0], voters: 1, results: tallies([1, 0, 0]) })))
     choose('Rust').click()
-    await settle()
+    await flushMicrotasks(6)
     expect(invoke).toHaveBeenLastCalledWith('vote_poll', { messageId: 'M1', options: [0, 2] })
   })
 
@@ -116,7 +116,7 @@ describe('the poll card', () => {
     expect(menuItems()).toContain('End poll')
     invoke.mockResolvedValueOnce(view({ closed: true, closed_at: '2026-11-09T10:00:00.000Z', results: tallies([0, 0, 0]) }))
     ;[...document.querySelectorAll<HTMLButtonElement>('[role=menuitem]')].find((b) => b.textContent!.trim() === 'End poll')!.click()
-    await settle()
+    await flushMicrotasks(6)
     expect(invoke).toHaveBeenCalledWith('close_poll', { messageId: 'M1' })
   })
 
@@ -177,7 +177,7 @@ describe('the ended line', () => {
     const line = document.querySelector<HTMLElement>('[data-message-id="L1"]')!
     expect(line.textContent!.replace(/\s+/g, ' ')).toContain("sam's poll ended: Valheim won (2 votes) · See poll")
     ;[...line.querySelectorAll('button')].find((b) => b.textContent === 'See poll')!.click()
-    await settle()
+    await flushMicrotasks(6)
     expect(ui.jump ?? ui.goTo).toBeTruthy()
   })
 })

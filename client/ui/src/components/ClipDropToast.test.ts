@@ -25,9 +25,9 @@ import { app, ui } from '../lib/store.svelte'
 import { applyReady, emptyState } from '../lib/state'
 import { testReady } from '../lib/testReady'
 import type { Channel } from '../lib/protocol/Channel'
+import { nextTask } from '../lib/testSettle'
 
 const ch = (id: string, name: string, kind: Channel['kind'] = 'clips', server_id = 'S1', position = 0): Channel => ({ id, server_id, kind, name, position }) as Channel
-const settle = () => new Promise((r) => setTimeout(r, 0))
 const offer = (name: string) => h.handlers['pulse://clip-drop']({ payload: { path: `C:\\Users\\alex\\Videos\\Apex\\${name}`, name } })
 const toasts = () => [...document.querySelectorAll('.clip-offer')]
 const button = (el: Element, text: string) => [...el.querySelectorAll('button')].find((b) => b.textContent?.trim() === text)!
@@ -42,7 +42,7 @@ async function show(channels: Channel[], dms: string[] = []) {
   } as never))
   cmp = mount(ClipDropToast, { target: document.body })
   flushSync()
-  await settle()
+  await nextTask()
 }
 beforeEach(() => {
   localStorage.clear()

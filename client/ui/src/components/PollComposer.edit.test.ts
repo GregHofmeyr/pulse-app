@@ -14,6 +14,7 @@ import PollComposer from './PollComposer.svelte'
 import PollCard from './PollCard.svelte'
 import { resetState } from '../lib/store.svelte'
 import { resetPolls } from '../lib/polls.svelte'
+import { flushMicrotasks } from '../lib/testSettle'
 
 const poll = (over: Partial<Poll> = {}): Poll => ({
   question: 'Food?', options: ['Pizza', 'Tacos'], multi: true, anonymous: false, ends_at: null, closed_at: null, closed: false,
@@ -41,7 +42,6 @@ function fill(field: HTMLInputElement, value: string) {
   field.dispatchEvent(new Event('input'))
   flushSync()
 }
-const flush = async () => { for (let i = 0; i < 5; i++) await Promise.resolve(); flushSync() }
 
 beforeEach(() => {
   resetState()
@@ -73,7 +73,7 @@ describe('editing a poll', () => {
     flushSync()
     fill(optionFields()[2], 'Curry')
     button('Save changes')!.click()
-    await flush()
+    await flushMicrotasks()
     expect(invoke).toHaveBeenCalledWith('edit_poll', { messageId: 'M1', request: {
       question: 'Dinner?', options: [{ text: 'Pizza', from: 0 }, { text: 'Tacos', from: 1 }, { text: 'Curry', from: null }], clear_votes: false,
     } })
@@ -84,11 +84,11 @@ describe('editing a poll', () => {
     open()
     fill(optionFields()[0], 'Pizza!')
     button('Save changes')!.click()
-    await flush()
+    await flushMicrotasks()
     expect(invoke).not.toHaveBeenCalled()
     expect(pop().querySelector('[role="alert"]')!.textContent).toBe('This clears 2 votes (Pizza).')
     button('Clear votes and save')!.click()
-    await flush()
+    await flushMicrotasks()
     expect(invoke).toHaveBeenCalledWith('edit_poll', { messageId: 'M1', request: {
       question: 'Food?', options: [{ text: 'Pizza!', from: 0 }, { text: 'Tacos', from: 1 }], clear_votes: true,
     } })
@@ -98,14 +98,14 @@ describe('editing a poll', () => {
     open(poll({ options: ['Pizza', 'Tacos', 'Sushi'], results: [{ votes: 2, voters: [] }, { votes: 0, voters: [] }, { votes: 0, voters: [] }] }))
     fill(optionFields()[0], 'Pizza!')
     button('Save changes')!.click()
-    await flush()
+    await flushMicrotasks()
     expect(button('Clear votes and save')).toBeTruthy()
     fill(optionFields()[0], 'Pizza')
     expect(button('Save changes')).toBeTruthy()
     pop().querySelector<HTMLButtonElement>('button[aria-label="Remove option 2"]')!.click()
     flushSync()
     button('Save changes')!.click()
-    await flush()
+    await flushMicrotasks()
     expect(invoke).toHaveBeenCalledWith('edit_poll', { messageId: 'M1', request: {
       question: 'Food?', options: [{ text: 'Pizza', from: 0 }, { text: 'Sushi', from: 2 }], clear_votes: false,
     } })

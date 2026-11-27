@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 // Forward a message (#302): Forward… in its menu opens a picker of chats you can post in, with a comment; a forward
 // shows where it came from, who said it and what; its header opens the original only where you can see it.
-import { flushSync, mount, tick, unmount } from 'svelte'
+import { flushSync, mount, unmount } from 'svelte'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Message } from '../lib/protocol/Message'
 import type { Forwarded } from '../lib/protocol/Forwarded'
@@ -12,6 +12,7 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: (cmd: string, args?: never) => 
 import MessageItem from './MessageItem.svelte'
 import { app, ui } from '../lib/store.svelte'
 import { emptyState } from '../lib/state'
+import { flushMicrotasks } from '../lib/testSettle'
 
 const me = { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
 const msg = (over: Partial<Message> = {}): Message => ({
@@ -52,7 +53,6 @@ const items = () => [...(menu()?.querySelectorAll<HTMLButtonElement>(':scope > [
 const item = (label: string) => items().find((b) => b.textContent?.trim() === label)
 const picker = () => document.querySelector<HTMLElement>('[role=dialog][aria-label="Forward message"]')
 const options = () => [...(picker()?.querySelectorAll<HTMLButtonElement>('[role=option]') ?? [])]
-async function settle() { for (let i = 0; i < 5; i++) await Promise.resolve(); await tick() }
 
 beforeEach(() => {
   localStorage.clear()
@@ -87,7 +87,7 @@ describe('Forward… (#302)', () => {
     const go = [...picker()!.querySelectorAll<HTMLButtonElement>('.foot button')].find((b) => b.textContent!.startsWith('Forward'))!
     expect(go.textContent).toBe('Forward to #plans')
     go.click()
-    await settle()
+    await flushMicrotasks(6)
     expect(invoke).toHaveBeenCalledWith('forward_message', { messageId: 'M1', channelId: 'C2', comment: 'you in?', nonce: expect.any(String) })
     expect(ui.notice).toBe('Forwarded to #plans')
     expect(picker()).toBeNull()
@@ -102,7 +102,7 @@ describe('Forward… (#302)', () => {
     expect(go().disabled).toBe(true)
     options()[0].click(); flushSync()
     go().click()
-    await settle()
+    await flushMicrotasks(6)
     expect(picker()!.querySelector('[role=alert]')).not.toBeNull()
   })
 
@@ -124,7 +124,7 @@ describe('a forward (#302)', () => {
     // your own forward can't be edited
     expect(btn('Edit')).toBeNull()
     card.querySelector<HTMLButtonElement>('.head')!.click()
-    await settle()
+    await flushMicrotasks(6)
     expect(ui.goTo).toBe('C1')
   })
 
@@ -135,7 +135,7 @@ describe('a forward (#302)', () => {
     const card = document.querySelector<HTMLElement>('.fwd')!
     expect(card.querySelector('.from')!.textContent).toBe('Forwarded from a DM')
     card.querySelector<HTMLButtonElement>('.head')!.click()
-    await settle()
+    await flushMicrotasks(6)
     expect(ui.goTo).toBeNull()
     expect(ui.notice).toContain("can't see")
   })

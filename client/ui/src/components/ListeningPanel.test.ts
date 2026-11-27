@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 // "Listening to" on a profile card (#275): art, song, artist, Spotify's icon, and the approved link-out; and Share to
 // stage (#321) for a known song while you're in a server voice call.
-import { flushSync, mount, tick, unmount } from 'svelte'
+import { flushSync, mount, unmount } from 'svelte'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const invoke = vi.fn(async (_cmd: string, _args?: unknown): Promise<unknown> => undefined)
@@ -13,6 +13,7 @@ import { emptyState } from '../lib/state'
 import { voice } from '../lib/voice.svelte'
 import type { Listening } from '../lib/protocol/Listening'
 import type { LinkEmbed } from '../lib/protocol/LinkEmbed'
+import { settle } from '../lib/testSettle'
 
 const ID = '4uLU6hMCjMI75M1A2tKUQC'
 const known = (): Listening => ({ title: 'Song', artist: 'The Band', album: 'Album', spotify_id: `track:${ID}`, art: { hash: 'a'.repeat(64), width: 300, height: 300 } })
@@ -24,10 +25,6 @@ afterEach(() => {
 })
 const show = (listening: Listening) => {
   cmp = mount(ListeningPanel, { target: document.body, props: { listening } })
-  flushSync()
-}
-const settle = async () => {
-  for (let i = 0; i < 3; i++) await tick()
   flushSync()
 }
 
@@ -84,7 +81,7 @@ describe('ListeningPanel', () => {
     it('shares the song to the stage of the call you are in', async () => {
       show(known())
       shareBtn()!.click()
-      await settle()
+      await settle(3)
       expect(invoke).toHaveBeenCalledWith('share_to_stage', { channelId: 'V1', url: `https://open.spotify.com/track/${ID}` })
     })
 
@@ -118,7 +115,7 @@ describe('ListeningPanel', () => {
       invoke.mockImplementationOnce(async () => { throw { kind: 'rejected', message: 'too many shares, try again soon' } })
       show(known())
       shareBtn()!.click()
-      await settle()
+      await settle(3)
       expect(document.querySelector('.err')!.textContent).toContain('too many shares')
     })
   })

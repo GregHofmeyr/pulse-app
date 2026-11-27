@@ -357,12 +357,9 @@ async fn save_layout(
     State(s): State<AppState>,
     AuthUser(me): AuthUser,
     Path(server): Path<ServerId>,
-    headers: axum::http::HeaderMap,
     Json(req): Json<SaveLayoutRequest>,
 ) -> AppResult<Json<ServerLayout>> {
     spend(&s, me)?;
-    let builds_known =
-        crate::builds::compat::speaks_builds(crate::builds::compat::rest_version(&headers));
     require_member(&s.db, server, me).await?;
     let _order = s.hub.in_order().await;
     let mut tx = crate::db::begin_write(&s.db).await?;
@@ -395,28 +392,13 @@ async fn save_layout(
     .await?
     .into_iter()
     .collect();
-    // A client from before builds channels (#616) never sees them, so its save needn't name them: they keep their
-    // category and position.
-    let skip: HashSet<String> = if builds_known {
-        HashSet::new()
-    } else {
-        sqlx::query_scalar(
-            "SELECT id FROM channels WHERE server_id = ? AND kind = 'builds' AND deleted_at IS NULL",
-        )
-        .bind(server.to_string())
-        .fetch_all(&mut *tx)
-        .await?
-        .into_iter()
-        .collect()
-    };
-    let channels: HashSet<String> = channels.difference(&skip).cloned().collect();
     let named_categories: Vec<String> = req.categories.iter().map(|c| c.id.to_string()).collect();
     let named_channels: Vec<String> = req
         .uncategorised
         .iter()
         .chain(req.categories.iter().flat_map(|c| &c.channels))
         .map(|c| c.to_string())
-        .filter(|c| !archived.contains(c) && !skip.contains(c))
+        .filter(|c| !archived.contains(c))
         .collect();
     if req.revision != revision
         || !exactly(&named_categories, &categories)

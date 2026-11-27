@@ -15,6 +15,7 @@ import { addHistory, applyEvent, markHistory, setPendingStatus } from '../lib/st
 import { windowFocus } from '../lib/windowFocus.svelte'
 import { positionAt } from '../lib/composerDom'
 import { testMe, testReady } from '../lib/testReady'
+import { nextTask } from '../lib/testSettle'
 
 const sam = { id: 'U2', username: 'sam', display_name: 'sam', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
 const ready = testReady([{ id: 'C1', server_id: 'S1', kind: 'quotes', name: 'quotes', position: 0 }], {
@@ -38,7 +39,6 @@ const reply = (n: number, over: Partial<Message> = {}): Message => ({ ...base(`R
 let pages: Record<string, Message[]> = {}
 let cmp: ReturnType<typeof mount> | undefined
 const onClose = vi.fn()
-const settle = () => new Promise((r) => setTimeout(r, 0))
 const calls = (cmd: string) => invoke.mock.calls.filter((c) => c[0] === cmd)
 const panel = () => document.querySelector<HTMLElement>('.replies-panel')!
 
@@ -46,7 +46,7 @@ async function show(q: Message = root) {
   app.state = markHistory(addHistory({ ...app.state }, 'C1', [q]), 'C1', true)
   cmp = mount(RepliesPanel, { target: document.body, props: { root: q, serverId: 'S1', onClose } })
   flushSync()
-  await settle()
+  await nextTask()
   flushSync()
 }
 function type(text: string) {
@@ -220,13 +220,13 @@ describe('RepliesPanel', () => {
     await show({ ...root, quote: { ...root.quote!, reply_count: 52, last_reply_id: 'R0100' } })
     const list = panel().querySelector<HTMLElement>('.list')!
     list.dispatchEvent(new Event('scroll'))
-    await settle()
+    await nextTask()
     flushSync()
     expect(calls('list_replies').at(-1)![1]).toEqual({ messageId: 'Q1', before: 'R0051' })
     expect(app.state.threads['Q1'][0].id).toBe('R0049')
     expect(app.state.threadStart['Q1']).toBe(true)
     list.dispatchEvent(new Event('scroll'))
-    await settle()
+    await nextTask()
     expect(calls('list_replies')).toHaveLength(2) // the start is reached
   })
 
@@ -235,7 +235,7 @@ describe('RepliesPanel', () => {
     expect(calls('list_replies')).toHaveLength(1)
     handleReady(ready) // threads are cleared on Ready
     flushSync()
-    await settle()
+    await nextTask()
     flushSync()
     expect(calls('list_replies')).toHaveLength(2)
     expect(panel().querySelectorAll('.msg')).toHaveLength(2)
@@ -260,7 +260,7 @@ describe('RepliesPanel', () => {
     await show()
     app.state = applyEvent(app.state, { t: 'MessageCreated', d: { message: reply(3), nonce: null } }, Date.now())
     release([reply(2), reply(1)]) // read before R0003 existed
-    await settle()
+    await nextTask()
     flushSync()
     const texts = [...panel().querySelectorAll('.msg .content')].map((e) => e.textContent?.trim())
     expect(texts).toEqual(['reply 1', 'reply 2', 'reply 3'])
@@ -271,9 +271,9 @@ describe('RepliesPanel', () => {
     await show()
     unmount(cmp!)
     cmp = undefined
-    await settle()
+    await nextTask()
     release([reply(2), reply(1)])
-    await settle()
+    await nextTask()
     expect(app.state.threads['Q1']).toBeUndefined()
     expect(app.state.threadStart['Q1']).toBeUndefined()
   })
@@ -285,7 +285,7 @@ describe('RepliesPanel', () => {
     unmount(cmp!)
     cmp = undefined
     app.state = { ...app.state, pending: { C1: [] } } // a change in the same flush survives the close
-    await settle()
+    await nextTask()
     expect(app.state.openRoot).toBeNull()
     expect(app.state.threads['Q1']).toBeUndefined()
     expect(app.state.threadStart['Q1']).toBeUndefined()

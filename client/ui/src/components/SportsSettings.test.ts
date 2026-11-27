@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 // Settings › Sports (#385): not set up without the server's key; the pings switch; following from a league's team
 // search (each league's list asked for once) and unfollowing.
-import { flushSync, mount, tick, unmount } from 'svelte'
+import { mount, unmount } from 'svelte'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const invoke = vi.fn(async (_cmd: string, _args?: unknown): Promise<unknown> => undefined)
@@ -10,12 +10,9 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: (cmd: string, args?: never) => 
 import SportsSettings, { clearTeamCache } from './SportsSettings.svelte'
 import { chooseOption, selectTrigger } from './selectHarness'
 import type { SportsStatus } from '../lib/protocol/SportsStatus'
+import { settle } from '../lib/testSettle'
 
 let cmp: ReturnType<typeof mount> | undefined
-const settle = async () => {
-  for (let i = 0; i < 6; i++) await tick()
-  flushSync()
-}
 const coastal = { league: 'psl' as const, team_id: 10, name: 'Coastal City' }
 const highveld = { league: 'psl' as const, team_id: 20, name: 'Highveld United' }
 let status: SportsStatus
@@ -42,7 +39,7 @@ afterEach(() => {
 
 async function open() {
   cmp = mount(SportsSettings, { target: document.body })
-  await settle()
+  await settle(6)
 }
 const byLabel = (l: string) => document.querySelector<HTMLElement>(`[aria-label="${l}"]`)
 
@@ -60,7 +57,7 @@ describe('SportsSettings', () => {
     const sw = document.querySelector<HTMLInputElement>('[data-switch=sports-pings]')!
     expect(sw.checked).toBe(true)
     sw.click()
-    await settle()
+    await settle(6)
     expect(invoke).toHaveBeenCalledWith('set_sports_pings', { on: false })
     expect(document.querySelector<HTMLInputElement>('[data-switch=sports-pings]')!.checked).toBe(false)
   })
@@ -71,23 +68,23 @@ describe('SportsSettings', () => {
     const search = byLabel('Search teams') as HTMLInputElement
     search.value = 'coast'
     search.dispatchEvent(new Event('input', { bubbles: true }))
-    await settle()
+    await settle(6)
     const rows = [...document.querySelectorAll('[aria-label=Teams] li')].map((l) => l.textContent?.trim())
     expect(rows).toEqual(['Coastal City Follow'])
     byLabel('Follow Coastal City')!.click()
-    await settle()
+    await settle(6)
     expect(invoke).toHaveBeenCalledWith('follow_team', { league: 'psl', teamId: 10 })
     expect(document.body.textContent).toContain('Following')
     expect(byLabel('Unfollow Coastal City')).not.toBeNull()
     // another league, then back: the PSL list isn't asked for again
     const league = selectTrigger('League')!
     chooseOption(league, 'urc')
-    await settle()
+    await settle(6)
     chooseOption(league, 'psl')
-    await settle()
+    await settle(6)
     expect(invoke.mock.calls.filter(([c, a]) => c === 'sports_teams' && (a as { league: string }).league === 'psl')).toHaveLength(1)
     byLabel('Unfollow Coastal City')!.click()
-    await settle()
+    await settle(6)
     expect(invoke).toHaveBeenCalledWith('unfollow_team', { league: 'psl', teamId: 10 })
     expect(document.body.textContent).toContain('None yet.')
   })

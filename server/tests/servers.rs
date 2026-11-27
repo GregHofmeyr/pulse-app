@@ -74,33 +74,6 @@ async fn joining_twice_makes_one_member() {
     assert_eq!(members.len(), 2);
 }
 
-/// #80: the open Join is gone. An older client's Join gets the same words for a server that's there and one that isn't
-/// (so it learns nothing), and joins nobody.
-#[tokio::test]
-async fn the_open_join_says_servers_are_invite_only() {
-    let app = spawn().await;
-    let (_, a) = register(&app, "alex").await;
-    let (b_id, b) = register(&app, "sam").await;
-    let s = create_server(&app, &a, "Main").await;
-    for server in [s.id, pulse_protocol::ids::ServerId::new()] {
-        let r = post_json(&app, &b, &format!("/servers/{server}/join"), json!({})).await;
-        assert_eq!(r.status(), 403);
-        let body: serde_json::Value = r.json().await.unwrap();
-        assert_eq!(
-            body["message"], "Servers are invite-only now. Ask someone for an invite.",
-            "{body}"
-        );
-    }
-    assert_eq!(
-        count(
-            &app,
-            &format!("SELECT COUNT(*) FROM server_members WHERE user_id = '{b_id}'")
-        )
-        .await,
-        0
-    );
-}
-
 #[tokio::test]
 async fn non_member_cannot_create_channel_403() {
     let app = spawn().await;

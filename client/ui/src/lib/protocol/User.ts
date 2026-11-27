@@ -22,4 +22,13 @@ avatar_still: string | null, style: NameStyle,
  * characters, one line, no links. Absent: the plain "is typing" (and from older servers;
  * older clients ignore it).
  */
-typing_text?: string, };
+typing_text?: string, 
+/**
+ * The speaking ring's style (#651); absent: Classic (and from older servers; older clients
+ * ignore it).
+ */
+ring_style?: string, 
+/**
+ * The speaking ring's colour (#651); absent: green.
+ */
+ring_color?: string, };

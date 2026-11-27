@@ -332,26 +332,6 @@ async fn favourite_many_stars_the_channels_builds_up_to_100() {
     assert_eq!(w.star_many(&w.sam.1, &many, true).await.status(), 400);
 }
 
-/// A version-4 client hears nothing of a star, its own included (#616).
-#[tokio::test]
-#[ignore = "protocol 4 is refused at the gateway since #634; goes with builds::compat in a later PR"]
-async fn a_version_4_client_never_hears_a_star() {
-    let w = world().await;
-    let text = general(&w.app, &w.alex.1, w.server).await;
-    let a = w.build(&w.alex.1, "A").await;
-    let mut old = hello_as(&w.app, &w.sam.1, 4).await;
-    assert_eq!(w.star(&w.sam.1, a.id, true).await.status(), 204);
-    assert_eq!(w.star_many(&w.sam.1, &[a.id], false).await.status(), 200);
-    send(&w.app, &w.alex.1, text.id, "after").await;
-    let got = events_until(&mut old, "after").await;
-    let id = w.ch.to_string();
-    assert!(
-        !got.iter()
-            .any(|e| serde_json::to_string(e).unwrap().contains(&id)),
-        "{got:?}"
-    );
-}
-
 /// A pinned build goes out as everyone sees it: the pinner's star (and seen point) stay theirs.
 #[tokio::test]
 async fn a_pin_carries_no_ones_star() {

@@ -20,13 +20,13 @@ import { callChanged, setSoundMute, setSoundboardVolume, soundboard, startSoundb
 import { emptyState } from './state'
 import type { Sound } from './protocol/Sound'
 import { mixer, reloadMixer, setNotch } from './mixer.svelte'
+import { nextTask } from './testSettle'
 
 const played = (user_id: string, channel_id = 'V1', duration_ms = 1500): Event => ({ t: 'SoundPlayed', d: { channel_id, user_id, sound_id: 'A', media_hash: 'hA', volume: 80, duration_ms } })
 const snd = (id: string, server_id = 'S1', duration_ms = 1000): Sound => ({
   id, server_id, name: id, emoji: null, emoji_id: null, media_hash: 'h' + id, volume: 100, duration_ms, added_by: null,
   created_at: '2026-10-01T00:00:00.000Z', plays: 0,
 })
-const flush = () => new Promise((r) => setTimeout(r, 0))
 
 describe('soundboard listener', () => {
   beforeEach(() => {
@@ -163,13 +163,13 @@ describe('who played it', () => {
       throw 'That sound couldn’t be loaded.'
     })
     hooks[0](played('U2'))
-    await flush()
+    await nextTask()
     expect(soundboard.playing.has('U2')).toBe(false)
   })
 
   it('leaving the call clears the rings', async () => {
     hooks[0](played('U2', 'V1', 60_000))
-    await flush()
+    await nextTask()
     expect(soundboard.playing.has('U2')).toBe(true)
     callChanged(null)
     expect(soundboard.playing.size).toBe(0)

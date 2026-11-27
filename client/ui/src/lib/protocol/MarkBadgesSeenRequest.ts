@@ -4,6 +4,5 @@ import type { SeenBadge } from "./SeenBadge";
 /**
  * `POST /me/badges/seen`: the badges your trophy case showed [NEW]. Only those, at those tiers,
  * stop being [NEW]: one earned (or a tier reached) after the case loaded stays [NEW] (#129).
- * No body at all (older clients) marks everything seen.
  */
 export type MarkBadgesSeenRequest = { badges: Array<SeenBadge>, };

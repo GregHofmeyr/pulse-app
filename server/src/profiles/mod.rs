@@ -173,6 +173,31 @@ pub const NAME_EFFECTS: [&str; 8] = [
     "neon", "toon", "pop", "gummy", "prism", "shimmer", "glitch", "ember",
 ];
 
+/// The speaking ring styles (#651), stored by key in `users.ring_style` (NULL: `"classic"`). A
+/// literal copy is in client/ui/src/lib/speakingRing.test.ts.
+pub const RING_STYLES: [&str; 11] = [
+    "classic",
+    "glow",
+    "pulse",
+    "ripple",
+    "sweep",
+    "orbit",
+    "halo",
+    "viewfinder",
+    "liquid",
+    "dots",
+    "bars",
+];
+
+/// The speaking ring colours (#651), stored by key in `users.ring_color` (NULL: `"green"`). A
+/// literal copy is in client/ui/src/lib/speakingRing.test.ts.
+pub const RING_COLORS: [&str; 9] = [
+    "green", "blue", "gold", "pink", "cyan", "orange", "white", "purple", "profile",
+];
+
+/// The default ring style and colour, stored as NULL (#651).
+const RING_DEFAULTS: [&str; 2] = ["classic", "green"];
+
 const PRONOUNS_MAX: usize = 40;
 const BIO_MAX: usize = 190;
 const BIO_LINE_BREAKS_MAX: usize = 4;
@@ -198,6 +223,21 @@ pub struct Validated {
     pub glow: Option<bool>,
     /// `None`: keep the current typing text; `Some(None)`: back to "is typing" (#652).
     pub typing_text: Option<Option<String>>,
+    /// `None`: keep the current ring style; `Some(None)`: back to Classic (#651).
+    pub ring_style: Option<Option<String>>,
+    /// `None`: keep the current ring colour; `Some(None)`: back to green (#651).
+    pub ring_color: Option<Option<String>>,
+}
+
+/// A ring key from a save (#651): absent keeps the current one, a default key stores NULL and a
+/// key not in `keys` is refused with `msg`.
+fn ring_key(key: Option<String>, keys: &[&str], msg: &str) -> AppResult<Option<Option<String>>> {
+    match key {
+        None => Ok(None),
+        Some(k) if !keys.contains(&k.as_str()) => Err(bad(msg)),
+        Some(k) if RING_DEFAULTS.contains(&k.as_str()) => Ok(Some(None)),
+        Some(k) => Ok(Some(Some(k))),
+    }
 }
 
 fn bad(msg: &str) -> AppError {
@@ -265,6 +305,8 @@ pub fn validate(req: UpdateProfileRequest) -> AppResult<Validated> {
         .as_deref()
         .map(names::clean_typing_text)
         .transpose()?;
+    let ring_style = ring_key(req.ring_style, &RING_STYLES, "Unknown speaking ring.")?;
+    let ring_color = ring_key(req.ring_color, &RING_COLORS, "Unknown ring colour.")?;
     let pronouns = text(req.pronouns);
     if let Some(p) = &pronouns {
         if p.chars().count() > PRONOUNS_MAX {
@@ -299,6 +341,8 @@ pub fn validate(req: UpdateProfileRequest) -> AppResult<Validated> {
         display_name,
         glow: req.glow,
         typing_text,
+        ring_style,
+        ring_color,
     })
 }
 
@@ -314,6 +358,39 @@ mod name_effect_tests {
             NAME_EFFECTS,
             [
                 "neon", "toon", "pop", "gummy", "prism", "shimmer", "glitch", "ember"
+            ]
+        );
+    }
+}
+
+#[cfg(test)]
+mod ring_tests {
+    use super::{RING_COLORS, RING_STYLES};
+
+    /// A literal copy in client/ui/src/lib/speakingRing.test.ts: change one side and both tests
+    /// fail.
+    #[test]
+    fn ring_keys_match_the_ui_list() {
+        assert_eq!(
+            RING_STYLES,
+            [
+                "classic",
+                "glow",
+                "pulse",
+                "ripple",
+                "sweep",
+                "orbit",
+                "halo",
+                "viewfinder",
+                "liquid",
+                "dots",
+                "bars"
+            ]
+        );
+        assert_eq!(
+            RING_COLORS,
+            [
+                "green", "blue", "gold", "pink", "cyan", "orange", "white", "purple", "profile"
             ]
         );
     }

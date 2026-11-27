@@ -12,7 +12,7 @@ vi.mock('@tauri-apps/api/event', () => ({ listen: async () => () => {} }))
 import ChannelList from './ChannelList.svelte'
 import { app } from '../lib/store.svelte'
 import { applyEvent, applyReady, emptyState } from '../lib/state'
-import { drafts, resetSaves } from '../lib/layoutDraft.svelte'
+import { resetSaves } from '../lib/layoutDraft.svelte'
 import { isCollapsed, resetCollapsed, setCollapsed } from '../lib/sidebarSections.svelte'
 import { testReady } from '../lib/testReady'
 import type { Category } from '../lib/protocol/Category'

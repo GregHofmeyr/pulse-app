@@ -52,7 +52,7 @@ jobs:
         shell: bash
         run: client/src-tauri/ffmpeg/ffmpeg.exe -hide_banner -encoders | grep -E 'h264|aac'
       # Tauri CLI is an exact devDependency of client/ui (lockfile-pinned, audited, kept current by Dependabot), at the
-      # `tauri` crate's version. Run through node so the app is found from src-tauri without a .cmd shim.
+      # `tauri` crate's minor version. Run through node so the app is found from src-tauri without a .cmd shim.
       # Signs the installer for the app updater (#82): createUpdaterArtifacts + the pubkey in tauri.conf.json make the
       # build write Pulse_<version>_x64-setup.exe.sig beside the installer. Without the secrets the build fails: there
       # are no unsigned releases (deploy/README.md, "Releasing an app update").

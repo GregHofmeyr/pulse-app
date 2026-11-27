@@ -14,6 +14,7 @@ import { app } from '../lib/store.svelte'
 import { emptyState } from '../lib/state'
 import { defaultName } from '../lib/emoji'
 import type { CustomEmoji } from '../lib/protocol/CustomEmoji'
+import { nextTask } from '../lib/testSettle'
 
 const server = { id: 'S1', name: 'Home', icon_hash: null }
 const emoji = (id: string, name: string): CustomEmoji => ({
@@ -28,7 +29,6 @@ const show = (list: CustomEmoji[] = []) => {
   cmp = mount(EmojiSettings, { target: document.body, props: { server } })
   flushSync()
 }
-const settle = () => new Promise((r) => setTimeout(r, 0))
 const btn = (label: string) => document.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)!
 const calls = (cmd: string) => invoke.mock.calls.filter((c) => c[0] === cmd)
 const text = (t: string) => [...document.querySelectorAll('button')].find((b) => b.textContent === t)!
@@ -38,7 +38,7 @@ async function upload(name = 'Big Pog!.gif') {
   const file = new File([new Uint8Array([1, 2, 3])], name)
   Object.defineProperty(input, 'files', { value: [file], configurable: true })
   input.dispatchEvent(new Event('change', { bubbles: true }))
-  await settle()
+  await nextTask()
   flushSync()
 }
 
@@ -73,7 +73,7 @@ describe('EmojiSettings', () => {
     expect(document.querySelectorAll('img').length).toBe(2)
     expect(document.querySelector<HTMLInputElement>('input[aria-label="Emoji name"]')!.value).toBe('Big_Pog')
     text('Save').click()
-    await settle()
+    await nextTask()
     expect(invoke).toHaveBeenCalledWith('create_emoji', { serverId: 'S1', name: 'Big_Pog', mediaHash: 'newhash' })
   })
 
@@ -88,7 +88,7 @@ describe('EmojiSettings', () => {
     enter()
     enter()
     done()
-    await settle()
+    await nextTask()
     expect(invoke.mock.calls.filter(([cmd]) => cmd === 'create_emoji')).toHaveLength(1)
   })
 
@@ -98,7 +98,7 @@ describe('EmojiSettings', () => {
     await tick()
     expect(invoke).not.toHaveBeenCalled()
     text('Delete').click()
-    await settle()
+    await nextTask()
     expect(invoke).toHaveBeenCalledWith('delete_emoji', { id: 'X1' })
   })
 
@@ -110,7 +110,7 @@ describe('EmojiSettings', () => {
     input.value = 'pogger'
     input.dispatchEvent(new Event('input', { bubbles: true }))
     input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
-    await settle()
+    await nextTask()
     expect(invoke).toHaveBeenCalledWith('rename_emoji', { id: 'X1', name: 'pogger' })
 
     btn('Rename :pog:').click()
@@ -126,7 +126,7 @@ describe('EmojiSettings', () => {
     show()
     await upload()
     text('Save').click()
-    await settle()
+    await nextTask()
     flushSync()
     expect(document.querySelector('[role=alert]')!.textContent).toBe('that name is already taken')
     expect(document.querySelector('input[aria-label="Emoji name"]')).not.toBeNull() // stays open to fix the name
@@ -147,7 +147,7 @@ describe('EmojiSettings', () => {
       show()
       await upload()
       text('Save').click()
-      await settle()
+      await nextTask()
       flushSync()
       expect(document.querySelector('[role=alert]')).not.toBeNull()
       close()
@@ -185,7 +185,7 @@ describe('EmojiSettings', () => {
     }
     typeName('cat loaf')
     text('Save').click()
-    await settle()
+    await nextTask()
     flushSync()
     expect(document.querySelector('[role=alert]')!.textContent).toMatch(/no spaces or dashes/)
     expect(uiLog).toHaveBeenCalledTimes(1)
@@ -194,7 +194,7 @@ describe('EmojiSettings', () => {
     expect(document.querySelector('[role=alert]')).toBeNull()
     // Enter on its own says why too
     nameInput().dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
-    await settle()
+    await nextTask()
     flushSync()
     expect(document.querySelector('[role=alert]')!.textContent).toMatch(/no spaces or dashes/)
     expect(uiLog).toHaveBeenCalledTimes(2)
@@ -206,7 +206,7 @@ describe('EmojiSettings', () => {
     expect(hint()).toBe('')
     expect(input.getAttribute('aria-invalid')).toBe('false')
     text('Save').click()
-    await settle()
+    await nextTask()
     expect(calls('create_emoji')).toHaveLength(1)
   })
 
@@ -231,7 +231,7 @@ describe('EmojiSettings', () => {
     await upload('cat2.webp')
     expect(document.querySelector('[role=alert]')).toBeNull() // a new attempt clears the old error
     text('Save').click()
-    await settle()
+    await nextTask()
     flushSync()
     expect(document.querySelector('[role=alert]')!.textContent).toBe('this server already has an emoji with that name')
     expect(uiLogs().some((l) => l.includes('emoji: save failed'))).toBe(true)
@@ -241,7 +241,7 @@ describe('EmojiSettings', () => {
     invoke.mockResolvedValueOnce({ ...info, hash: 'third' }).mockResolvedValueOnce(emoji('X9', 'cat3'))
     await upload('cat3.webp')
     text('Save').click()
-    await settle()
+    await nextTask()
     flushSync()
     expect(calls('create_emoji').at(-1)![1]).toEqual({ serverId: 'S1', name: 'cat3', mediaHash: 'third' })
     expect(document.querySelector('[role=alert]')).toBeNull()
@@ -279,13 +279,13 @@ describe('EmojiSettings', () => {
     text('Delete').click()
     text('Delete').click()
     done()
-    await settle()
+    await nextTask()
     expect(calls('delete_emoji')).toHaveLength(1)
     invoke.mockRejectedValueOnce('slow down a little, then try again')
     btn('Delete :pog:').click()
     await tick()
     text('Delete').click()
-    await settle()
+    await nextTask()
     flushSync()
     expect(document.querySelector('[role=alert]')).not.toBeNull()
     text('Cancel').click()
@@ -301,7 +301,7 @@ describe('EmojiSettings', () => {
     input().value = 'pog dog'
     input().dispatchEvent(new Event('input', { bubbles: true }))
     input().dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
-    await settle()
+    await nextTask()
     flushSync()
     expect(document.querySelector('[role=alert]')!.textContent).toMatch(/no spaces or dashes/)
     expect(calls('rename_emoji')).toHaveLength(0)
@@ -309,7 +309,7 @@ describe('EmojiSettings', () => {
     input().value = 'pogdog'
     input().dispatchEvent(new Event('input', { bubbles: true }))
     input().dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
-    await settle()
+    await nextTask()
     flushSync()
     expect(document.querySelector('[role=alert]')!.textContent).toBe('slow down a little, then try again')
     input().dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
@@ -318,7 +318,7 @@ describe('EmojiSettings', () => {
     btn('Delete :pog:').click()
     await tick()
     text('Delete').click()
-    await settle()
+    await nextTask()
     flushSync()
     expect(document.querySelector('[role=alert]')!.textContent).toBe("can't reach the server: couldn't connect")
     const logs = uiLogs()
@@ -338,7 +338,7 @@ describe('EmojiSettings', () => {
     enter()
     enter()
     done()
-    await settle()
+    await nextTask()
     expect(calls('rename_emoji')).toHaveLength(1)
   })
 
@@ -352,12 +352,12 @@ describe('EmojiSettings', () => {
     input().value = 'bad name'
     input().dispatchEvent(new Event('input', { bubbles: true }))
     press('Enter')
-    await settle()
+    await nextTask()
     expect(calls('rename_emoji')).toHaveLength(0)
     input().value = 'taken'
     input().dispatchEvent(new Event('input', { bubbles: true }))
     press('Enter')
-    await settle()
+    await nextTask()
     flushSync()
     expect(document.querySelector('[role=alert]')).not.toBeNull()
     press('Escape')

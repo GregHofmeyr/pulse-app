@@ -128,8 +128,6 @@ pub fn test_config() -> Config {
             ..Default::default()
         },
         invite_decoy: TEST_DECOY.into(),
-        // off here: the tests' own sockets send no app version; the rescue's tests switch it on
-        update_rescue: false,
     }
 }
 

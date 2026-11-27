@@ -2,7 +2,9 @@
   // A row of mutually exclusive options (a radio group) for settings panes and popovers. Too many options for its
   // box (the inbox's six tabs, #454): the row scrolls sideways instead of spilling out, the wheel scrolls it too,
   // a soft fade marks the side with more, and the picked option is always scrolled into view.
-  let { label, options, value, onchange, size = 'md', fill = false }: {
+  // With `tabs` it is a tablist instead (Settings → Profile's five tabs, #716): roving tab order, arrows / Home / End
+  // move and pick, and each tab controls its panel.
+  let { label, options, value, onchange, size = 'md', fill = false, tabs }: {
     label: string
     options: { value: T; label: string }[]
     value: T
@@ -11,6 +13,8 @@
     size?: 'md' | 'sm'
     /** Stretch across its box with every option the same width (the emoji/GIF picker's tabs, #461). */
     fill?: boolean
+    /** A tablist: tab `v` is `#${tabs}-tab-${v}` and controls `#${tabs}-panel-${v}`. */
+    tabs?: string
   } = $props()
 
   let el: HTMLDivElement | undefined = $state()
@@ -24,7 +28,7 @@
   // Keep the picked option in view: only the row's own scroll moves (scrollIntoView would scroll a settings pane).
   $effect(() => {
     void value
-    const on = el?.querySelector<HTMLElement>('[aria-checked="true"]')
+    const on = el?.querySelector<HTMLElement>('.on')
     if (el && on) {
       const l = on.offsetLeft
       const r = l + on.offsetWidth
@@ -33,6 +37,16 @@
     }
     edges()
   })
+
+  function tabKeys(e: KeyboardEvent) {
+    const i = options.findIndex((o) => o.value === value)
+    const n = options.length
+    const to = e.key === 'ArrowRight' ? (i + 1) % n : e.key === 'ArrowLeft' ? (i + n - 1) % n : e.key === 'Home' ? 0 : e.key === 'End' ? n - 1 : -1
+    if (to < 0) return
+    e.preventDefault()
+    onchange(options[to].value)
+    el?.querySelectorAll<HTMLElement>('[role=tab]')[to]?.focus()
+  }
 
   $effect(() => {
     if (!el) return
@@ -53,12 +67,22 @@
   })
 </script>
 
-<div bind:this={el} class="seg" class:sm={size === 'sm'} class:fill class:more-start={more.start} class:more-end={more.end}
-  role="radiogroup" aria-label={label} onscroll={edges}>
-  {#each options as o}
-    <button type="button" role="radio" aria-checked={value === o.value} class:on={value === o.value} onclick={() => onchange(o.value)}>{o.label}</button>
-  {/each}
-</div>
+{#if tabs}
+  <div bind:this={el} class="seg" class:sm={size === 'sm'} class:fill class:more-start={more.start} class:more-end={more.end}
+    role="tablist" aria-label={label} tabindex="-1" onscroll={edges} onkeydown={tabKeys}>
+    {#each options as o}
+      <button type="button" role="tab" id="{tabs}-tab-{o.value}" aria-selected={value === o.value} aria-controls="{tabs}-panel-{o.value}"
+        tabindex={value === o.value ? 0 : -1} class:on={value === o.value} onclick={() => onchange(o.value)}>{o.label}</button>
+    {/each}
+  </div>
+{:else}
+  <div bind:this={el} class="seg" class:sm={size === 'sm'} class:fill class:more-start={more.start} class:more-end={more.end}
+    role="radiogroup" aria-label={label} onscroll={edges}>
+    {#each options as o}
+      <button type="button" role="radio" aria-checked={value === o.value} class:on={value === o.value} onclick={() => onchange(o.value)}>{o.label}</button>
+    {/each}
+  </div>
+{/if}
 
 <style>
   /* max-width + overflow-x: never wider than its box; it scrolls instead, and the fade says there's more. The mask

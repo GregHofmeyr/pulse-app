@@ -64,8 +64,11 @@ const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v
 
 /** A user tile's avatar, name and mute badge for a tile `h` pixels tall: they grow with it, within limits. */
 export function tileScale(h: number): { avatar: number; font: number; badge: number; icon: number } {
-  const avatar = clamp(Math.round(h * 0.5), 48, 160)
   const font = clamp(Math.round(12 + h / 60), 14, 20)
+  // the speaking ring's 1.32 D box (#651), the 10px gap and the name row fit inside the tile less 8px (2px borders and
+  // some air); a tile too small even at 48px clips on purpose
+  const fit = Math.floor((h - 8 - 10 - Math.ceil(font * 1.4)) / 1.32)
+  const avatar = clamp(Math.min(Math.round(h * 0.5), fit), 48, 160)
   const badge = clamp(Math.round(avatar / 3), 22, 40)
   return { avatar, font, badge, icon: badge >= 34 ? 18 : 14 }
 }

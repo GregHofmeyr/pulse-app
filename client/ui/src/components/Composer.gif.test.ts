@@ -20,6 +20,7 @@ import { app } from '../lib/store.svelte'
 import { emptyState } from '../lib/state'
 import { resetGifFavs } from '../lib/gifs.svelte'
 import { serialize } from '../lib/composerDom'
+import { flushMicrotasks } from '../lib/testSettle'
 
 let cmp: ReturnType<typeof mount> | undefined
 const onSendGif = vi.fn()
@@ -35,7 +36,6 @@ const pickerBtn = () => document.querySelector<HTMLButtonElement>('button[aria-l
 const gifPicker = () => document.querySelector('[role="dialog"][aria-label="GIF picker"]')
 const emojiPicker = () => document.querySelector('[role="dialog"][aria-label="Emoji picker"]')
 const tab = (label: string) => [...document.querySelectorAll<HTMLButtonElement>('[role=radiogroup][aria-label="Emoji or GIFs"] [role=radio]')].find((b) => b.textContent === label)
-const flush = async () => { for (let i = 0; i < 6; i++) await Promise.resolve(); flushSync() }
 
 beforeEach(() => {
   resetGifFavs()
@@ -74,7 +74,7 @@ describe('Composer emoji and GIF picker (#461)', () => {
     expect(document.activeElement?.getAttribute('aria-label')).toBe('Search emoji')
     tab('GIFs')!.click()
     flushSync()
-    await flush()
+    await flushMicrotasks(6)
     expect(gifPicker()).not.toBeNull()
     expect(emojiPicker()).toBeNull()
     expect(document.activeElement?.getAttribute('aria-label')).toBe('Search GIPHY')
@@ -93,7 +93,7 @@ describe('Composer emoji and GIF picker (#461)', () => {
     flushSync()
     pickerBtn()!.click()
     flushSync()
-    await flush()
+    await flushMicrotasks(6)
     expect(gifPicker()).not.toBeNull()
     expect(tab('GIFs')!.getAttribute('aria-checked')).toBe('true')
   })
@@ -114,7 +114,7 @@ describe('Composer emoji and GIF picker (#461)', () => {
     tab('Emoji')!.focus()
     tab('Emoji')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }))
     flushSync()
-    await flush()
+    await flushMicrotasks(6)
     expect(gifPicker()).not.toBeNull()
   })
 
@@ -128,7 +128,7 @@ describe('Composer emoji and GIF picker (#461)', () => {
     flushSync()
     tab('GIFs')!.click()
     flushSync()
-    await flush()
+    await flushMicrotasks(6)
     document.querySelector<HTMLButtonElement>('.pick[aria-label="Yes GIF"]')!.click()
     flushSync()
     expect(onSendGif).toHaveBeenCalledWith({ id: 'abc', title: 'Yes GIF', width: 480, height: 270 }, 'https://giphy.com/gifs/yes-abc')
