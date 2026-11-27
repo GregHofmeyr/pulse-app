@@ -45,6 +45,7 @@ export const patchNotes: PatchNotes = {
     'Typing: someone typing straight after sending a message shows up again, and switching chats no longer leaves the old typing line behind',
     'Voice: calls can never fall back to phone-quality audio',
     'Blocking: an invite preview no longer shows the profile of someone who blocked you',
+    'Clips: an editor left open through a failed update keeps working',
   ],
   qol: [
     'One date picker everywhere: plans, scheduled messages and reminders, and it won\'t let you pick a day in the past',
