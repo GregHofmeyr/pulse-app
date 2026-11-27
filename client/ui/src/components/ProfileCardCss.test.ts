@@ -95,3 +95,12 @@ describe('#156: the glow is a choice, the quick card a little bigger', () => {
     expect(rule(/\.msg\.svelte-test/)).toMatch(/background:\s*var\(--card-field\)/)
   })
 })
+
+describe('the editable card (#727)', () => {
+  it('the handle row wraps, so a problem line under the pronouns field stays inside the card', () => {
+    const r = rule(/\.handle\.edit\.svelte-test/)
+    expect(r).toMatch(/display:\s*flex/)
+    expect(r).toMatch(/flex-wrap:\s*wrap/)
+    expect(r).toMatch(/min-width:\s*0/)
+  })
+})

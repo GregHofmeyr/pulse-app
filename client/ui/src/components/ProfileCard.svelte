@@ -3,7 +3,7 @@
   // read the store, so they follow a ProfileUpdated, except in the preview, which draws `user`) and
   // where they are in voice. Used by the quick
   // card popover, the full profile and the editor's preview.
-  import { untrack } from 'svelte'
+  import { untrack, type Snippet } from 'svelte'
   import { completionLine, hoursText } from '../lib/achievements'
   import type { Attachment } from 'svelte/attachments'
   import Avatar from './Avatar.svelte'
@@ -39,7 +39,7 @@
   import type { Badge } from '../lib/protocol/Badge'
   import type { ProfileStats } from '../lib/protocol/ProfileStats'
 
-  let { user, card, badges, showcase = [], stats, serverId, size = 'quick', preview = false, loading = false, onViewFull, onClose, onEditAvatar, onEditBanner }: {
+  let { user, card, badges, showcase = [], stats, serverId, size = 'quick', preview = false, loading = false, onViewFull, onClose, onEditAvatar, onEditBanner, editable }: {
     user: User
     card: CardProfile
     badges: Badge[]
@@ -58,6 +58,9 @@
      *  click changes that picture. */
     onEditAvatar?: () => void
     onEditBanner?: () => void
+    /** The profile editor (#727): the card edited in place. These render in place of the read-only name, pronouns and
+     *  bio; `avatar` and `banner` (optional) in place of the pencil veils. */
+    editable?: { name: Snippet; pronouns: Snippet; bio: Snippet; avatar?: Snippet; banner?: Snippet }
   } = $props()
 
   // The showcase, in its order; names and icons come from the catalogue (fetched once, on first need).
@@ -166,7 +169,7 @@
   <!-- loading: the full banner height, so the card does not grow when the profile arrives (#173) -->
   <div class="banner" class:none={!banner && !loading}>
     {#if banner}<img src={mediaUrl(bannerStill ?? banner)} alt="" draggable="false" {@attach wireBanner} />{/if}
-    {#if onEditBanner}<button type="button" class="edit-veil" aria-label="Change banner" data-tip="Change banner" onclick={onEditBanner}><Icon name="pencil" size={20} /></button>{/if}
+    {#if editable?.banner}{@render editable.banner()}{:else if onEditBanner}<button type="button" class="edit-veil" aria-label="Change banner" data-tip="Change banner" onclick={onEditBanner}><Icon name="pencil" size={20} /></button>{/if}
   </div>
   <div class="body">
     {#if !preview && size === 'quick'}
@@ -174,12 +177,17 @@
       <button type="button" class="ring avatar-link" aria-label="View full profile" onclick={viewFull}><Avatar id={user.id} {name} size={90} place="card" {presence} /></button>
     {:else}
       <span class="ring"><Avatar id={user.id} {name} size={90} place="card" {presence} user={preview ? user : undefined} />
-        {#if onEditAvatar}<button type="button" class="edit-veil round" aria-label="Change avatar" data-tip="Change avatar" onclick={onEditAvatar}><Icon name="pencil" size={20} /></button>{/if}</span>
+        {#if editable?.avatar}{@render editable.avatar()}{:else if onEditAvatar}<button type="button" class="edit-veil round" aria-label="Change avatar" data-tip="Change avatar" onclick={onEditAvatar}><Icon name="pencil" size={20} /></button>{/if}</span>
     {/if}
     <div class="who">
       <!-- No server for the style: a card shows the person's own colour, never a role colour (spec §2) -->
-      <Name userId={user.id} serverId={null} text={name} interactive={false} size="card" bg={nameBg} user={preview ? user : undefined} play={preview || size === 'full'} />
-      <div class="handle">@{user.username}{card.pronouns ? ` · ${card.pronouns}` : ''}</div>
+      {#if editable}
+        {@render editable.name()}
+        <div class="handle edit"><span class="at">@{user.username} ·</span>{@render editable.pronouns()}</div>
+      {:else}
+        <Name userId={user.id} serverId={null} text={name} interactive={false} size="card" bg={nameBg} user={preview ? user : undefined} play={preview || size === 'full'} />
+        <div class="handle">@{user.username}{card.pronouns ? ` · ${card.pronouns}` : ''}</div>
+      {/if}
     </div>
     {#if custom}
       <!-- plain text, in full (the lists cut it to one line) -->
@@ -194,7 +202,9 @@
         {/each}
       </div>
     {/if}
-    {#if loading}
+    {#if editable}
+      {@render editable.bio()}
+    {:else if loading}
       <div class="panel skeleton" aria-hidden="true"><span></span><span></span></div>
     {:else if bioHtml}
       <!-- renderMarkdown output is DOMPurify-sanitised (the message renderer's allow-list) -->
@@ -295,6 +305,9 @@
   .who :global(.name) { font-weight: 700; }
   .who { font-size: calc(20px * var(--k) / 1.15); }
   .handle { font-size: calc(13px * var(--k)); color: var(--card-text-2); }
+  /* editing in place (#727): the @handle, then the pronouns field filling the rest of the line; a problem line wraps under */
+  .handle.edit { display: flex; flex-wrap: wrap; align-items: center; gap: 0 4px; min-width: 0; }
+  .handle.edit .at { flex: none; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .custom-status { display: flex; align-items: center; gap: 6px; margin-top: calc(-4px * var(--k)); font-size: calc(13px * var(--k)); color: var(--card-text); overflow-wrap: anywhere; min-width: 0; }
   .badges { display: flex; flex-wrap: wrap; gap: 8px; padding: 2px 0; }
   /* a touch smaller than the shared showcase size; zoom keeps the ring, glyph, spark and tier in proportion */

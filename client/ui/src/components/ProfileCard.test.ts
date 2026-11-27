@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { flushSync, mount, tick, unmount } from 'svelte'
+import { createRawSnippet, flushSync, mount, tick, unmount } from 'svelte'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { fakeMatchMedia, FakeIntersectionObserver } from '../lib/testMotion'
 
@@ -803,5 +803,29 @@ describe('ProfileCardPopover', () => {
     outside.dispatchEvent(new Event('pointerdown', { bubbles: true }))
     flushSync()
     expect(profileUi.card).toBeNull()
+  })
+})
+
+describe('ProfileCard editable (#727)', () => {
+  const snip = (html: string) => createRawSnippet(() => ({ render: () => html }))
+  it('renders the given slots in place of the read-only name, pronouns and bio', () => {
+    const el = show({
+      preview: true,
+      card: card({ pronouns: 'they/them', bio: 'read only bio' }),
+      editable: { name: snip('<input data-slot="name" />'), pronouns: snip('<input data-slot="pronouns" />'), bio: snip('<div data-slot="bio"></div>') },
+    })
+    for (const s of ['name', 'pronouns', 'bio']) expect(el.querySelector(`[data-slot=${s}]`)).not.toBeNull()
+    expect(el.textContent).not.toContain('they/them')
+    expect(el.textContent).not.toContain('read only bio')
+    expect(el.querySelector('.name')).toBeNull()
+    expect(el.querySelector('.handle')!.textContent).toContain('@sam')
+  })
+  it('the avatar and banner slots replace the pencil veils', () => {
+    const el = show({
+      preview: true,
+      editable: { name: snip('<i></i>'), pronouns: snip('<i></i>'), bio: snip('<i></i>'), avatar: snip('<b data-slot="avatar"></b>'), banner: snip('<b data-slot="banner"></b>') },
+    })
+    expect(el.querySelector('.ring [data-slot=avatar]')).not.toBeNull()
+    expect(el.querySelector('.banner [data-slot=banner]')).not.toBeNull()
   })
 })

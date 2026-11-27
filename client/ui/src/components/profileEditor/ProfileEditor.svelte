@@ -12,7 +12,7 @@
   import { untrack } from 'svelte'
   import Icon from '../Icon.svelte'
   import Loading from '../Loading.svelte'
-  import ProfileCard from '../ProfileCard.svelte'
+  import CardEditor from './CardEditor.svelte'
   import AppearanceSettings from '../AppearanceSettings.svelte'
   import EditorMenu from './EditorMenu.svelte'
   import { modal } from '../../lib/actions'
@@ -113,10 +113,10 @@
         {:else if !st || !me || !pu || !pc}
           <Loading />
         {:else}
-          <!-- Task 3 replaces this plain card with the inline-editing card, "Where you show up" and the tile column.
+          <!-- The inline-editing card; Task 4 adds "Where you show up" and the tile column.
                Card stats shows only the card until Task 12 adds its right column. -->
           <div class="centre">
-            <ProfileCard user={pu} card={pc} badges={st.profile.badges} showcase={st.shown} stats={st.profile.stats} serverId={null} preview />
+            <CardEditor state={st} />
           </div>
         {/if}
       </div>
