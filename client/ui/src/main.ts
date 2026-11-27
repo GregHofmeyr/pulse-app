@@ -22,6 +22,9 @@ markEngine()
 // A finished entrance never replays when focus comes back (lib/entrances.ts).
 markFinishedEntrances()
 
+// The speaking rings' stress harness (#651), dev builds only: `__ringStress(8, 'bars')` in the console.
+if (import.meta.env.DEV) void import('./lib/ringStress').then((m) => m.install())
+
 // Loaded on demand so the pop-out never loads the app (or its store, which would start listening and calling).
 const target = document.getElementById('app')!
 if (popout) void import('./BuildPopout.svelte').then(({ default: BuildPopout }) => mount(BuildPopout, { target }))

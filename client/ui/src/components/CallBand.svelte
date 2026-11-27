@@ -9,6 +9,7 @@
   // You live here (#285): your live card (preview, viewers, Stop) under the band, as a server channel's tile shows it.
   import Icon from './Icon.svelte'
   import Avatar from './Avatar.svelte'
+  import SpeakingRing from './SpeakingRing.svelte'
   import ParticipantMenu from './ParticipantMenu.svelte'
   import CallActions from './CallActions.svelte'
   import { app, openDm, ui } from '../lib/store.svelte'
@@ -64,9 +65,11 @@
   <div class="band" class:ringing={!!ring && !inHere} role="region" aria-label="Call">
     <div class="people">
       {#each roster as p (p.userId)}
-        <button type="button" class="who" class:speaking={voice.speaking.has(p.userId) || soundboard.playing.has(p.userId)} class:pending={p.pending}
+        {@const lit = voice.speaking.has(p.userId) || soundboard.playing.has(p.userId)}
+        <button type="button" class="who" class:speaking={lit} class:pending={p.pending}
           aria-label={p.name} data-tip={p.name} oncontextmenu={(e) => openMenu(p.userId, e, e.currentTarget)}>
           <Avatar id={p.userId} name={p.name} size={34} />
+          <SpeakingRing userId={p.userId} d={34} speaking={lit} place="band" />
           {#if p.deafened}<span class="flag"><Icon name="headphonesOff" size={11} /></span>
           {:else if p.muted}<span class="flag"><Icon name="micOff" size={11} /></span>{/if}
         </button>
@@ -113,11 +116,12 @@
 <style>
   .band { flex-shrink: 0; display: flex; align-items: center; gap: 12px; padding: 10px 18px; background: var(--bg-inset); border-bottom: 1px solid var(--bg-3); }
   .band.ringing { background: var(--ok-soft); }
-  .people { display: flex; gap: 6px; }
-  .who { position: relative; padding: 0; border: 0; background: none; border-radius: 50%; }
+  /* 12px between avatars: room for two ring boxes' 0.16 D outsets (#651). A big group in a narrow window clips rather
+     than spilling sideways; the clip sits 6px out (padding, taken back by the margin) so the edge rings aren't cut. */
+  .people { display: flex; gap: 12px; min-width: 0; overflow: hidden; padding: 6px; margin: -6px; }
+  .who { position: relative; padding: 0; border: 0; background: none; border-radius: 50%; isolation: isolate; }
   .who.pending { opacity: .5; }
-  .who.speaking :global(.av) { box-shadow: 0 0 0 2px var(--ring), 0 0 0 4px var(--ok); }
-  .flag { position: absolute; right: -3px; bottom: -3px; width: 17px; height: 17px; border-radius: 50%; display: grid; place-items: center; background: var(--danger); color: var(--on-danger); box-shadow: 0 0 0 2px var(--ring); }
+  .flag { z-index: 2; position: absolute; right: -3px; bottom: -3px; width: 17px; height: 17px; border-radius: 50%; display: grid; place-items: center; background: var(--danger); color: var(--on-danger); box-shadow: 0 0 0 2px var(--ring); }
   .label { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; color: var(--text); }
   .band.ringing .label { color: var(--ok-text); }
   .grow { flex: 1; }

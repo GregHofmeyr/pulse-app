@@ -327,5 +327,6 @@
   .host :global(video) { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #000; }
   .overlay { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(0, 0, 0, .5); color: #fff; font-size: 18px; font-weight: 600; pointer-events: none; }
   .strip { flex-shrink: 0; padding: 8px 12px; display: flex; gap: 8px; overflow-x: auto; background: var(--bg-1); border-top: 1px solid var(--bg-3); }
-  .slot { flex: 0 0 120px; }
+  /* wide enough that its 16:9 tile holds the 36px avatar's ring box (#651) and the name */
+  .slot { flex: 0 0 136px; }
 </style>

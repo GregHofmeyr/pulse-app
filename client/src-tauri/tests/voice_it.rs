@@ -11,7 +11,7 @@ use pulse_protocol::rest::ChannelKind;
 use pulse_server::testing;
 
 mod common;
-use common::livekit_turn;
+use common::{levels_over, livekit_turn};
 
 const DEV_SECRET: &str = "pulse-dev-secret-0123456789abcdefghij";
 
@@ -1171,8 +1171,7 @@ async fn two_tracks_from_one_person_both_play() {
     vm.mixer_levels().await; // start a fresh level window
     let mut heard = Vec::new();
     for _ in 0..40 {
-        tokio::time::sleep(Duration::from_millis(250)).await;
-        heard.extend(vm.mixer_levels().await);
+        heard.extend(levels_over(&vm, Duration::from_millis(250)).await);
         if heard.iter().any(|(_, l)| *l > 0.01) {
             break;
         }
@@ -1349,8 +1348,11 @@ async fn hears_a_peer_again_after_leaving_and_rejoining() {
         vm.mixer_levels().await;
         let mut heard = false;
         for _ in 0..60 {
-            tokio::time::sleep(Duration::from_millis(250)).await;
-            if vm.mixer_levels().await.iter().any(|(_, l)| *l > 0.01) {
+            if levels_over(&vm, Duration::from_millis(250))
+                .await
+                .iter()
+                .any(|(_, l)| *l > 0.01)
+            {
                 heard = true;
                 break;
             }
@@ -1429,7 +1431,10 @@ async fn hears_a_peer_after_every_connection_in_the_process_has_gone() {
         let bot = tokio::task::spawn_blocking(move || bot_publishes_tone(&r));
         vm.mixer_levels().await;
         let heard = eventually(Duration::from_secs(20), || async {
-            vm.mixer_levels().await.iter().any(|(_, l)| *l > 0.01)
+            levels_over(&vm, Duration::from_millis(250))
+                .await
+                .iter()
+                .any(|(_, l)| *l > 0.01)
         })
         .await;
         println!(

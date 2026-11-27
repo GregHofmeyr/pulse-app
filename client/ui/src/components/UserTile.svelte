@@ -9,6 +9,10 @@
   import { volumeLabel } from '../lib/voiceui'
   import { tileScale } from '../lib/stagelayout'
   import { gameArt, playingOf } from '../lib/game'
+  import SpeakingRing from './SpeakingRing.svelte'
+  import { userOf } from '../lib/selectors'
+  import { ringColorOf, speakCss } from '../lib/speakingRing'
+  import { nameBg } from '../lib/theme.svelte'
 
   let {
     entry,
@@ -46,6 +50,13 @@
   // the game they're playing (#380): its wide art dimmed behind the avatar, when the server has some
   const game = $derived(playingOf(app.state, entry.userId))
   const backdrop = $derived(game ? gameArt(game).wide : null)
+  const size = $derived(scale ? scale.avatar : compact ? 36 : 84)
+  const lit = $derived(voice.speaking.has(entry.userId) || soundboard.playing.has(entry.userId))
+  // the speaking ring's colour (#651), which the tile's speaking border takes too
+  const speak = $derived.by(() => {
+    const u = userOf(app.state, entry.userId)
+    return speakCss(u, ringColorOf(u), nameBg('side'))
+  })
   // the avatar animates while the pointer is over the tile
   let over = $state(false)
 
@@ -66,12 +77,13 @@
 
 <!-- the context menu is a pointer shortcut; the keyboard route is the avatar button's ContextMenu / Shift+F10 -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="tile" class:compact class:pending={entry.pending} class:speaking={voice.speaking.has(entry.userId) || soundboard.playing.has(entry.userId)} data-user={entry.userId} style:--badge={scale ? `${scale.badge}px` : undefined} oncontextmenu={contextMenu}
+<div class="tile" class:compact class:pending={entry.pending} class:speaking={lit} data-user={entry.userId} style:--badge={scale ? `${scale.badge}px` : undefined} style:--speak={speak} oncontextmenu={contextMenu}
   onpointerenter={() => (over = true)} onpointerleave={() => (over = false)}>
   {#if backdrop}<img class="backdrop" src={backdrop} alt="" aria-hidden="true" data-game={game?.name} />{/if}
-  <button bind:this={avatar} type="button" class="avatar-btn" data-menu-toggle aria-disabled={locked} aria-haspopup="menu" aria-label={entry.name} data-tip={isMe ? undefined : `Options for ${entry.name}`}
+  <button bind:this={avatar} type="button" class="avatar-btn" style:--d="{size}px" data-menu-toggle aria-disabled={locked} aria-haspopup="menu" aria-label={entry.name} data-tip={isMe ? undefined : `Options for ${entry.name}`}
     onkeydown={key} onclick={ask}>
-    <Avatar id={entry.userId} name={entry.name} size={scale ? scale.avatar : compact ? 36 : 84} hovered={() => over} />
+    <Avatar id={entry.userId} name={entry.name} {size} hovered={() => over} />
+    <SpeakingRing userId={entry.userId} d={size} speaking={lit} place={compact ? 'strip' : 'stage'} />
     {#if serverTip}<span class="badge server" data-tip={serverTip}><Icon name={entry.serverDeafenedBy ? 'headphonesOff' : 'micOff'} size={badgeIcon} label={serverTip} /></span>
     {:else if entry.deafened}<span class="badge"><Icon name="headphonesOff" size={badgeIcon} label="Deafened" /></span>
     {:else if entry.muted}<span class="badge"><Icon name="micOff" size={badgeIcon} label="Muted" /></span>{/if}
@@ -94,17 +106,21 @@
 
 <style>
   .tile { position: relative; aspect-ratio: 16 / 9; min-width: 0; background: var(--bg-1); border-radius: var(--radius-xl); border: 2px solid transparent; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; }
-  .tile.speaking { border-color: var(--ok); }
+  /* overflow: a tile too small for the ring box (#651) clips it on purpose at its rounded border, never spills */
+  .tile { overflow: hidden; }
+  .tile.speaking { border-color: var(--speak); }
   /* game art (#380): behind everything, dimmed by the tile's own colour over it, so the avatar and name stay clear */
   .tile { isolation: isolate; }
   .backdrop { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; border-radius: inherit; opacity: .3; z-index: -1; pointer-events: none; }
   .avatar-btn, .name { z-index: 1; }
   .name { position: relative; }
   .tile.pending { opacity: .6; }
-  .avatar-btn { position: relative; border: 0; padding: 0; background: none; border-radius: 50%; }
+  /* the ring box (#651): 0.16 D of margin round the avatar for every style, Classic included, so switching style never
+     moves anything; margin, not padding, keeps the button's focus ring and badge on the avatar disc. Its own stacking
+     context: rings behind the avatar stay inside it. */
+  .avatar-btn { position: relative; border: 0; padding: 0; background: none; border-radius: 50%; margin: calc(var(--d) * .16); isolation: isolate; }
   .avatar-btn[aria-disabled='true'] { cursor: default; }
-  .tile.speaking :global(.av) { box-shadow: 0 0 0 4px var(--ring), 0 0 0 7px var(--ok); }
-  .badge { position: absolute; right: -4px; bottom: -4px; width: var(--badge, 28px); height: var(--badge, 28px); border-radius: 50%; background: var(--danger); color: var(--on-danger); border: 4px solid var(--ring); display: grid; place-items: center; }
+  .badge { z-index: 2; position: absolute; right: -4px; bottom: -4px; width: var(--badge, 28px); height: var(--badge, 28px); border-radius: 50%; background: var(--danger); color: var(--on-danger); border: 4px solid var(--ring); display: grid; place-items: center; }
   /* the server's mute (#140), not theirs: squared, with a second ring */
   .badge.server { border-radius: var(--radius-sm); box-shadow: 0 0 0 2px var(--danger); }
   .name { display: flex; align-items: center; gap: 8px; font-weight: 600; max-width: 90%; }
@@ -121,7 +137,7 @@
   .for-me { position: absolute; top: 8px; right: 10px; display: flex; align-items: center; gap: 5px; padding: 3px 8px; border-radius: 999px; background: var(--warn-soft); color: var(--warn-text); font-size: 11px; font-weight: 600; }
   .compact .for-me { top: 4px; right: 6px; padding: 2px 4px; }
   .compact { gap: 4px; border-radius: var(--radius-md); }
-  .compact.speaking :global(.av) { box-shadow: 0 0 0 2px var(--ring), 0 0 0 4px var(--ok); }
+  .compact .avatar-btn { margin: max(6px, calc(var(--d) * .16)); }
   .compact .badge { width: 16px; height: 16px; border-width: 2px; right: -3px; bottom: -3px; }
   .compact .name { font-size: 12px; gap: 5px; }
   .compact .vol { top: 4px; right: 6px; font-size: 10px; }

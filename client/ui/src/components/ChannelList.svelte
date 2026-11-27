@@ -17,6 +17,9 @@
   import { stageShareIn } from '../lib/state'
   import { stageCard } from '../lib/stageShare'
   import Avatar from './Avatar.svelte'
+  import { userOf } from '../lib/selectors'
+  import { ringColorOf, speakCss } from '../lib/speakingRing'
+  import { nameBg } from '../lib/theme.svelte'
   import Name from './Name.svelte'
   import { api, errorText } from '../lib/tauri'
   import { chatBadge, isMuted } from '../lib/conversations'
@@ -96,6 +99,11 @@
   const prefetch = hoverPrefetch((id) => voiceApi.prefetch(id))
   /** Hover and focus both start a prefetch; the channel you're already in needs no token. */
   const restOn = (id: string) => { if (member && id !== voiceChannelId) prefetch.enter(id) }
+  /** The occupant's ring colour (#651): their pick, static here at 22px whatever their style. */
+  const speakOf = (userId: string) => {
+    const u = userOf(app.state, userId)
+    return speakCss(u, ringColorOf(u), nameBg('side'))
+  }
   const mutedForMe = (userId: string) => !!voice.localMutes[userId] && userId !== app.state.me?.id
   /** A voice row is a button: its label is all a screen reader reads, so it carries the state too. */
   const occupantLabel = (p: Occupant) =>
@@ -630,7 +638,7 @@
       onclick={(e) => { if (!p.pending) openMenu(c.id, p.userId, e, e.currentTarget) }}
       onkeydown={(e) => occupantKey(e, c.id, p)}
       onpointerenter={() => (hoveredOccupant = p.userId)} onpointerleave={() => { if (hoveredOccupant === p.userId) hoveredOccupant = null }}>
-      <span class="ring" class:speaking={speaking.has(p.userId)}><Avatar id={p.userId} name={p.name} size={22} hovered={() => hoveredOccupant === p.userId} /></span>
+      <span class="ring" class:speaking={speaking.has(p.userId)} style:--speak={speakOf(p.userId)}><Avatar id={p.userId} name={p.name} size={22} hovered={() => hoveredOccupant === p.userId} /></span>
       <!-- someone you've blocked (#474): not their name, and you can't hear them -->
       <span class="grow">{#if isBlocked(app.state, p.userId)}<span class="blocked-name">Blocked person · can't hear</span>{:else}<Name userId={p.userId} {serverId} interactive={false} surface="side" />{/if}</span>
       {#if p.pending}
@@ -782,7 +790,7 @@
   .occupant { cursor: default; border-radius: var(--radius-sm); height: 30px; padding: 0 8px 0 38px; display: flex; align-items: center; gap: 9px; font-size: 13px; color: var(--text-2); }
   /* the ring snaps with speaking, as the voice tile's border does (no box-shadow transition: a repaint per frame) */
   .ring { display: flex; flex-shrink: 0; border-radius: 50%; }
-  .ring.speaking { box-shadow: 0 0 0 2px var(--ring), 0 0 0 4px var(--ok); }
+  .ring.speaking { box-shadow: 0 0 0 2px var(--ring), 0 0 0 4px var(--speak); }
   .occupant:hover { background: var(--bg-2); }
   /* someone just joined (#219): the row slides in and fades up, and a soft accent wash behind it fades away. The
      wash is its own layer whose opacity fades (no background repaint per frame); the row's own paint stays on top. */

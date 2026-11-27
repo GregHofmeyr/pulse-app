@@ -14,7 +14,7 @@ use pulse_protocol::rest::SetServerVoiceRequest;
 use pulse_server::testing;
 
 mod common;
-use common::livekit_turn;
+use common::{levels_over, livekit_turn};
 
 const DEV_SECRET: &str = "pulse-dev-secret-0123456789abcdefghij";
 
@@ -374,8 +374,10 @@ async fn livekit_stops_and_restarts_audio_with_can_subscribe() {
 /// Whether sam's tone reaches alex's mixer within a second (sound, not just WebRTC's silence).
 async fn hears(vm: &VoiceManager) -> bool {
     vm.mixer_levels().await; // a fresh window
-    tokio::time::sleep(Duration::from_secs(1)).await;
-    vm.mixer_levels().await.iter().any(|(_, l)| *l > 0.01)
+    levels_over(vm, Duration::from_secs(1))
+        .await
+        .iter()
+        .any(|(_, l)| *l > 0.01)
 }
 
 /// #145 through Pulse: a server deafen stops sam's audio reaching alex at LiveKit (not just his

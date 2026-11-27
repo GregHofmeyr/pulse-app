@@ -483,7 +483,8 @@ impl Shared {
         drop(old);
     }
 
-    /// (mic rms, speaker rms) since the last call.
+    /// RMS of what the mic really sent since the last call. Read-and-reset, so one caller: the
+    /// ring tick in `voice/mod.rs` (#651).
     pub fn take_sent_level(&self) -> f32 {
         relock(&self.sent_meter).take().0
     }
