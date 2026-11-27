@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { flushSync, mount, tick, unmount } from 'svelte'
+import { flushSync, mount, unmount } from 'svelte'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const invoke = vi.fn()
@@ -34,6 +34,7 @@ import { reloadVoiceChat, takeChatFocus, voiceChat } from '../lib/voiceChat.svel
 import { reloadStageView } from '../lib/stageShareView.svelte'
 import { reloadSelfPreview, selfPreview } from '../lib/stream/selfTile.svelte'
 import type { StageShare } from '../lib/protocol/StageShare'
+import { settleTask } from '../lib/testSettle'
 
 const me = { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
 const sam = { id: 'U2', username: 'sam', display_name: 'sam', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
@@ -57,11 +58,6 @@ const mountPanel = () => {
 const q = (sel: string) => document.querySelector<HTMLElement>(sel)
 const button = (text: string) => [...document.querySelectorAll('button')].find((b) => b.textContent?.trim() === text || b.getAttribute('aria-label') === text)
 const WATCH = "Watch sam's stream"
-const settle = async () => {
-  for (let i = 0; i < 5; i++) await tick()
-  await new Promise((r) => setTimeout(r, 0))
-  flushSync()
-}
 
 beforeEach(() => {
   invoke.mockReset()
@@ -104,7 +100,7 @@ describe('join failure', () => {
     invoke.mockImplementation((c: string) => (c === 'join_voice' ? Promise.reject("couldn't connect to voice: x") : Promise.resolve()))
     mountPanel()
     button('Join voice')!.click()
-    await settle()
+    await settleTask()
     expect(voice.joinFailed?.channelId).toBe('V1')
     // VoiceStatus shows the failure (with Retry and Dismiss); the panel doesn't repeat it
     expect(q('.panel .error[role=alert]')).toBeNull()
@@ -137,7 +133,7 @@ describe('stream tiles', () => {
   it('one_click_watches_the_stream', async () => {
     mountPanel()
     q('[data-stream="U2"]')!.click()
-    await settle()
+    await settleTask()
     expect(invoke).toHaveBeenCalledWith('stream_watch', { channelId: 'V1', streamer: 'U2' })
     expect(invoke.mock.calls.filter(([c]) => c === 'stream_watch')).toHaveLength(1)
   })
@@ -145,14 +141,14 @@ describe('stream tiles', () => {
   it('the_watch_button_watches_once', async () => {
     mountPanel()
     button(WATCH)!.click()
-    await settle()
+    await settleTask()
     expect(invoke.mock.calls.filter(([c]) => c === 'stream_watch')).toHaveLength(1)
   })
 
   it('watching_tile_has_volume_quality_stop_and_full_view', async () => {
     mountPanel()
     await streamApi.watch('V1', 'U2')
-    await settle()
+    await settleTask()
     const tile = q('[data-stream="U2"]')!
     expect(tile.querySelector('video')).not.toBeNull()
     expect(tile.querySelector('input[aria-label="Stream volume"]')).not.toBeNull()
@@ -165,9 +161,9 @@ describe('stream tiles', () => {
   it('stop_watching_returns_the_tile_to_not_watching', async () => {
     mountPanel()
     await streamApi.watch('V1', 'U2')
-    await settle()
+    await settleTask()
     button('Stop watching')!.click()
-    await settle()
+    await settleTask()
     expect(stream.watching).toEqual([])
     expect(q('[data-stream="U2"]')!.textContent).toContain('LIVE')
   })
@@ -207,7 +203,7 @@ describe('stream tiles', () => {
     expect(tile.textContent).not.toContain('Join & watch')
     expect(button("Watch sam's stream as a ghost")).toBeDefined()
     tile.click()
-    await settle()
+    await settleTask()
     expect(invoke).toHaveBeenCalledWith('stream_watch', { channelId: 'V1', streamer: 'U2', ghost: true })
     expect(invoke.mock.calls.filter(([c]) => c === 'join_voice')).toHaveLength(0)
     expect(stream.watching[0]).toMatchObject({ streamer: 'U2', ghost: true })
@@ -241,7 +237,7 @@ describe('stream tiles', () => {
     const box = [...document.querySelectorAll('[data-stream="U1"] label')].find((l) => l.textContent?.includes('Allow ghost viewers'))!.querySelector('input')!
     expect(box.checked).toBe(true)
     box.click()
-    await settle()
+    await settleTask()
     expect(invoke).toHaveBeenCalledWith('stream_go_live', { channelId: 'V1', settings: { height: 720, fps: 60, audio: false, allow_ghosts: false } })
     expect(stream.live?.allowGhosts).toBe(false)
   })
@@ -271,7 +267,7 @@ describe('stream tiles', () => {
       expect(button('Show my stream')).toBeUndefined()
       const tilesBefore = document.querySelectorAll('.slot').length
       button('Hide preview')!.click()
-      await settle()
+      await settleTask()
       expect(q('[data-stream="U1"]')).toBeNull()
       expect(document.querySelectorAll('.slot').length).toBe(tilesBefore - 1)
       expect(q('[data-stream="U1"] video')).toBeNull()
@@ -290,9 +286,9 @@ describe('stream tiles', () => {
       goLive()
       mountPanel()
       button('Hide preview')!.click()
-      await settle()
+      await settleTask()
       button('Show my stream')!.click()
-      await settle()
+      await settleTask()
       const tile = q('[data-stream="U1"]')!
       expect(tile).not.toBeNull()
       expect(tile.querySelector('video')).not.toBeNull()
@@ -305,7 +301,7 @@ describe('stream tiles', () => {
       goLive()
       mountPanel()
       button('Hide preview')!.click()
-      await settle()
+      await settleTask()
       const sams = q('[data-stream="U2"]')!
       expect(sams).not.toBeNull()
       expect(button(WATCH)).toBeDefined()
@@ -315,7 +311,7 @@ describe('stream tiles', () => {
       expect(q('[data-user="U2"]')).not.toBeNull()
       // and sam's tile still watches on a click, as before
       sams.click()
-      await settle()
+      await settleTask()
       expect(q('[data-stream="U2"].watching')).not.toBeNull()
     })
 
@@ -323,7 +319,7 @@ describe('stream tiles', () => {
       goLive()
       mountPanel()
       button('Hide preview')!.click()
-      await settle()
+      await settleTask()
       expect(localStorage.getItem('pulse.stream.hidepreview')).toContain('true')
       unmount(cmp!)
       reloadSelfPreview()
@@ -339,12 +335,12 @@ describe('stream tiles', () => {
       goLive()
       mountPanel()
       button('Hide preview')!.click()
-      await settle()
+      await settleTask()
       const empty = q('.empty')!
       expect(empty.textContent).toContain('Your stream is hidden')
       expect(empty.textContent).not.toContain('Nobody')
       button('show it')!.click()
-      await settle()
+      await settleTask()
       expect(q('[data-stream="U1"]')).not.toBeNull()
     })
 
@@ -369,16 +365,16 @@ describe('stream tiles', () => {
     stream.live = { channelId: 'V1', res: 720, fps: 60, audio: false, audioMuted: false, label: 'Game', encoderWarning: false, allowGhosts: true }
     mountPanel()
     void streamApi.stop()
-    await settle()
+    await settleTask()
     // the server still lists us until its StreamEnded lands
     expect(q('[data-stream="U1"]')).not.toBeNull()
     expect(q('[data-stream="U1"]')!.textContent).not.toContain('another device')
     app.state = applyEvent(app.state, { t: 'StreamEnded', d: { channel_id: 'V1', user_id: 'U1', reason: 'stopped' } }, 0)
-    await settle()
+    await settleTask()
     expect(q('[data-stream="U1"]')).toBeNull()
     // live from elsewhere later: the note is back
     app.state = applyEvent(app.state, { t: 'StreamStarted', d: { stream: { ...samStream, user_id: 'U1' } } }, 0)
-    await settle()
+    await settleTask()
     expect(q('[data-stream="U1"]')!.textContent).toContain("You're live from another device")
   })
 
@@ -388,7 +384,7 @@ describe('stream tiles', () => {
     stream.live = { channelId: 'V1', res: 720, fps: 60, audio: true, audioMuted: false, label: 'Game', encoderWarning: false, allowGhosts: true }
     mountPanel()
     void streamApi.stop()
-    await settle()
+    await settleTask()
     expect(invoke.mock.calls.some(([c]) => c === 'stream_audio_stop')).toBe(true)
     expect(q('[data-stream="U1"]')).not.toBeNull()
     expect(q('[data-stream="U1"]')!.textContent).not.toContain('another device')
@@ -399,7 +395,7 @@ describe('stream tiles', () => {
     diag.in = { w: 1280, h: 720, fps: 30, kbps: 900, decoder: 'x', powerEfficient: null, freezes: 0, freezeMs: 0, stillLikely: false } as never
     mountPanel()
     q('[data-stream="U2"]')!.click()
-    await settle()
+    await settleTask()
     expect(q('[data-stream="U2"].watching')).not.toBeNull()
     expect(q('[data-stream="U2"] [aria-label="Stream diagnostics"]')).toBeNull()
     diagUi.on = false
@@ -415,14 +411,14 @@ describe('stream tiles', () => {
   it('a_grid_watch_asks_for_the_low_layer', async () => {
     mountPanel()
     q('[data-stream="U2"]')!.click()
-    await settle()
+    await settleTask()
     expect(room.setLayer).toHaveBeenCalledWith('U2', 'low')
   })
 
   it('the_quality_list_opens_upward_on_the_tile', async () => {
     mountPanel()
     await streamApi.watch('V1', 'U2')
-    await settle()
+    await settleTask()
     expect(q('[data-stream="U2"] .select')?.getAttribute('data-drop')).toBe('up')
   })
 
@@ -430,7 +426,7 @@ describe('stream tiles', () => {
     const onFull = vi.fn()
     cmp = mount(StreamTileForTest, { target: document.body, props: { channelId: 'V1', serverId: 'S1', streamer: 'U2', mine: false, onMenu: () => {}, onFull } })
     await streamApi.watch('V1', 'U2')
-    await settle()
+    await settleTask()
     const host = q('.host')!
     expect(host.getAttribute('role')).toBe('button')
     host.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
@@ -767,7 +763,7 @@ describe('Spotify on the stage (#234)', () => {
     input.dispatchEvent(new Event('input'))
     flushSync()
     box.querySelector<HTMLButtonElement>('button')!.click()
-    await settle()
+    await settleTask()
     expect(invoke).toHaveBeenCalledWith('share_to_stage', { channelId: 'V1', url: 'spotify:socialsession:ABC123abc123' })
     expect(q('[aria-label="Share Spotify to the stage"][role=dialog]')).toBeNull()
   })
@@ -783,7 +779,7 @@ describe('Spotify on the stage (#234)', () => {
     input.dispatchEvent(new Event('input'))
     flushSync()
     box.querySelector<HTMLButtonElement>('button')!.click()
-    await settle()
+    await settleTask()
     expect(box.querySelector('[role=alert]')).not.toBeNull()
   })
 
@@ -823,7 +819,7 @@ describe('Spotify on the stage (#234)', () => {
     const x = button('Hide for me')!
     x.focus()
     x.click()
-    await settle()
+    await settleTask()
     expect(document.activeElement).toBe(spotifyBtn())
   })
 
@@ -853,13 +849,13 @@ describe('Spotify on the stage (#234)', () => {
     button('Minimise')!.click()
     flushSync()
     await streamApi.watch('V1', 'U2')
-    await settle()
+    await settleTask()
     button('Full view')!.click()
-    await settle()
+    await settleTask()
     expect(q('.pill')).toBeNull()
     expect(q('.sp-strip')).toBeNull()
     callView.full = null
-    await settle()
+    await settleTask()
     expect(q('.pill')).not.toBeNull()
   })
 })
@@ -879,7 +875,7 @@ describe('your own stream in full view (#609)', () => {
     const open = q('[data-stream="U1"] [data-own-full]')!
     expect(open.getAttribute('aria-label')).toBe('Open your stream in full view')
     open.click()
-    await settle()
+    await settleTask()
     expect(callView.own).toBe('V1')
     const view = ownFull()!
     expect(view.querySelector('.name')!.textContent).toBe('Your stream')
@@ -901,13 +897,13 @@ describe('your own stream in full view (#609)', () => {
     expect(preview.getAttribute('role')).toBe('button')
     expect(preview.tabIndex).toBe(0)
     preview.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
-    await settle()
+    await settleTask()
     expect(ownFull()).not.toBeNull()
     button('Back')!.click()
-    await settle()
+    await settleTask()
     expect(ownFull()).toBeNull()
     q('[data-stream="U1"] .open')!.click()
-    await settle()
+    await settleTask()
     expect(ownFull()).not.toBeNull()
   })
 
@@ -915,16 +911,16 @@ describe('your own stream in full view (#609)', () => {
     goLive()
     mountPanel()
     openOwnFull('V1')
-    await settle()
+    await settleTask()
     button('Back')!.click()
-    await settle()
+    await settleTask()
     expect(callView.own).toBeNull()
     expect(q('[data-stream="U1"]')).not.toBeNull()
     expect(document.activeElement).toBe(q('[data-stream="U1"] [data-own-full]'))
     openOwnFull('V1')
-    await settle()
+    await settleTask()
     esc()
-    await settle()
+    await settleTask()
     expect(callView.own).toBeNull()
     expect(ownFull()).toBeNull()
   })
@@ -934,18 +930,18 @@ describe('your own stream in full view (#609)', () => {
     goLive()
     mountPanel()
     openOwnFull('V1')
-    await settle()
+    await settleTask()
     button('Full screen')!.click()
-    await settle()
+    await settleTask()
     expect(ownFull()!.classList.contains('screen')).toBe(true)
     expect(fullscreenCalls()).toEqual([true])
     esc()
-    await settle()
+    await settleTask()
     expect(ownFull()).not.toBeNull()
     expect(ownFull()!.classList.contains('screen')).toBe(false)
     expect(fullscreenCalls()).toEqual([true, false])
     esc()
-    await settle()
+    await settleTask()
     expect(ownFull()).toBeNull()
   })
 
@@ -954,16 +950,16 @@ describe('your own stream in full view (#609)', () => {
     mountPanel()
     await streamApi.watch('V1', 'U2')
     openFull({ channelId: 'V1', streamer: 'U2' })
-    await settle()
+    await settleTask()
     expect(button('Stop watching')).toBeDefined()
     openOwnFull('V1')
-    await settle()
+    await settleTask()
     // one full view: sam's went back to a preview, and is still watched
     expect(callView.full).toBeNull()
     expect(stream.watching.find((w) => w.streamer === 'U2')?.view).toBe('preview')
     expect(q('.full-view .name')!.textContent).toBe('Your stream')
     openFull({ channelId: 'V1', streamer: 'U2' })
-    await settle()
+    await settleTask()
     expect(callView.own).toBeNull()
     expect(q('.full-view .name')!.textContent).toBe('sam')
   })
@@ -972,10 +968,10 @@ describe('your own stream in full view (#609)', () => {
     goLive()
     mountPanel()
     openOwnFull('V1')
-    await settle()
+    await settleTask()
     expect(ownFull()).not.toBeNull()
     stream.live = null
-    await settle()
+    await settleTask()
     expect(ownFull()).toBeNull()
   })
 
@@ -983,7 +979,7 @@ describe('your own stream in full view (#609)', () => {
     goLive()
     mountPanel()
     button('Hide preview')!.click()
-    await settle()
+    await settleTask()
     expect(q('[data-own-full]')).toBeNull()
   })
 })

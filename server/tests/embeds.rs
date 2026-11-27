@@ -853,3 +853,42 @@ async fn a_hide_during_a_fetch_survives_its_store() {
         vec![held.as_str()]
     );
 }
+
+/// Hiding or showing a preview in a 1:1 DM (#547) reaches its sender's sessions but not the other member once they've
+/// blocked the sender, as their edits don't (#474); the message stays in the blocker's history as it was.
+#[tokio::test]
+async fn hiding_a_preview_never_reaches_someone_who_blocked_the_sender() {
+    let env = setup().await;
+    let dm = create_dm(&env.app, &env.sam_t, &[env.alex]).await.id;
+    let page = env.page(1);
+    let m = send(&env.app, &env.sam_t, dm, &format!("look {page}")).await;
+    wait_for_embeds(&env, &env.alex_t, dm, m.id, 1).await;
+    let r = env
+        .app
+        .http
+        .put(env.app.url(&format!("/me/blocks/{}", env.sam)))
+        .bearer_auth(&env.alex_t)
+        .json(&json!({ "mode": "line" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    let mut alex_ws = hello(&env.app, &env.alex_t).await;
+    let mut sam_ws = hello(&env.app, &env.sam_t).await;
+
+    // a hide: sam's sessions hear it, alex's don't
+    assert_eq!(env.hide(&env.sam_t, m.id, None).await.status(), 200);
+    assert!(next_update(&mut sam_ws, m.id).await.embeds.is_empty());
+    // and a show: the same
+    assert_eq!(env.show(&env.sam_t, m.id).await.status(), 200);
+    assert_eq!(next_update(&mut sam_ws, m.id).await.embeds.len(), 1);
+    // both have been out to sam: nothing about either came to alex
+    while let Some(f) = next_frame_beating(&mut alex_ws, Duration::from_millis(500)).await {
+        assert!(
+            !matches!(&f, ServerFrame::Event(Event::MessageUpdated { message }) if message.id == m.id),
+            "a preview change reached the blocker: {f:?}"
+        );
+    }
+    // the message stays in alex's history
+    assert_eq!(env.read(&env.alex_t, dm, m.id).await.id, m.id);
+}

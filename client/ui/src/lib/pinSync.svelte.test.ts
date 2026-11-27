@@ -13,6 +13,7 @@ import { testReady } from './testReady'
 import type { Message } from './protocol/Message'
 import type { Pin } from './protocol/Pin'
 import type { PinnedMessage } from './protocol/PinnedMessage'
+import { microtasks } from './testSettle'
 
 const TEXT = { id: 'C1', server_id: 'S1', kind: 'text' as const, name: 'general', position: 0 }
 const QUOTES = { id: 'Q1', server_id: 'S1', kind: 'quotes' as const, name: 'quotes', position: 1 }
@@ -23,7 +24,6 @@ const msg = (id: string, channel = 'C1', pin?: Pin): Message => ({
 })
 const pin = (by = 'U2'): Pin => ({ pinned_by: by, pinned_at: '2026-11-09T10:00:00.000Z', expires_at: null })
 const pinOf = (id: string) => app.state.messages['C1'].find((m) => m.id === id)?.pin ?? null
-async function settle() { for (let i = 0; i < 10; i++) await Promise.resolve() }
 
 beforeEach(() => {
   resetState()
@@ -76,7 +76,7 @@ describe('pins after a reconnect (#258)', () => {
       return []
     })
     await refreshPins('C1')
-    await settle()
+    await microtasks(10)
     expect(calls).toBe(2)
     expect(pinSync.stale).toEqual({ Q1: true })
   })
@@ -106,7 +106,7 @@ describe('reportPin (#349): a pin or unpin from a menu', () => {
     invoke.mockImplementation(async (cmd: string) => (cmd === 'list_pins' ? [] : undefined))
     const said: string[] = []
     await reportPin(Promise.reject('That message is already pinned.'), 'C1', (t) => said.push(t))
-    await settle()
+    await microtasks(10)
     expect(said).toEqual(['That message is already pinned.'])
     expect(invoke).toHaveBeenCalledWith('list_pins', expect.anything())
     expect(pinOf('M1')).toBeNull()
@@ -114,7 +114,7 @@ describe('reportPin (#349): a pin or unpin from a menu', () => {
   it('one that lands says nothing and fetches nothing', async () => {
     const said: string[] = []
     await reportPin(Promise.resolve(), 'C1', (t) => said.push(t))
-    await settle()
+    await microtasks(10)
     expect(said).toEqual([])
     expect(invoke).not.toHaveBeenCalled()
   })

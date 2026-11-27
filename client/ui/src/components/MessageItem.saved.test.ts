@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 // Save message (#315) in a message's menu: saves a private bookmark; one you saved offers Remove from saved.
-import { flushSync, mount, tick, unmount } from 'svelte'
+import { flushSync, mount, unmount } from 'svelte'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Message } from '../lib/protocol/Message'
 import type { MessageBookmark } from '../lib/protocol/MessageBookmark'
@@ -12,6 +12,7 @@ import MessageItem from './MessageItem.svelte'
 import { app, ui } from '../lib/store.svelte'
 import { emptyState } from '../lib/state'
 import { bookmarks } from '../lib/bookmarks.svelte'
+import { flushMicrotasks } from '../lib/testSettle'
 
 const msg = (over: Partial<Message> = {}): Message => ({
   id: 'M1', channel_id: 'C1', author_id: 'U2', kind: 'normal', content: 'the gate code is 4321',
@@ -40,7 +41,6 @@ const btn = (label: string) => document.querySelector<HTMLButtonElement>(`button
 const menu = () => document.querySelector<HTMLElement>('[role=menu][aria-label="Message actions"]')
 const items = () => [...(menu()?.querySelectorAll<HTMLButtonElement>(':scope > [role=menuitem]') ?? [])]
 const item = (label: string) => items().find((b) => b.textContent?.trim() === label)
-async function settle() { for (let i = 0; i < 5; i++) await Promise.resolve(); await tick() }
 
 beforeEach(() => {
   invoke.mockReset()
@@ -59,7 +59,7 @@ describe('Save message (#315)', () => {
     show(msg())
     btn('More')!.click(); flushSync()
     item('Save message')!.click()
-    await settle()
+    await flushMicrotasks(6)
     expect(invoke).toHaveBeenCalledWith('save_message', { messageId: 'M1', note: null })
     expect(bookmarks.list.map((b) => b.id)).toEqual(['B1'])
     expect(ui.notice).toContain('Saved')
@@ -71,7 +71,7 @@ describe('Save message (#315)', () => {
     btn('More')!.click(); flushSync()
     expect(item('Save message')).toBeUndefined()
     item('Remove from saved')!.click()
-    await settle()
+    await flushMicrotasks(6)
     expect(invoke).toHaveBeenCalledWith('delete_bookmark', { id: 'B1' })
     expect(bookmarks.list).toEqual([])
   })

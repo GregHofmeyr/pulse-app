@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 // Send later (#299): the composer's clock button, its quick picks scheduling what's in the box, and why it can't when
 // the box is empty or holds files.
-import { flushSync, mount, tick, unmount } from 'svelte'
+import { flushSync, mount, unmount } from 'svelte'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: async () => undefined }))
@@ -11,6 +11,7 @@ import { app } from '../lib/store.svelte'
 import { emptyState } from '../lib/state'
 import { serialize } from '../lib/composerDom'
 import { plusItem } from './plusMenuHarness'
+import { flushMicrotasks } from '../lib/testSettle'
 
 const NOW = new Date(2026, 10, 16, 10, 0).getTime()
 let cmp: ReturnType<typeof mount> | undefined
@@ -35,7 +36,6 @@ function type(box: HTMLElement, text: string) {
 const clock = () => plusItem('later')
 const menu = () => document.querySelector<HTMLElement>('[role=menu][aria-label="Send later"]')
 const entries = () => [...(menu()?.querySelectorAll<HTMLButtonElement>('[role=menuitem]') ?? [])].map((b) => b.textContent?.trim())
-async function settle() { for (let i = 0; i < 5; i++) await Promise.resolve(); await tick() }
 
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ['Date'] })
@@ -70,7 +70,7 @@ describe('Send later (#299)', () => {
     clock()!.click(); flushSync()
     expect(entries()).toEqual(['In 1 hour', 'Tonight at 20:00', 'Tomorrow at 09:00', 'Pick a date and time…'])
     ;[...menu()!.querySelectorAll<HTMLButtonElement>('[role=menuitem]')][1].click()
-    await settle()
+    await flushMicrotasks(6)
     expect(onSchedule).toHaveBeenCalledWith('see you at 8', new Date(2026, 10, 16, 20, 0).toISOString())
     flushSync()
     expect(serialize(box)).toBe('')
@@ -93,7 +93,7 @@ describe('Send later (#299)', () => {
     type(box, 'hi')
     clock()!.click(); flushSync()
     ;[...menu()!.querySelectorAll<HTMLButtonElement>('[role=menuitem]')][0].click()
-    await settle()
+    await flushMicrotasks(6)
     flushSync()
     expect(menu()!.textContent).toContain('up to 50 scheduled messages')
     expect(serialize(box)).toBe('hi')

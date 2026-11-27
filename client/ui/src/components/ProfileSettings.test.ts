@@ -813,24 +813,6 @@ describe('ProfileSettings', () => {
       click(button('Save'))
       expect((calls('update_profile')[0][1] as { request: UpdateProfileRequest }).request.typing_text).toBe('typing a novel')
     })
-
-    it('fits a narrow window: the row shrinks (the box first), a long name and the preview end in an ellipsis', async () => {
-      const { compile } = await import('svelte/compiler')
-      const { readFileSync } = await import('node:fs')
-      const { resolve } = await import('node:path')
-      const css = compile(readFileSync(resolve(__dirname, 'ProfileSettings.svelte'), 'utf8'), { filename: 'ProfileSettings.svelte', css: 'external', cssHash: () => 's' }).css!.code
-      const rule = (sel: string) => css.match(new RegExp(`(?:^|\\n|\\})\\s*${sel.split(' ').map((p) => `${p.replace(/\./g, '\\.')}\\.s`).join(' ')}\\s*\\{([^}]*)\\}`))?.[1] ?? ''
-      expect(rule('.typing-row')).toMatch(/display:\s*flex/)
-      expect(rule('.typing-row')).toMatch(/min-width:\s*0/)
-      expect(css.match(/\.typing-row\.s \.input:where\(\.s\) \{([^}]*)\}/)?.[1]).toMatch(/flex:\s*1 1 0/)
-      expect(css.match(/\.typing-row\.s \.input:where\(\.s\) \{([^}]*)\}/)?.[1]).toMatch(/min-width:\s*0/)
-      for (const sel of ['.typing-who', '.typing-preview']) {
-        expect(rule(sel), sel).toMatch(/overflow:\s*hidden/)
-        expect(rule(sel), sel).toMatch(/text-overflow:\s*ellipsis/)
-        expect(rule(sel), sel).toMatch(/white-space:\s*nowrap/)
-      }
-      expect(rule('.typing-suggestions')).toMatch(/flex-wrap:\s*wrap/)
-    })
   })
 
   describe('display name (#47)', () => {

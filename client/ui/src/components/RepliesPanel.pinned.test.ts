@@ -15,6 +15,7 @@ import RepliesPanel from './RepliesPanel.svelte'
 import { app, handleReady, resetState } from '../lib/store.svelte'
 import { addHistory, markHistory } from '../lib/state'
 import { testReady } from '../lib/testReady'
+import { nextTask } from '../lib/testSettle'
 
 const base = (id: string): Message => ({
   id, channel_id: 'C1', author_id: 'U2', kind: 'normal', content: '', reply_to_id: null, created_at: '2026-10-01T10:00:00.000Z',
@@ -54,7 +55,6 @@ function fake(proto: object, key: string, desc: PropertyDescriptor) {
   saved.push([proto, key, Object.getOwnPropertyDescriptor(proto, key)])
   Object.defineProperty(proto, key, { configurable: true, ...desc })
 }
-const settle = () => new Promise((r) => setTimeout(r, 0))
 
 describe('RepliesPanel: stays at the bottom as replies grow', () => {
   beforeEach(() => {
@@ -102,9 +102,9 @@ describe('RepliesPanel: stays at the bottom as replies grow', () => {
     app.state = markHistory(addHistory({ ...app.state }, 'C1', [root]), 'C1', true)
     cmp = mount(RepliesPanel, { target: document.body, props: { root, serverId: 'S1', onClose: () => {} } })
     flushSync()
-    await settle()
+    await nextTask()
     flushSync()
-    await settle()
+    await nextTask()
     frame()
   }
   const bottom = () => list().scrollHeight - list().clientHeight

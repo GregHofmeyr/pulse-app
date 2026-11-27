@@ -20,6 +20,7 @@ import { REFRESH_DEBOUNCE_MS } from '../lib/leaderboard'
 import { localDay } from '../lib/quoteFromMessage'
 import { app, handleReady, resetState, startListening } from '../lib/store.svelte'
 import { testMe, testReady } from '../lib/testReady'
+import { nextTask } from '../lib/testSettle'
 
 const person = (id: string, name: string) => ({ id, username: name, display_name: name, avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } })
 const sam = person('U2', 'sam')
@@ -57,11 +58,10 @@ const board = (over: Partial<Board> = {}): Board => ({
 let cmp: ReturnType<typeof mount> | undefined
 const onOpen = vi.fn()
 const onClose = vi.fn()
-const settle = () => new Promise((r) => setTimeout(r, 0))
 async function show() {
   cmp = mount(Leaderboard, { target: document.body, props: { serverId: 'S1', onOpen, onClose } })
   flushSync()
-  await settle()
+  await nextTask()
   flushSync()
 }
 const section = (title: string) =>
@@ -138,7 +138,7 @@ describe('Leaderboard', () => {
         cmd === 'leaderboard' ? ((a as { period: string }).period === 'week' ? board({ top: [], most_quoted: [] }) : board()) : undefined)
       await show()
       tabs()[0].click()
-      await settle()
+      await nextTask()
       flushSync()
       expect(section('Most reacted')!.textContent).toContain('No reactions on quotes this week.')
       expect(section('Most quoted')!.textContent).toContain('Nobody has been quoted this week.')
@@ -308,7 +308,7 @@ describe('Leaderboard', () => {
     invoke.mockImplementation(async () => ({ winners: [], top_year: [], top_all_time: [], top: [], most_quoted: [], most_awarded: [] }))
     await show()
     tabs()[3].click()
-    await settle()
+    await nextTask()
     flushSync()
     expect(document.body.textContent).toContain('No quotes yet.')
     unmount(cmp!)
@@ -346,7 +346,7 @@ describe('Leaderboard', () => {
 
   it('Escape and the close button close it', async () => {
     await show()
-    await settle() // the outside-click listener attaches on the next tick
+    await nextTask() // the outside-click listener attaches on the next tick
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
     expect(onClose).toHaveBeenCalledTimes(1)
     document.querySelector<HTMLButtonElement>('button[aria-label="Close leaderboard"]')!.click()

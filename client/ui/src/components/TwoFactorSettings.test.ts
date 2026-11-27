@@ -6,13 +6,13 @@ const invoke = vi.fn(async (_cmd: string, _args?: unknown): Promise<unknown> => 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (cmd: string, args?: never) => invoke(cmd, args) }))
 
 import TwoFactorSettings from './TwoFactorSettings.svelte'
+import { nextTask } from '../lib/testSettle'
 
 let cmp: ReturnType<typeof mount> | undefined
-const settle = () => new Promise((r) => setTimeout(r, 0))
 const show = async () => {
   cmp = mount(TwoFactorSettings, { target: document.body })
   flushSync()
-  await settle(); flushSync()
+  await nextTask(); flushSync()
 }
 const calls = (cmd: string) => invoke.mock.calls.filter((c) => c[0] === cmd)
 const button = (t: string) => [...document.querySelectorAll('button')].find((b) => b.textContent === t)
@@ -25,7 +25,7 @@ const type = (sel: string, v: string) => {
 }
 const submit = async () => {
   document.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
-  await settle(); flushSync()
+  await nextTask(); flushSync()
 }
 const text = () => document.body.textContent ?? ''
 
@@ -82,7 +82,7 @@ describe('TwoFactorSettings', () => {
     expect(document.querySelector('input')).toBeNull()
 
     click("I've saved these")
-    await settle(); flushSync()
+    await nextTask(); flushSync()
     for (const c of CODES) expect(text()).not.toContain(c)
 
     // a fresh mount never shows them again
@@ -104,7 +104,7 @@ describe('TwoFactorSettings', () => {
     click('Set up'); type('input', 'pw'); await submit()
     type('input', '123456'); await submit()
     expect(text()).toContain('No other devices were signed in.')
-    click('Copy'); await settle()
+    click('Copy'); await nextTask()
     expect(writeText).toHaveBeenCalledWith(CODES.join('\n'))
   })
 
@@ -147,7 +147,7 @@ describe('TwoFactorSettings', () => {
     type('input', '654321'); await submit()
     expect(calls('two_factor_regenerate')[0][1]).toEqual({ code: '654321' })
     for (const c of CODES) expect(text()).toContain(c)
-    click("I've saved these"); await settle(); flushSync()
+    click("I've saved these"); await nextTask(); flushSync()
     for (const c of CODES) expect(text()).not.toContain(c)
   })
 
@@ -186,7 +186,7 @@ describe('TwoFactorSettings', () => {
     await show()
     click('Set up'); type('input', 'pw'); await submit()
     type('input', '123456'); await submit()
-    click('Copy'); await settle(); flushSync()
+    click('Copy'); await nextTask(); flushSync()
     expect(button('Copied')).toBeTruthy()
     unmount(cmp!); document.body.innerHTML = ''
     answers(OFF, enabled)
@@ -194,7 +194,7 @@ describe('TwoFactorSettings', () => {
     await show()
     click('Set up'); type('input', 'pw'); await submit()
     type('input', '123456'); await submit()
-    click('Copy'); await settle(); flushSync()
+    click('Copy'); await nextTask(); flushSync()
     expect(text()).toContain("Couldn't copy: select and copy them by hand.")
     expect(button('Copy')).toBeTruthy()
   })
@@ -206,7 +206,7 @@ describe('TwoFactorSettings', () => {
     await show()
     expect(document.querySelector('h3')).not.toBeNull()
     expect(document.querySelector('[role=status]')?.textContent).toBe('Checking…')
-    answer(OFF); await settle(); flushSync()
+    answer(OFF); await nextTask(); flushSync()
     expect(text()).not.toContain('Checking…')
     expect(button('Set up')).toBeTruthy()
   })
@@ -223,7 +223,7 @@ describe('TwoFactorSettings', () => {
     expect(document.querySelector('h3')).not.toBeNull()
     expect(document.querySelector('[role=alert]')?.textContent).toBe('Network down.')
     fail = false
-    click('Try again'); await settle(); flushSync()
+    click('Try again'); await nextTask(); flushSync()
     expect(calls('two_factor_status')).toHaveLength(2)
     expect(button('Set up')).toBeTruthy()
     expect(document.querySelector('[role=alert]')).toBeNull()
@@ -239,7 +239,7 @@ describe('TwoFactorSettings', () => {
     await show()
     click('Set up'); type('input', 'pw'); await submit()
     type('input', '123456'); await submit()
-    click("I've saved these"); await settle(); flushSync()
+    click("I've saved these"); await nextTask(); flushSync()
     expect(button('Set up')).toBeUndefined()
     expect(button('Try again')).toBeTruthy()
   })

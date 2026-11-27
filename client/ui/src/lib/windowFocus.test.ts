@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { nextTask } from './testSettle'
 
 type Handler = (e: { payload: boolean }) => void
 let handler: Handler | undefined
@@ -22,7 +23,6 @@ async function fresh(): Promise<Mod> {
   return import('./windowFocus.svelte')
 }
 const fire = (type: 'focus' | 'blur') => window.dispatchEvent(new Event(type))
-const settle = () => new Promise((r) => setTimeout(r, 0))
 const inTauri = () => ((window as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {})
 
 beforeEach(() => {
@@ -65,7 +65,7 @@ describe('window focus in Tauri (C8: the OS window is the authority)', () => {
     m.watchWindowFocus()
     m.watchWindowFocus() // once only
     expect(onFocusChanged).toHaveBeenCalledOnce()
-    await settle() // subscription established
+    await nextTask() // subscription established
     expect(m.windowFocus.focused).toBe(true) // hasFocus() holds until the first Tauri event
     fire('blur') // e.g. keyboard focus leaving the webview while the window stays active
     expect(m.windowFocus.focused).toBe(true)
@@ -87,7 +87,7 @@ describe('window focus in Tauri (C8: the OS window is the authority)', () => {
     fire('blur')
     expect(m.windowFocus.focused).toBe(false)
     established()
-    await settle()
+    await nextTask()
     fire('focus')
     expect(m.windowFocus.focused).toBe(false) // the DOM no longer decides
     handler!({ payload: true })
@@ -101,7 +101,7 @@ describe('window focus in Tauri (C8: the OS window is the authority)', () => {
     }
     const m = await fresh()
     m.watchWindowFocus()
-    await settle()
+    await nextTask()
     fire('blur')
     expect(m.windowFocus.focused).toBe(false)
     fire('focus')
@@ -114,7 +114,7 @@ describe('window focus in Tauri (C8: the OS window is the authority)', () => {
     const m = await fresh()
     m.watchWindowFocus()
     expect(m.windowFocus.focused).toBe(false)
-    await settle()
+    await nextTask()
     expect(isFocused).toHaveBeenCalledOnce()
     expect(m.windowFocus.focused).toBe(true) // focused in the foreground, no focus event ever came
   })
@@ -125,10 +125,10 @@ describe('window focus in Tauri (C8: the OS window is the authority)', () => {
     currentlyFocused = () => new Promise((done) => (answer = done))
     const m = await fresh()
     m.watchWindowFocus()
-    await settle()
+    await nextTask()
     handler!({ payload: false })
     answer(true) // read before the event, answered after it: stale
-    await settle()
+    await nextTask()
     expect(m.windowFocus.focused).toBe(false)
   })
 
@@ -139,7 +139,7 @@ describe('window focus in Tauri (C8: the OS window is the authority)', () => {
     }
     const m = await fresh()
     m.watchWindowFocus()
-    await settle()
+    await nextTask()
     expect(m.windowFocus.focused).toBe(true)
   })
 })
@@ -150,7 +150,7 @@ describe('what the log says about focus', () => {
     currentlyFocused = async () => false
     const m = await fresh()
     m.watchWindowFocus()
-    for (let i = 0; i < 20 && !logged().length; i++) await settle()
+    for (let i = 0; i < 20 && !logged().length; i++) await nextTask()
     expect(logged()).toEqual(['focus: at start focused=false'])
   })
 
@@ -159,7 +159,7 @@ describe('what the log says about focus', () => {
     subscribe = async () => Promise.reject(new Error('no permission'))
     const m = await fresh()
     m.watchWindowFocus()
-    for (let i = 0; i < 20 && !logged().length; i++) await settle()
+    for (let i = 0; i < 20 && !logged().length; i++) await nextTask()
     expect(logged()).toEqual(['focus: no window focus events; following the page instead'])
   })
 })

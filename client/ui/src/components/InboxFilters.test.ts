@@ -15,6 +15,7 @@ import { filterProblem, matchesFilter } from '../lib/inbox'
 import { app, clock, handleReady, resetState } from '../lib/store.svelte'
 import { testMe, testReady } from '../lib/testReady'
 import { testItem as item } from '../lib/testInbox'
+import { flushMicrotasks } from '../lib/testSettle'
 
 const sam = { id: 'SAM', username: 'sam', display_name: 'sam', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
 const kim = { id: 'KIM', username: 'kim', display_name: 'kim', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
@@ -41,12 +42,11 @@ describe('the rule', () => {
 
 let cmp: ReturnType<typeof mount> | undefined
 let saved: InboxFilter[] = []
-const settle = async () => { for (let i = 0; i < 8; i++) await Promise.resolve(); flushSync() }
 async function show() {
   openInbox()
   cmp = mount(InboxPopover, { target: document.body, props: { onClose: () => {} } })
   flushSync()
-  await settle()
+  await flushMicrotasks(8)
 }
 const chips = () => [...document.querySelectorAll<HTMLButtonElement>('.filters .chip')]
 const chip = (name: string) => chips().find((c) => c.textContent?.trim() === name)!
@@ -94,7 +94,7 @@ describe('the filter row', () => {
     expect(chip('Everything').getAttribute('aria-pressed')).toBe('true')
     expect(rows()).toHaveLength(2)
     chip('Sam').click()
-    await settle()
+    await flushMicrotasks(8)
     expect(inboxCalls().at(-1)).toEqual({ before: null, mentions: false, filter: samOnly })
     expect(chip('Sam').getAttribute('aria-pressed')).toBe('true')
     expect(rows()).toHaveLength(1)
@@ -114,7 +114,7 @@ describe('the filter row', () => {
     setFilter('Sam')
     await show()
     ;[...document.querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent === 'Mark all read')!.click()
-    await settle()
+    await flushMicrotasks(8)
     expect(invoke.mock.calls.filter(([c]) => c === 'inbox_read').map(([, a]) => a)).toEqual([{ messageId: 'M3' }])
     expect(invoke.mock.calls.some(([c]) => c === 'inbox_read_all')).toBe(false)
   })
@@ -133,7 +133,7 @@ describe('the editor', () => {
     kimBox.click()
     flushSync()
     form.querySelector<HTMLButtonElement>('button[type=submit]')!.click()
-    await settle()
+    await flushMicrotasks(8)
     expect(saved).toEqual([samOnly, { name: 'Kim', people: ['KIM'], channels: [], unread_only: true }])
     expect(app.state.inboxFilters).toEqual(saved)
     expect(inbox.filter).toBe('Kim')
@@ -147,7 +147,7 @@ describe('the editor', () => {
     flushSync()
     const form = document.querySelector<HTMLFormElement>('form.editor')!
     ;[...form.querySelectorAll('button')].find((b) => b.textContent === 'Delete')!.click()
-    await settle()
+    await flushMicrotasks(8)
     expect(saved).toEqual([])
     expect(inbox.filter).toBeNull()
     expect(chips().map((c) => c.textContent?.trim())).toEqual(['Everything', 'New filter'])

@@ -10,6 +10,7 @@ import ClipPlayer from './ClipPlayer.svelte'
 import { setNotch } from '../lib/mixer.svelte'
 import { claim, playback, release } from '../lib/clipPlayback.svelte'
 import { forgetClipLinks } from '../lib/clipLinks'
+import { nextTask } from '../lib/testSettle'
 
 type Fake = HTMLVideoElement & { _t: number; _d: number; _ns: number; _paused: boolean }
 
@@ -58,11 +59,10 @@ function show(id = 'M1', props: Record<string, unknown> = {}) {
   return target
 }
 afterEach(() => { cmps.forEach((c) => unmount(c)); cmps = []; document.body.innerHTML = '' })
-const settle = () => new Promise((r) => setTimeout(r, 0))
 const urlCalls = () => invoke.mock.calls.filter((c) => c[0] === 'clip_url')
 const btn = (root: Element, label: string) => root.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)!
 const video = (root: Element) => root.querySelector('video') as Fake | null
-const press = async (root: Element, label: string) => { btn(root, label).click(); flushSync(); await settle(); flushSync() }
+const press = async (root: Element, label: string) => { btn(root, label).click(); flushSync(); await nextTask(); flushSync() }
 // Pressing Play fetches the link; the video starts once its metadata is in (jsdom never loads one).
 const start = async (root: Element) => {
   await press(root, 'Play')
@@ -146,10 +146,10 @@ describe('ClipPlayer', () => {
     const r = show()
     await start(r)
     video(r)!.dispatchEvent(new Event('error'))
-    await settle(); flushSync()
+    await nextTask(); flushSync()
     video(r)!.dispatchEvent(new Event('loadedmetadata'))
     video(r)!.dispatchEvent(new Event('error'))
-    await settle(); flushSync()
+    await nextTask(); flushSync()
     expect(r.textContent).toContain("Couldn't play this clip")
     await start(r)
     expect(urlCalls()).toHaveLength(3)
@@ -161,7 +161,7 @@ describe('ClipPlayer', () => {
     const a = show('M1')
     await start(a)
     video(a)!.dispatchEvent(new Event('error'))
-    await settle(); flushSync()
+    await nextTask(); flushSync()
     const b = show('M1')
     await start(b)
     expect(video(b)!.getAttribute('src')).toContain('sig=2')
@@ -237,7 +237,7 @@ describe('ClipPlayer', () => {
     box.focus()
     const key = (k: string) => { box.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true })); flushSync() }
     key(' ')
-    await settle(); flushSync()
+    await nextTask(); flushSync()
     const v = video(r)!
     v.dispatchEvent(new Event('loadedmetadata'))
     expect(v._paused).toBe(false)
@@ -277,7 +277,7 @@ describe('ClipPlayer', () => {
     v._t = 17
     v._ns = 1 // a seek after a long pause fails mid-stream: IDLE, not NO_SOURCE
     v.dispatchEvent(new Event('error'))
-    await settle(); flushSync()
+    await nextTask(); flushSync()
     expect(urlCalls()).toHaveLength(2)
     const v2 = video(r)!
     expect(v2.getAttribute('src')).toContain('sig=2')
@@ -290,11 +290,11 @@ describe('ClipPlayer', () => {
     const r = show()
     await start(r)
     video(r)!.dispatchEvent(new Event('error'))
-    await settle(); flushSync()
+    await nextTask(); flushSync()
     const v2 = video(r)!
     v2.dispatchEvent(new Event('loadedmetadata'))
     v2.dispatchEvent(new Event('error'))
-    await settle(); flushSync()
+    await nextTask(); flushSync()
     expect(urlCalls()).toHaveLength(2)
     expect(r.textContent).toContain("Couldn't play this clip")
   })
@@ -303,12 +303,12 @@ describe('ClipPlayer', () => {
     const r = show()
     await start(r)
     video(r)!.dispatchEvent(new Event('error'))
-    await settle(); flushSync()
+    await nextTask(); flushSync()
     const v2 = video(r)!
     v2.dispatchEvent(new Event('loadedmetadata'))
     v2.dispatchEvent(new Event('playing'))
     v2.dispatchEvent(new Event('error'))
-    await settle(); flushSync()
+    await nextTask(); flushSync()
     expect(urlCalls()).toHaveLength(3)
   })
 
@@ -319,7 +319,7 @@ describe('ClipPlayer', () => {
     const v = video(r)!
     v._t = 9
     v.dispatchEvent(new Event('error'))
-    await settle(); flushSync()
+    await nextTask(); flushSync()
     const v2 = video(r)!
     v2.dispatchEvent(new Event('loadedmetadata'))
     expect(v2.currentTime).toBe(9)
@@ -335,7 +335,7 @@ describe('ClipPlayer', () => {
     btn(b, 'Play').click()
     unmount(cmps.pop()!)
     resolve({ url: 'http://127.0.0.1:7895/x', expires_at: '' })
-    await settle(); flushSync()
+    await nextTask(); flushSync()
     expect(playback.nowPlaying).toBe('M1')
     expect(video(a)).not.toBeNull()
   })
@@ -348,7 +348,7 @@ describe('ClipPlayer', () => {
     flushSync()
     btn(r, 'Pause').click()
     resolve({ url: 'http://127.0.0.1:7895/x', expires_at: '' })
-    await settle(); flushSync()
+    await nextTask(); flushSync()
     expect(video(r)).toBeNull()
     expect(playback.nowPlaying).toBeNull()
   })
@@ -383,7 +383,7 @@ describe('ClipPlayer', () => {
     ;(HTMLMediaElement.prototype as unknown as Record<string, unknown>).play = vi.fn(async () => { throw new Error('blocked') })
     const r = show()
     await start(r)
-    await settle()
+    await nextTask()
     expect(video(r)).not.toBeNull()
   })
 
@@ -399,7 +399,7 @@ describe('ClipPlayer', () => {
     // Esc: the browser leaves fullscreen with no button press
     fs = null
     document.dispatchEvent(new Event('fullscreenchange'))
-    await settle()
+    await nextTask()
     expect(invoke).toHaveBeenLastCalledWith('set_fullscreen', { on: true })
   })
 
@@ -411,7 +411,7 @@ describe('ClipPlayer', () => {
     box.requestFullscreen = vi.fn(async () => { fs = box; document.dispatchEvent(new Event('fullscreenchange')) })
     await press(r, 'Full screen')
     unmount(cmps.pop()!)
-    await settle()
+    await nextTask()
     expect(invoke).toHaveBeenLastCalledWith('set_fullscreen', { on: false })
   })
 
@@ -482,7 +482,7 @@ describe('ClipPlayer', () => {
 
   it('autoplay starts on mount', async () => {
     const r = show('M1', { autoplay: true })
-    await settle(); flushSync()
+    await nextTask(); flushSync()
     expect(video(r)).not.toBeNull()
     expect(urlCalls()).toHaveLength(1)
   })
