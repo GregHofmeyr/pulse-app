@@ -96,7 +96,8 @@ async fn save(
          display_name = COALESCE(?, display_name), card_glow = COALESCE(?, card_glow), \
          typing_text = CASE WHEN ? THEN ? ELSE typing_text END, \
          ring_style = CASE WHEN ? THEN ? ELSE ring_style END, \
-         ring_color = CASE WHEN ? THEN ? ELSE ring_color END WHERE id = ?",
+         ring_color = CASE WHEN ? THEN ? ELSE ring_color END, \
+         card_stats = CASE WHEN ? THEN ? ELSE card_stats END WHERE id = ?",
     )
     .bind(&v.avatar_hash)
     .bind(&v.banner_hash)
@@ -117,6 +118,9 @@ async fn save(
     .bind(v.ring_style.flatten())
     .bind(v.ring_color.is_some())
     .bind(v.ring_color.flatten())
+    // absent keeps it; the default list stores NULL (#727)
+    .bind(v.card_stats.is_some())
+    .bind(v.card_stats.flatten())
     .bind(me.to_string())
     .execute(&mut *tx)
     .await?;

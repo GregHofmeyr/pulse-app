@@ -139,6 +139,12 @@ pub struct ProfileStats {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub steam_recent_minutes: Option<u32>,
+    /// The stats the owner's card shows, keys in order (#727). Absent: no choice saved (every stat shows), or an
+    /// older server. A hidden stat's value never leaves the server: `voice_seconds` goes out as 0 and
+    /// `member_since` as "" (both stay required for older clients), the Steam stats as absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub shown: Option<Vec<String>>,
 }
 
 /// How rare a badge (or one tier of it) is, from common up to mythical.
@@ -347,6 +353,10 @@ pub struct UpdateProfileRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub ring_color: Option<String>,
+    /// The card stats to show, keys in order (#727); absent keeps the current setting (older clients don't send it).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub card_stats: Option<Vec<String>>,
 }
 
 /// `PUT /servers/{id}/members/{user}/nickname` and `PUT /me/private-nicknames/{user}`: `None`
@@ -5191,4 +5201,53 @@ pub struct SportsCard {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LatestVersion {
     pub version: String,
+}
+
+#[cfg(test)]
+mod card_stats_tests {
+    use super::*;
+
+    /// Today's (0.2.20 / 0.2.21) client `ProfileStats`, copied: it has no `shown` and must still parse what the
+    /// server sends for a person with hidden stats.
+    #[derive(Debug, Deserialize)]
+    #[allow(dead_code)]
+    struct OldProfileStats {
+        voice_seconds: u64,
+        member_since: String,
+        top_reaction: Option<String>,
+        times_renamed: u32,
+        #[serde(default)]
+        steam_completion: Option<f32>,
+        #[serde(default)]
+        steam_perfect_games: Option<u32>,
+        #[serde(default)]
+        steam_recent_minutes: Option<u32>,
+    }
+
+    #[test]
+    fn old_client_shape_still_parses() {
+        let hidden = ProfileStats {
+            voice_seconds: 0,
+            member_since: String::new(),
+            top_reaction: None,
+            times_renamed: 2,
+            steam_completion: None,
+            steam_perfect_games: None,
+            steam_recent_minutes: Some(300),
+            shown: Some(vec!["steam_recent".into()]),
+        };
+        let json = serde_json::to_string(&hidden).unwrap();
+        assert!(json.contains(r#""shown":["steam_recent"]"#), "{json}");
+        let old: OldProfileStats = serde_json::from_str(&json).unwrap();
+        assert_eq!((old.voice_seconds, old.member_since.as_str()), (0, ""));
+        assert_eq!(old.steam_recent_minutes, Some(300));
+        // and the new shape reads an old server's JSON (no `shown`)
+        let none = ProfileStats {
+            shown: None,
+            ..hidden
+        };
+        let json = serde_json::to_string(&none).unwrap();
+        assert!(!json.contains("shown"), "{json}");
+        assert_eq!(serde_json::from_str::<ProfileStats>(&json).unwrap(), none);
+    }
 }

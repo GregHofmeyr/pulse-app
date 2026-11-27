@@ -27,4 +27,8 @@ ring_style?: string,
  * The new speaking ring colour (#651): `"green"` is the default; absent keeps the current
  * one (older clients don't send it).
  */
-ring_color?: string, };
+ring_color?: string, 
+/**
+ * The card stats to show, keys in order (#727); absent keeps the current setting (older clients don't send it).
+ */
+card_stats?: Array<string>, };
