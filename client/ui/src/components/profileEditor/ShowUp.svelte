@@ -59,12 +59,14 @@
 <style>
   /* as wide as the card (ProfileCard: 300px x --k), and never wider than the column it sits in */
   .show-up { --k: 1.12; box-sizing: border-box; width: min(100%, calc(300px * var(--k))); min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); gap: 16px; color: var(--text); font-size: 13px; }
-  .voice, .chat { min-width: 0; display: flex; flex-direction: column; gap: 6px; overflow: hidden; }
+  .voice, .chat { min-width: 0; display: flex; flex-direction: column; gap: 6px; overflow: clip; overflow-clip-margin: .6em; }
   .head { font-size: 11px; font-weight: 700; letter-spacing: .06em; color: var(--text-3); }
   .chan { display: flex; align-items: center; gap: 4px; min-width: 0; color: var(--text-2); }
   .member { display: flex; align-items: center; gap: 6px; min-width: 0; padding-left: 8px; font-weight: 600; }
   .av { position: relative; display: inline-flex; flex-shrink: 0; }
-  .clip { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* clip, not hidden: a name's glow shows a little past the box on every side, as in the app; the ellipsis still
+     cuts at the box */
+  .clip { min-width: 0; overflow: clip; overflow-clip-margin: .6em; padding-block: .2em; margin-block: -.2em; text-overflow: ellipsis; white-space: nowrap; }
   .msg { display: flex; align-items: flex-start; gap: 8px; min-width: 0; }
   .said { min-width: 0; flex: 1; display: flex; flex-direction: column; font-weight: 600; }
   .text { font-weight: 400; color: var(--text); }

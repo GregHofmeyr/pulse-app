@@ -23,6 +23,10 @@ describe('the where-you-show-up CSS', () => {
   })
   it('long_names_clip_and_nothing_animates', () => {
     expect(css).toMatch(/text-overflow:\s*ellipsis/)
+    // glows are not cut at the sides: clip with a margin, never hidden
+    expect(css).not.toMatch(/overflow:\s*hidden/)
+    expect(css).toMatch(/overflow:\s*clip/)
+    expect(css).toMatch(/overflow-clip-margin:/)
     expect(css).not.toMatch(/animation|transition/)
     expect(css).not.toMatch(/#[0-9a-f]{3,8}\b|rgb\(/i)
   })
