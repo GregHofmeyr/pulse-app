@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 // Pins on a message (#178): the message menu's Pin message flyout and Unpin message, the marker by the time, and
 // the pin's system line.
-import { flushSync, mount, tick, unmount } from 'svelte'
+import { flushSync, mount, unmount } from 'svelte'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Message } from '../lib/protocol/Message'
 
@@ -12,6 +12,7 @@ import MessageItem from './MessageItem.svelte'
 import { app, ui } from '../lib/store.svelte'
 import { emptyState } from '../lib/state'
 import { resetServerClock } from '../lib/serverClock'
+import { flushMicrotasks } from '../lib/testSettle'
 
 const NOW = Date.parse('2026-11-09T10:00:00.000Z')
 const msg = (over: Partial<Message> = {}): Message => ({
@@ -41,7 +42,6 @@ const item = (label: string) => items().find((b) => b.textContent?.trim() === la
 const flyout = () => document.querySelector<HTMLElement>('[role=menu][aria-label="Pin message for"]')
 const choices = () => [...(flyout()?.querySelectorAll<HTMLButtonElement>('[role=menuitem]') ?? [])]
 const hover = (el: Element) => { el.dispatchEvent(new Event('pointerover', { bubbles: true })); el.dispatchEvent(new Event('pointerenter')); flushSync() }
-async function settle() { for (let i = 0; i < 5; i++) await Promise.resolve(); await tick() }
 
 beforeEach(() => {
   vi.useFakeTimers()
@@ -65,7 +65,7 @@ describe('the message menu (#178)', () => {
     hover(item('Pin message')!)
     expect(choices().map((b) => b.textContent?.trim())).toEqual(['1 hour', '1 day', '1 week', 'Forever'])
     choices()[1].click()
-    await settle()
+    await flushMicrotasks(6)
     expect(invoke).toHaveBeenCalledWith('pin_message', { messageId: 'M1', duration: 'day' })
     expect(menu()).toBeNull()
   })
@@ -118,7 +118,7 @@ describe('the message menu (#178)', () => {
     btn('More')!.click(); flushSync()
     expect(items().map((b) => b.textContent?.trim())).toEqual(['Unpin message', 'Remind me', 'Save message', 'Forward…'])
     item('Unpin message')!.click()
-    await settle()
+    await flushMicrotasks(6)
     expect(invoke).toHaveBeenCalledWith('unpin_message', { messageId: 'M1' })
   })
 
@@ -128,7 +128,7 @@ describe('the message menu (#178)', () => {
     btn('More')!.click(); flushSync()
     hover(item('Pin message')!)
     choices()[0].click()
-    await settle()
+    await flushMicrotasks(6)
     expect(document.querySelector('[role=alert]')?.textContent).toBe('This chat already has 50 pins. Unpin something first.')
   })
 
@@ -142,7 +142,7 @@ describe('the message menu (#178)', () => {
     btn('More')!.click(); flushSync()
     hover(item('Pin message')!)
     choices()[0].click()
-    await settle()
+    await flushMicrotasks(6)
     expect(invoke).toHaveBeenCalledWith('list_pins', { channelId: 'C1' })
     expect(app.state.messages['C1'][0].pin).toEqual(held)
   })
@@ -211,7 +211,7 @@ describe('the pin line (#178)', () => {
     const [jump, see] = [...document.querySelectorAll<HTMLButtonElement>('.pin-line button')]
     expect(jump.textContent).toBe('a message')
     jump.click()
-    await settle()
+    await flushMicrotasks(6)
     expect(ui.jump).toMatchObject({ channelId: 'C1', messageId: 'M0' })
     expect(see.textContent).toBe('See pins')
     see.click()

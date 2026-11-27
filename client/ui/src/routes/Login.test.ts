@@ -7,11 +7,11 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: (cmd: string, args?: never) => 
 
 import Login from './Login.svelte'
 import { inviteLinks } from '../lib/inviteLinks.svelte'
+import { nextTask } from '../lib/testSettle'
 
 const USER = { id: 'u1', username: 'alex' }
 let cmp: ReturnType<typeof mount> | undefined
 const onAuthed = vi.fn()
-const settle = () => new Promise((r) => setTimeout(r, 0))
 const calls = (cmd: string) => invoke.mock.calls.filter((c) => c[0] === cmd)
 const text = () => document.body.textContent ?? ''
 const type = (sel: string, v: string) => {
@@ -22,7 +22,7 @@ const type = (sel: string, v: string) => {
 }
 const submit = async () => {
   document.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
-  await settle(); flushSync()
+  await nextTask(); flushSync()
 }
 const toCodeStep = async () => {
   invoke.mockImplementation(async (cmd: string) => (cmd === 'login' ? { status: 'mfa_required' } : undefined))
@@ -118,7 +118,7 @@ describe('Login', () => {
       return undefined
     })
     ;[...document.querySelectorAll('button')].find((b) => b.textContent === 'Back')!.click()
-    await settle(); flushSync()
+    await nextTask(); flushSync()
     expect(document.querySelector('input[type=password]')).not.toBeNull()
     expect(document.querySelector('[role=alert]')).toBeNull()
   })
@@ -183,7 +183,7 @@ describe('Login', () => {
   it('signed out, says an update is waiting when the server publishes a newer version (#460)', async () => {
     invoke.mockImplementation(async (cmd: string) => (cmd === 'update_signed_out' ? { version: '9.9.9' } : undefined))
     cmp = mount(Login, { target: document.body, props: { onAuthed } })
-    await settle(); flushSync()
+    await nextTask(); flushSync()
     expect(calls('update_signed_out')).toHaveLength(1)
     expect((calls('update_signed_out')[0][1] as { server: string }).server).toBeTruthy()
     expect(text()).toContain('An update is available. Sign in to get it.')
@@ -192,7 +192,7 @@ describe('Login', () => {
   it('says nothing about updates when nothing newer is published, or the ask fails', async () => {
     invoke.mockImplementation(async (cmd: string) => (cmd === 'update_signed_out' ? null : undefined))
     cmp = mount(Login, { target: document.body, props: { onAuthed } })
-    await settle(); flushSync()
+    await nextTask(); flushSync()
     expect(text()).not.toContain('An update is available')
     unmount(cmp)
     invoke.mockImplementation(async (cmd: string) => {
@@ -200,7 +200,7 @@ describe('Login', () => {
       return undefined
     })
     cmp = mount(Login, { target: document.body, props: { onAuthed } })
-    await settle(); flushSync()
+    await nextTask(); flushSync()
     expect(text()).not.toContain('An update is available')
   })
 })

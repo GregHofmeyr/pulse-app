@@ -2,7 +2,7 @@
 // View-once files (#311): a recipient gets a card, never a link from the usual route; opening shows them once in a
 // dialog that says it isn't screenshot-proof, then the card says Opened; the sender sees them as usual and who opened
 // them (live); the composer marks pictures, videos and sounds view once, and the send carries the mark.
-import { flushSync, mount, tick, unmount } from 'svelte'
+import { flushSync, mount, unmount } from 'svelte'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const invoke = vi.fn(async (_cmd: string, _args?: unknown): Promise<unknown> => undefined)
@@ -16,6 +16,7 @@ import { emptyState } from '../lib/state'
 import { noteViewOnceEvent, resetViewOnce, viewOnce } from '../lib/viewOnce.svelte'
 import type { Attachment } from '../lib/protocol/Attachment'
 import type { Message } from '../lib/protocol/Message'
+import { settle } from '../lib/testSettle'
 
 const user = (id: string, name: string) => ({ id, username: name, display_name: name, avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } })
 const att = (id: string, kind: Attachment['kind'], extra: Partial<Attachment> = {}): Attachment => ({
@@ -32,10 +33,6 @@ let cmp: ReturnType<typeof mount> | undefined
 let opened = false
 function show(author: string, atts: Attachment[] = [secret, plain]) {
   cmp = mount(MessageFiles, { target: document.body, props: { message: message(author, atts) } })
-  flushSync()
-}
-const settle = async () => {
-  for (let i = 0; i < 8; i++) await tick()
   flushSync()
 }
 const calls = (cmd: string) => invoke.mock.calls.filter(([c]) => c === cmd).map(([, a]) => a)
@@ -67,13 +64,13 @@ afterEach(() => {
 describe('a recipient', () => {
   it('gets a card, not the picture; opening shows it once with the warning; then it says Opened', async () => {
     show('U2')
-    await settle()
+    await settle(8)
     // only the plain picture is drawn
     expect([...document.querySelectorAll('img')].map((i) => i.getAttribute('src'))).toEqual(['https://store.test/A2'])
     const card = document.querySelector<HTMLButtonElement>('[data-view-once]')!
     expect(card.textContent).toContain('View once photo')
     card.click()
-    await settle()
+    await settle(8)
     expect(calls('open_view_once')).toEqual([{ messageId: 'M1' }])
     const dialog = document.querySelector<HTMLElement>('[role=dialog][aria-label="View once"]')!
     expect(dialog.textContent).toContain("isn't screenshot-proof")
@@ -88,7 +85,7 @@ describe('a recipient', () => {
   it('opened before (another device): Opened from the start', async () => {
     opened = true
     show('U2')
-    await settle()
+    await settle(8)
     expect(document.querySelector('[data-view-once]')!.textContent).toContain('Opened')
   })
 })
@@ -101,7 +98,7 @@ describe('the sender', () => {
       return undefined
     })
     show('U1')
-    await settle()
+    await settle(8)
     expect(document.querySelectorAll('img')).toHaveLength(2)
     const line = () => document.querySelector('[data-view-once-status]')!.textContent
     expect(line()).toContain('Not opened yet')

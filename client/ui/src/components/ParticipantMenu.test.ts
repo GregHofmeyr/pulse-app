@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { flushSync, mount, tick, unmount } from 'svelte'
+import { flushSync, mount, unmount } from 'svelte'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const invoke = vi.fn()
@@ -18,6 +18,7 @@ import { goLiveUi } from '../lib/stream/golive.svelte'
 import { callView } from '../lib/stream/viewer.svelte'
 import type { Ready } from '../lib/protocol/Ready'
 import { closeCard, profileUi } from '../lib/profileCard.svelte'
+import { settleTask } from '../lib/testSettle'
 
 const me = { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
 const sam = { id: 'U2', username: 'sam', display_name: 'sam', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
@@ -41,11 +42,6 @@ const mountPanel = () => {
 const q = (sel: string) => document.querySelector<HTMLElement>(sel)
 const menu = () => q('[role=menu]')
 const items = () => [...document.querySelectorAll<HTMLElement>('[role=menu] [data-item]')]
-const settle = async () => {
-  for (let i = 0; i < 5; i++) await tick()
-  await new Promise((r) => setTimeout(r, 0))
-  flushSync()
-}
 const key = (el: Element, k: string, init: KeyboardEventInit = {}) => {
   const e = new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true, ...init })
   el.dispatchEvent(e)
@@ -168,14 +164,14 @@ describe('ParticipantMenu', () => {
     mountPanel()
     rightClick(q('[data-user="U2"]')!)
     document.querySelector<HTMLElement>('[data-item="local-mute"]')!.click()
-    await settle()
+    await settleTask()
     expect(invoke).toHaveBeenCalledWith('set_peer_volume', { userId: 'U2', percent: 0 })
     expect(JSON.parse(localStorage.getItem('pulse.localmutes')!)).toHaveProperty('U2')
     // and back on: the remembered volume returns
     rightClick(q('[data-user="U2"]')!)
     expect(document.querySelector('[data-item="local-mute"]')!.textContent).toContain('Unmute')
     document.querySelector<HTMLElement>('[data-item="local-mute"]')!.click()
-    await settle()
+    await settleTask()
     expect(invoke).toHaveBeenLastCalledWith('set_peer_volume', { userId: 'U2', percent: 100 })
     expect(JSON.parse(localStorage.getItem('pulse.localmutes')!)).not.toHaveProperty('U2')
   })
@@ -215,7 +211,7 @@ describe('ParticipantMenu', () => {
     rightClick(q('[data-stream="U2"]')!)
     expect(items().map((i) => i.dataset.item)).toEqual(['profile', 'invite-server', 'volume', 'local-mute', 'sound-mute', 'message-sound', 'message', 'watch', 'server-mute', 'server-deafen', 'disconnect', 'nick', 'private-nick', 'live-notify', 'person-dnd', 'appear-offline', 'hide-game', 'block'])
     document.querySelector<HTMLElement>('[data-item="watch"]')!.click()
-    await settle()
+    await settleTask()
     expect(invoke).toHaveBeenCalledWith('stream_watch', { channelId: 'V1', streamer: 'U2' })
   })
 
@@ -251,7 +247,7 @@ describe('ParticipantMenu', () => {
     await streamApi.watch('V1', 'U2')
     callView.full = { channelId: 'V1', streamer: 'U2' }
     mountPanel()
-    await settle()
+    await settleTask()
     expect(q('.full-view')).not.toBeNull()
     rightClick(q('.strip [data-user="U1"]')!)
     expect(menu()).not.toBeNull()
@@ -267,7 +263,7 @@ describe('ParticipantMenu', () => {
     app.state = applyReady(emptyState(), { ...ready, streams: [live] })
     await streamApi.watch('V1', 'U2')
     mountPanel()
-    await settle()
+    await settleTask()
   }
   const item = (id: string) => document.querySelector<HTMLElement>(`[data-item="${id}"]`)!
 
@@ -301,7 +297,7 @@ describe('ParticipantMenu', () => {
     const slider = q('[role=menu] input[aria-label="User volume"]') as HTMLInputElement
     slider.focus()
     key(slider, 'ArrowRight')
-    await settle()
+    await settleTask()
     expect(voice.localMutes).toEqual({})
     expect(JSON.parse(localStorage.getItem('pulse.localmutes')!)).toEqual({})
     expect(invoke.mock.calls.filter(([c]) => c === 'set_peer_volume').at(-1)![1]).toEqual({ userId: 'U2', percent: 105 })
@@ -354,14 +350,14 @@ describe('ParticipantMenu', () => {
     await watchSam()
     rightClick(q('[data-stream="U2"]')!)
     item('full-view').click()
-    await settle()
+    await settleTask()
     expect(callView.full).toEqual({ channelId: 'V1', streamer: 'U2' })
     expect(callView.goTo).toBe('V1')
     callView.goTo = null
     rightClick(q('.strip [data-user="U2"]')!)
     expect(items().map((i) => i.dataset.item)).not.toContain('full-view')
     item('stop-watching').click()
-    await settle()
+    await settleTask()
     expect(findWatch('V1', 'U2')).toBeUndefined()
   })
 
@@ -394,7 +390,7 @@ describe('ParticipantMenu', () => {
     await streamApi.watch('V1', 'U2')
     callView.full = { channelId: 'V1', streamer: 'U2' }
     mountPanel()
-    await settle()
+    await settleTask()
     const btn = q('.full-view .strip [data-user="U2"] .avatar-btn')!
     btn.click()
     flushSync()
@@ -478,13 +474,13 @@ describe('server mute, deafen and disconnect (#140)', () => {
     })
     openSam()
     item('server-mute').click()
-    await settle()
+    await settleTask()
     expect(ui.notice).toContain("they aren't in this server's voice")
     expect(voice.error).toBe('')
     ui.notice = null
     rightClick(q('[data-user="U2"]')!)
     item('disconnect').click()
-    await settle()
+    await settleTask()
     expect(ui.notice).toContain("they aren't in this server's voice")
   })
 
@@ -616,12 +612,12 @@ describe('join sound mute', () => {
     expect(item()!.textContent?.trim()).toBe('Mute join sound')
     expect(item()!.className).toBe('menu-item')
     item()!.click()
-    await settle()
+    await settleTask()
     expect(JSON.parse(localStorage.getItem('pulse.joinSounds.mutes')!)).toEqual({ U2: true })
     rightClick(q('[data-user="U2"]')!)
     expect(item()!.textContent?.trim()).toBe('Unmute join sound')
     item()!.click()
-    await settle()
+    await settleTask()
     expect(JSON.parse(localStorage.getItem('pulse.joinSounds.mutes')!)).toEqual({})
   })
 
@@ -656,7 +652,7 @@ describe('watch party in the call (#384)', () => {
     const item = items().find((i) => i.dataset.item === 'watch-host')!
     expect(item.textContent).toBe('Make watch party host')
     item.click()
-    await settle()
+    await settleTask()
     expect(invoke).toHaveBeenCalledWith('watch_party_action', { channelId: 'V1', action: { action: 'hand_off', user_id: 'U2' } })
   })
 

@@ -1,6 +1,7 @@
 // Speaking rings (#651): the viewer's "Show everyone's rings as Classic" setting (this device only) and the cap on
 // how many rings animate at once (§8.3): the first eight people to start speaking animate; the rest show still until
 // one of them stops. An animating ring never drops to still because someone new started.
+import { untrack } from 'svelte'
 import { rings } from './soundRings.svelte'
 import { voice } from './voice.svelte'
 
@@ -38,14 +39,23 @@ export function nextOrder(prev: string[], lit: Set<string>): string[] {
 }
 
 // The order is built from the lit set (voice ∪ soundboard), never from which tiles are mounted, so a tile that
-// mounts mid-speech ranks by when its person started (Review Focus 1).
-let prevOrder: string[] = []
-const order = $derived.by(() => {
+// mounts mid-speech ranks by when its person started (Review Focus 1). It is tracked by a root effect, not by
+// whoever reads it (#713): people who start while no ring is on screen still rank by start time. The effect reruns
+// only when the speaking set or the soundboard set changes (both are replaced, never mutated), never per frame.
+function litNow(): Set<string> {
   const lit = new Set<string>(voice.speaking)
   for (const id of rings.users) lit.add(id)
-  prevOrder = nextOrder(prevOrder, lit)
-  return prevOrder
+  return lit
+}
+let tracked = $state.raw<string[]>([])
+$effect.root(() => {
+  $effect(() => {
+    const lit = litNow()
+    tracked = nextOrder(untrack(() => tracked), lit)
+  })
 })
+// Read before the effect has caught up with a change (same tick), the order is the tracked one plus that change.
+const order = $derived(nextOrder(tracked, litNow()))
 const rank = $derived(new Map(order.map((id, i) => [id, i])))
 
 /** Whether `id`'s lit ring may animate: among the first RING_CAP to start of those lit now. Someone not in the lit

@@ -9,50 +9,55 @@ vi.mock('@tauri-apps/api/event', () => ({ listen: async () => () => {} }))
 import { clearRings, lightRing } from './soundRings.svelte'
 import { isAnimating, nextOrder, RING_CAP } from './speakingRing.svelte'
 import { voice } from './voice.svelte'
+import { settle, settleTimers } from './testSettle'
 
 const ids = (n: number, from = 1) => Array.from({ length: n }, (_, i) => String(from + i))
-const speak = (list: string[]) => (voice.speaking = new Set(list))
+/** One speaking event: the set changes, then the app settles (each event is its own task). */
+const speak = async (list: string[]) => {
+  voice.speaking = new Set(list)
+  await settle()
+}
 const animating = (list: string[]) => list.filter((id) => isAnimating(id))
 
 describe('the ring cap (#651 §8.3)', () => {
-  beforeEach(() => {
-    speak([])
+  beforeEach(async () => {
+    await speak([])
     clearRings()
   })
-  afterEach(() => {
-    speak([])
+  afterEach(async () => {
+    await speak([])
     clearRings()
   })
 
-  it('nextOrder_keeps_the_start_order_and_appends_newcomers_sorted', () => {
+  it('nextOrder_keeps_the_start_order_and_appends_newcomers_sorted', async () => {
     expect(nextOrder([], new Set(['b', 'a']))).toEqual(['a', 'b'])
     expect(nextOrder(['b', 'a'], new Set(['a', 'b', 'c']))).toEqual(['b', 'a', 'c'])
     expect(nextOrder(['b', 'a', 'c'], new Set(['c', 'a']))).toEqual(['a', 'c'])
   })
 
-  it('the_first_eight_to_start_animate_and_a_newcomer_never_bumps_one', () => {
+  it('the_first_eight_to_start_animate_and_a_newcomer_never_bumps_one', async () => {
     expect(RING_CAP).toBe(8)
     const lit: string[] = []
     for (const id of ids(9)) {
       lit.push(id)
-      speak([...lit])
+      await speak([...lit])
       isAnimating(id) // a tile reads it as each person starts
     }
     expect(animating(ids(9))).toEqual(ids(8))
     // 3 stops: 9 takes the free place
-    speak(lit.filter((id) => id !== '3'))
+    await speak(lit.filter((id) => id !== '3'))
     expect(isAnimating('9')).toBe(true)
     // 10 starts: nobody animating drops to still, and 10 waits
-    speak([...lit.filter((id) => id !== '3'), '10'])
+    await speak([...lit.filter((id) => id !== '3'), '10'])
     expect(animating(['1', '2', '4', '5', '6', '7', '8', '9'])).toHaveLength(8)
     expect(isAnimating('10')).toBe(false)
   })
 
-  it('a_tile_mounted_mid_speech_ranks_by_start_order', () => {
+  it('a_tile_mounted_mid_speech_ranks_by_start_order', async () => {
     const lit: string[] = []
     for (const id of ids(9)) {
       lit.push(id)
-      speak([...lit])
+      await speak([...lit])
       isAnimating('1') // only tile 1 is on screen while they start
     }
     // tile 9 mounts now: it ranks ninth, not first
@@ -60,14 +65,27 @@ describe('the ring cap (#651 §8.3)', () => {
     expect(isAnimating('8')).toBe(true)
   })
 
-  it('soundboard_lit_people_count_toward_the_cap', () => {
+  it('people_who_started_with_no_ring_on_screen_rank_by_start_time_not_name', async () => {
+    // #713: nobody reads the cap while they start (no tile mounted), 9 first, then 8, … then 1: in name order the
+    // last to start would come first
+    const lit: string[] = []
+    for (const id of ids(9).reverse()) {
+      lit.push(id)
+      await speak([...lit])
+    }
+    // a tile appears now: the first eight to start (9 … 2) animate, 1 waits
+    expect(animating(ids(9))).toEqual(ids(8, 2))
+    expect(isAnimating('1')).toBe(false)
+  })
+
+  it('soundboard_lit_people_count_toward_the_cap', async () => {
     vi.useFakeTimers()
     try {
-      speak(ids(7))
+      await speak(ids(7))
       isAnimating('1')
       lightRing('S', 5000)
-      isAnimating('S')
-      speak([...ids(7), '8'])
+      await settleTimers()
+      await speak([...ids(7), '8'])
       expect(isAnimating('S')).toBe(true)
       expect(isAnimating('8')).toBe(false)
     } finally {

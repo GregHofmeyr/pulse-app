@@ -20,13 +20,13 @@ import { applyEvent, emptyState } from './state'
 import { app } from './store.svelte'
 import { handlePollEvent, refreshOpenPolls, resetPolls, votePoll } from './polls.svelte'
 import { shownText } from './poll'
+import { nextTask } from './testSettle'
 
 const msg = (over: Partial<Message> = {}): Message => ({
   id: 'M1', channel_id: 'C1', author_id: 'U2', kind: 'normal', content: '📊 Poll: Q', reply_to_id: null,
   created_at: '2026-11-09T12:00:00Z', edited_at: null, deleted: false, mentions: [], reactions: [], thread_root_id: null,
   quote: null, qoty_card: null, clip: null, embeds: [], poll: view(), ...over,
 })
-const flush = () => new Promise((r) => setTimeout(r, 0))
 const held = () => app.state.messages.C1?.find((m) => m.id === 'M1')
 
 beforeEach(() => {
@@ -40,32 +40,32 @@ describe('live poll views', () => {
   it('fetches our view when a poll we show changes, and only then', async () => {
     handlePollEvent({ t: 'PollChanged', d: { channel_id: 'C1', message_id: 'M1' } })
     handlePollEvent({ t: 'PollChanged', d: { channel_id: 'C1', message_id: 'NOPE' } })
-    await flush()
+    await nextTask()
     expect(invoke.mock.calls.map(([c, a]) => [c, a])).toEqual([['get_poll', { messageId: 'M1' }]])
     pending[0](view({ voters: 1, results: [{ votes: 1, voters: [] }, { votes: 0, voters: [] }], mine: [0] }))
-    await flush()
+    await nextTask()
     expect(held()?.poll?.mine).toEqual([0])
   })
 
   it('folds changes during a fetch into one more fetch', async () => {
     for (let i = 0; i < 3; i++) handlePollEvent({ t: 'PollChanged', d: { channel_id: 'C1', message_id: 'M1' } })
-    await flush()
+    await nextTask()
     expect(invoke).toHaveBeenCalledTimes(1)
     pending[0](view())
-    await flush()
-    await flush()
+    await nextTask()
+    await nextTask()
     expect(invoke).toHaveBeenCalledTimes(2)
   })
 
   it('a slow fetch does not undo a later vote', async () => {
     handlePollEvent({ t: 'PollChanged', d: { channel_id: 'C1', message_id: 'M1' } })
-    await flush()
+    await nextTask()
     const voted = votePoll(msg(), [1])
-    await flush()
+    await nextTask()
     pending[1](view({ mine: [1], voters: 1 }))
     await voted
     pending[0](view({ mine: [], voters: 0 }))
-    await flush()
+    await nextTask()
     expect(held()?.poll?.mine).toEqual([1])
   })
 
@@ -85,14 +85,14 @@ describe('live poll views', () => {
       throw 'this poll has ended'
     })
     await expect(votePoll(msg(), [0])).rejects.toBe('this poll has ended')
-    await flush()
+    await nextTask()
     expect(invoke.mock.calls.map(([c]) => c)).toEqual(['vote_poll', 'get_poll'])
   })
 
   it('after a reconnect, every open poll held is fetched again', async () => {
     app.state = { ...app.state, messages: { C1: [msg(), msg({ id: 'M2', poll: view({ closed: true }) }), msg({ id: 'M3', poll: undefined })] } }
     refreshOpenPolls()
-    await flush()
+    await nextTask()
     expect(invoke.mock.calls.map(([, a]) => a)).toEqual([{ messageId: 'M1' }])
   })
 
@@ -104,7 +104,7 @@ describe('live poll views', () => {
   it('our own new poll from another session fetches the creator view', async () => {
     handlePollEvent({ t: 'MessageCreated', d: { message: msg({ id: 'M2', author_id: 'U1' }), nonce: null } })
     handlePollEvent({ t: 'MessageCreated', d: { message: msg({ id: 'M3', author_id: 'U2' }), nonce: null } })
-    await flush()
+    await nextTask()
     expect(invoke.mock.calls.map(([, a]) => a)).toEqual([{ messageId: 'M2' }])
   })
 })

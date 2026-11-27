@@ -927,7 +927,10 @@ describe('TextChannel: more than a page arriving while away (#329)', () => {
     resetState()
     handleReady(testReady([C1], read('M0200', 0)))
   })
-  afterEach(() => resetState())
+  afterEach(() => {
+    vi.useRealTimers()
+    resetState()
+  })
 
   it('a reader with unread messages picks up where they were: the list goes on from its newest, no hole', async () => {
     app.state = markHistory(addHistory(app.state, 'C1', page(101, 100)), 'C1', false) // M0101..M0200, all read
@@ -1053,6 +1056,7 @@ describe('TextChannel: more than a page arriving while away (#329)', () => {
   })
 
   it("doesn't mark the chat read while it reloads: the hole isn't read (#329)", async () => {
+    vi.useFakeTimers() // the mark-read wait runs on fake time, not a real 400 ms sleep
     app.state = markHistory(addHistory(app.state, 'C1', page(101, 100)), 'C1', false)
     const c = mount(TextChannel, { target: document.body, props: { channelId: 'C1', serverId: 'S1' } })
     flushSync()
@@ -1061,7 +1065,7 @@ describe('TextChannel: more than a page arriving while away (#329)', () => {
     flushSync()
     app.state = applyEvent(app.state, { t: 'MessageCreated', d: { message: msg(321), nonce: null } }, 0)
     flushSync()
-    await new Promise((r) => setTimeout(r, 400))
+    await vi.advanceTimersByTimeAsync(400)
     expect(calls('mark_read')).toBe(0)
     after.release()
     unmount(c)

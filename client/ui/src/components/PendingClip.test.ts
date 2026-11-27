@@ -11,6 +11,7 @@ import { applyReady, emptyState } from '../lib/state'
 import { reactiveProps } from '../lib/testProps.svelte'
 import { testMe, testReady } from '../lib/testReady'
 import type { ClipJob } from '../lib/tauri'
+import { nextTask } from '../lib/testSettle'
 
 const ready = testReady([{ id: 'C1', server_id: 'S1', kind: 'clips', name: 'clips', position: 0 }], {
   members: [{ server_id: 'S1', members: [{ user: testMe, nickname: null }] }],
@@ -23,7 +24,6 @@ const job = (over: Partial<ClipJob> = {}): ClipJob => ({
 })
 
 let cmp: ReturnType<typeof mount> | undefined
-const settle = () => new Promise((r) => setTimeout(r, 0))
 const calls = (cmd: string) => invoke.mock.calls.filter((c) => c[0] === cmd)
 const card = () => document.querySelector<HTMLElement>('.pending-clip')!
 const button = (text: string) => [...card().querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent?.trim() === text)
@@ -75,7 +75,7 @@ describe('PendingClip', () => {
     button('Retry')!.click()
     flushSync()
     expect(calls('retry_clip')).toEqual([['retry_clip', { id: 'J1' }]])
-    await settle()
+    await nextTask()
 
     // no words of the server's: just the retry line
     p.job = job({ stage: 'failed', error: null })
@@ -89,7 +89,7 @@ describe('PendingClip', () => {
       return undefined
     })
     button('Retry')!.click()
-    await settle()
+    await nextTask()
     flushSync()
     expect(card().textContent).toContain("Clips storage isn't set up on this server.")
 
@@ -112,7 +112,7 @@ describe('PendingClip', () => {
     flushSync()
     expect(calls('cancel_clip')).toHaveLength(1)
     finish()
-    await settle()
+    await nextTask()
   })
 
   it('done shows no cancel', () => {

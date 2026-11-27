@@ -1159,7 +1159,7 @@ async fn accept_in(
         return Ok(Outcome::Refused(AppError::NotFound, Some(Failure::Revoked)));
     }
     // An invite works only while its maker is in the server: theirs are revoked when they leave or are removed
-    // ([`revoke_made_in`]); this covers any made before that.
+    // ([`revoke_made_in`]), and migration 0086 revoked any left from before that (#547); this stays as a backstop.
     if !member_in(tx, server, row.maker()?).await? {
         return Ok(Outcome::Refused(AppError::NotFound, Some(Failure::Revoked)));
     }

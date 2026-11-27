@@ -6,10 +6,8 @@ const invoke = vi.fn(async (_cmd: string, _args?: unknown): Promise<unknown> => 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (cmd: string, args?: never) => invoke(cmd, args) }))
 
 import { clipKey, downloads, fileKey, imageKey, SAVED_MS } from './downloads.svelte'
+import { microtasks } from './testSettle'
 
-const settle = async () => {
-  for (let i = 0; i < 5; i++) await Promise.resolve()
-}
 const SAVED_TO = '/home/alex/Videos/ace.mp4'
 /** A save the test finishes: `finish(true)` saved (to SAVED_TO, or the path given), `finish(false)` cancelled, `fail(text)` failed. */
 function held() {
@@ -45,7 +43,7 @@ describe('downloads', () => {
     downloads.progress({ key: 'clip:M1', received: 420, total: 1000 })
     expect(downloads.view('clip:M1')).toEqual({ phase: 'downloading', fraction: 0.42 })
     s.finish(true)
-    await settle()
+    await microtasks()
   })
 
   it('an unknown size is indeterminate', () => {
@@ -64,7 +62,7 @@ describe('downloads', () => {
     void downloads.toggle('clip:M1', 'clip', s.save, vi.fn())
     downloads.progress({ key: 'clip:M1', received: 0, total: 10 })
     s.finish(true)
-    await settle()
+    await microtasks()
     expect(downloads.view('clip:M1')).toEqual({ phase: 'saved', path: SAVED_TO })
     // a late progress event changes nothing
     downloads.progress({ key: 'clip:M1', received: 10, total: 10 })
@@ -82,7 +80,7 @@ describe('downloads', () => {
     expect(invoke).toHaveBeenCalledWith('cancel_download', { key: 'clip:M1' })
     expect(s.save).toHaveBeenCalledTimes(1)
     s.finish(false) // the core answers false once it has stopped
-    await settle()
+    await microtasks()
     expect(downloads.view('clip:M1')).toBeNull()
     expect(onError).not.toHaveBeenCalled()
   })
@@ -94,12 +92,12 @@ describe('downloads', () => {
     expect(s.save).toHaveBeenCalledTimes(1)
     expect(invoke).not.toHaveBeenCalled()
     s.finish(false)
-    await settle()
+    await microtasks()
     // free again
     void downloads.toggle('clip:M1', 'clip', s.save, vi.fn())
     expect(s.save).toHaveBeenCalledTimes(2)
     s.finish(false)
-    await settle()
+    await microtasks()
   })
 
   it('a failure clears it and hands the error to its owner', async () => {
@@ -108,7 +106,7 @@ describe('downloads', () => {
     void downloads.toggle('clip:M1', 'clip', s.save, onError)
     downloads.progress({ key: 'clip:M1', received: 5, total: 10 })
     s.fail('the download stopped moving')
-    await settle()
+    await microtasks()
     expect(downloads.view('clip:M1')).toBeNull()
     expect(onError).toHaveBeenCalledWith('the download stopped moving')
     expect(downloads.announcement).toBe('')
@@ -123,7 +121,7 @@ describe('downloads', () => {
     downloads.progress({ key: 'clip:M1', received: 5, total: 10 })
     expect(downloads.announcement).toBe('Downloading clip')
     s.finish(true)
-    await settle()
+    await microtasks()
     expect(downloads.announcement).toBe('Saved clip')
   })
 
@@ -133,7 +131,7 @@ describe('downloads', () => {
     downloads.progress({ key: 'file:A1', received: 1, total: 10 })
     downloads.cancel('file:A1')
     s.finish(false)
-    await settle()
+    await microtasks()
     expect(downloads.announcement).toBe('Stopped downloading notes.txt')
   })
 
@@ -141,7 +139,7 @@ describe('downloads', () => {
     const s = held()
     void downloads.toggle('file:A1', 'notes.txt', s.save, vi.fn())
     s.finish('/home/sam/Downloads/notes.txt')
-    await settle()
+    await microtasks()
     const onError = vi.fn()
     await downloads.reveal('file:A1', onError)
     expect(invoke).toHaveBeenCalledWith('reveal_path', { path: '/home/sam/Downloads/notes.txt' })
@@ -152,7 +150,7 @@ describe('downloads', () => {
     const s = held()
     void downloads.toggle('clip:M1', 'clip', s.save, vi.fn())
     s.finish(true)
-    await settle()
+    await microtasks()
     invoke.mockRejectedValueOnce("Couldn't open that folder. The file may have moved.")
     const onError = vi.fn()
     await downloads.reveal('clip:M1', onError)
@@ -168,7 +166,7 @@ describe('downloads', () => {
     const s = held()
     void downloads.toggle('clip:M1', 'clip', s.save, vi.fn())
     s.finish(true)
-    await settle()
+    await microtasks()
     downloads.hold('clip:M1')
     vi.advanceTimersByTime(SAVED_MS * 4)
     expect(downloads.view('clip:M1')).toEqual({ phase: 'saved', path: SAVED_TO })
@@ -183,7 +181,7 @@ describe('downloads', () => {
     const s = held()
     void downloads.toggle('clip:M1', 'clip', s.save, vi.fn())
     s.finish(false)
-    await settle()
+    await microtasks()
     expect(downloads.announcement).toBe('')
   })
 })

@@ -12,6 +12,7 @@ import { app } from '../lib/store.svelte'
 import { emptyState } from '../lib/state'
 import type { DeletedChannel } from '../lib/protocol/DeletedChannel'
 import type { ChannelKind } from '../lib/protocol/ChannelKind'
+import { nextTask } from '../lib/testSettle'
 
 const server = { id: 'S1', name: 'Home', icon_hash: null }
 const DAY = 86_400_000
@@ -28,7 +29,6 @@ const gone = (id: string, name: string, kind: ChannelKind, o: Partial<DeletedCha
 })
 
 let cmp: ReturnType<typeof mount> | undefined
-const settle = () => new Promise((r) => setTimeout(r, 0))
 const button = (label: string) => document.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)
 const text = (t: string) => [...document.querySelectorAll('button')].find((b) => b.textContent === t)
 async function show(list: DeletedChannel[]) {
@@ -36,7 +36,7 @@ async function show(list: DeletedChannel[]) {
   app.state = { ...emptyState(), members: { S1: [user('U1', 'alex'), user('U2', 'sam')] } }
   cmp = mount(RecentlyDeleted, { target: document.body, props: { server } })
   flushSync()
-  await settle()
+  await nextTask()
   flushSync()
 }
 
@@ -81,7 +81,7 @@ describe('RecentlyDeleted', () => {
   it('restores and drops the row', async () => {
     await show([gone('T1', 'old-stuff', 'text')])
     button('Restore #old-stuff')!.click()
-    await settle()
+    await nextTask()
     flushSync()
     expect(invoke).toHaveBeenCalledWith('restore_channel', { channelId: 'T1' })
     expect(document.querySelectorAll('li')).toHaveLength(0)
@@ -95,7 +95,7 @@ describe('RecentlyDeleted', () => {
       return cmd === 'list_deleted_channels' ? [gone('T1', 'old-stuff', 'text')] : undefined
     })
     button('Restore #old-stuff')!.click()
-    await settle()
+    await nextTask()
     flushSync()
     expect(document.querySelector('[role=alert]')?.textContent).toBe(full)
     expect(document.querySelectorAll('li')).toHaveLength(1)
@@ -109,7 +109,7 @@ describe('RecentlyDeleted', () => {
       return cmd === 'list_deleted_channels' ? [gone('T2', 'other', 'text')] : undefined
     })
     button('Restore #old-stuff')!.click()
-    await settle()
+    await nextTask()
     flushSync()
     expect(invoke).toHaveBeenCalledTimes(3) // the first load, the restore, and the reload
     expect([...document.querySelectorAll('li')].map((li) => li.textContent)).toEqual([expect.stringContaining('#other')])
@@ -128,7 +128,7 @@ describe('RecentlyDeleted', () => {
       return cmd === 'list_deleted_channels' ? [] : undefined
     })
     button('Restore #old-stuff')!.click()
-    await settle()
+    await nextTask()
     flushSync()
     expect(document.querySelectorAll('li')).toHaveLength(0)
     expect(document.querySelector('[role=status]')?.textContent).toBe('#old-stuff is already back.')
@@ -146,7 +146,7 @@ describe('RecentlyDeleted', () => {
     button('Delete #old-stuff now')!.click()
     flushSync()
     text('Delete for good')!.click()
-    await settle()
+    await nextTask()
     flushSync()
     expect(invoke).toHaveBeenCalledWith('purge_channel', { channelId: 'T1' })
     expect(document.querySelectorAll('li')).toHaveLength(0)
@@ -158,7 +158,7 @@ describe('RecentlyDeleted', () => {
     button('Delete #quotes now')!.click()
     flushSync()
     text('Delete for good')!.click()
-    await settle()
+    await nextTask()
     flushSync()
     expect(document.querySelector('[role=alert]')?.textContent).toContain('Quote of the Year')
     expect(document.querySelectorAll('li')).toHaveLength(1)

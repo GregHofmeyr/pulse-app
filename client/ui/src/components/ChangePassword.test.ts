@@ -6,13 +6,13 @@ const invoke = vi.fn(async (_cmd: string, _args?: unknown): Promise<unknown> => 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (cmd: string, args?: never) => invoke(cmd, args) }))
 
 import ChangePassword from './ChangePassword.svelte'
+import { nextTask } from '../lib/testSettle'
 
 let cmp: ReturnType<typeof mount> | undefined
-const settle = () => new Promise((r) => setTimeout(r, 0))
 const show = async () => {
   cmp = mount(ChangePassword, { target: document.body })
   flushSync()
-  await settle(); flushSync()
+  await nextTask(); flushSync()
 }
 const calls = (cmd: string) => invoke.mock.calls.filter((c) => c[0] === cmd)
 const button = (t: string) => [...document.querySelectorAll('button')].find((b) => b.textContent === t)
@@ -26,7 +26,7 @@ const type = (label: string, v: string) => {
 }
 const submit = async () => {
   document.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
-  await settle(); flushSync()
+  await nextTask(); flushSync()
 }
 const text = () => document.body.textContent ?? ''
 const inputs = () => [...document.querySelectorAll<HTMLInputElement>('input')]

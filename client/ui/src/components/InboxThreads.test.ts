@@ -16,6 +16,7 @@ import { noteThreadsEvent, REFETCH_MS, resetThreads, threads } from '../lib/inbo
 import { clock, handleReady, resetState, ui } from '../lib/store.svelte'
 import { testMe, testReady } from '../lib/testReady'
 import { testMessage } from '../lib/testInbox'
+import { flushMicrotasks } from '../lib/testSettle'
 
 const sam = { id: 'SAM', username: 'sam', display_name: 'Sam', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
 const NOW = Date.parse('2026-11-12T10:05:00.000Z')
@@ -29,7 +30,6 @@ const thread = (root: string, latest: string, n: number, started = true): InboxT
 
 let answer: InboxThreads = { threads: [], watching: [] }
 let cmp: ReturnType<typeof mount> | undefined
-const settle = async () => { for (let i = 0; i < 6; i++) await Promise.resolve(); flushSync() }
 
 beforeEach(async () => {
   vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] })
@@ -52,7 +52,7 @@ beforeEach(async () => {
     members: [{ server_id: 'S1', members: [{ user: testMe, nickname: null }, { user: sam, nickname: null }] }],
     inbox_unread: 2,
   }))
-  await settle()
+  await flushMicrotasks(6)
 })
 afterEach(() => {
   if (cmp) unmount(cmp)
@@ -66,7 +66,7 @@ async function show() {
   setTab('threads')
   cmp = mount(InboxPopover, { target: document.body, props: { onClose: () => {} } })
   flushSync()
-  await settle()
+  await flushMicrotasks(6)
 }
 
 describe('inbox Threads (#326)', () => {
@@ -89,7 +89,7 @@ describe('inbox Threads (#326)', () => {
   it('a click opens the thread and counts it seen', async () => {
     await show()
     document.querySelector<HTMLButtonElement>('.item')!.click()
-    await settle()
+    await flushMicrotasks(6)
     expect(ui.openReplies).toEqual({ channelId: 'Q1', rootId: 'R1' })
     expect(invoke).toHaveBeenCalledWith('mark_replies_seen', { rootId: 'R1', messageId: 'X2' })
     expect(threads.list).toEqual([])

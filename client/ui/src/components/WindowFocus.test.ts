@@ -31,6 +31,7 @@ import { app, startListening, ui } from '../lib/store.svelte'
 import { applyReady, emptyState } from '../lib/state'
 import { watchWindowFocus, windowFocus } from '../lib/windowFocus.svelte'
 import { defaultMixer } from '../lib/mixer'
+import { nextTask } from '../lib/testSettle'
 
 const me = { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
 const sam = { id: 'U2', username: 'sam', display_name: 'sam', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
@@ -98,7 +99,6 @@ describe('one window-focus source', () => {
     ui.openChannelId = 'D1'
     const event = (id: string): Event => ({ t: 'MessageCreated', d: { message: msg(id, 'D1'), nonce: null } }) as Event
     const logs = () => invoke.mock.calls.filter((c) => c[0] === 'ui_log').map((c) => (c[1] as { line: string; info: boolean }))
-    const settle = () => new Promise((r) => setTimeout(r, 0))
     tauriFocus!({ payload: true })
     pastTheSoundGap()
     try {
@@ -106,12 +106,12 @@ describe('one window-focus source', () => {
       os.focused = true
       invoke.mockClear()
       listeners.get('pulse://event')!({ payload: event('M10') })
-      await settle()
+      await nextTask()
       expect(logs()).toEqual([])
       // the page thinks it's focused, the OS says not: that's worth a line
       os.focused = false
       listeners.get('pulse://event')!({ payload: event('M11') })
-      await settle()
+      await nextTask()
       expect(logs().map((l) => l.line)).toEqual([
         'sound: message private=true mentioned=false open=true thread=- open_thread=- focused=true muted=false quiet=false level=- gap_ok=true sound=on play=false; the OS says focused=false',
       ])

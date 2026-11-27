@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { flushSync, mount, tick, unmount } from 'svelte'
+import { flushSync, mount, unmount } from 'svelte'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { compile } from 'svelte/compiler'
@@ -30,6 +30,7 @@ import { voice } from '../lib/voice.svelte'
 import { stream, streamApi } from '../lib/stream/stream.svelte'
 import { callView, openFull } from '../lib/stream/viewer.svelte'
 import type { Ready } from '../lib/protocol/Ready'
+import { settleTask } from '../lib/testSettle'
 
 const me = { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
 const sam = { id: 'U2', username: 'sam', display_name: 'sam', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
@@ -50,11 +51,6 @@ const SAM = { channelId: 'V1', streamer: 'U2' }
 
 let cmp: ReturnType<typeof mount> | undefined
 const q = (sel: string) => document.querySelector<HTMLElement>(sel)
-const settle = async () => {
-  for (let i = 0; i < 5; i++) await tick()
-  await new Promise((r) => setTimeout(r, 0))
-  flushSync()
-}
 const mountShell = () => {
   cmp = mount(Shell, { target: document.body, props: { user: me, onLogout: () => {} } })
   flushSync()
@@ -102,12 +98,12 @@ describe('mini-preview in the shell', () => {
     mountShell()
     goTo('V1')
     await streamApi.watch('V1', 'U2')
-    await settle()
+    await settleTask()
     expect(q('.mini-preview')).toBeNull()
     expect(q('[data-stream="U2"] video')).not.toBeNull()
 
     goTo('T1')
-    await settle()
+    await settleTask()
     const mini = q('.mini-preview')!
     expect(mini).not.toBeNull()
     expect(mini.querySelector('video')).not.toBeNull()
@@ -121,17 +117,17 @@ describe('mini-preview in the shell', () => {
     goTo('V1')
     await streamApi.watch('V1', 'U2')
     openFull(SAM)
-    await settle()
+    await settleTask()
     expect(q('.full-view')).not.toBeNull()
 
     goTo('T1')
-    await settle()
+    await settleTask()
     expect(callView.full).toEqual(SAM)
     // away from the call, the mini-preview takes the low layer
     expect(room.setLayer).toHaveBeenLastCalledWith('U2', 'low')
 
     q('.mini-preview .open')!.click()
-    await settle()
+    await settleTask()
     expect(q('.mini-preview')).toBeNull()
     expect(q('.full-view .stage video')).not.toBeNull()
     expect(room.setLayer).toHaveBeenLastCalledWith('U2', 'high')
@@ -141,11 +137,11 @@ describe('mini-preview in the shell', () => {
     mountShell()
     goTo('V1')
     await streamApi.watch('V1', 'U2')
-    await settle()
+    await settleTask()
     goTo('T1')
-    await settle()
+    await settleTask()
     q('.mini-preview .open')!.click()
-    await settle()
+    await settleTask()
     expect(q('.full-view')).toBeNull()
     expect(q('[data-stream="U2"] video')).not.toBeNull()
   })
@@ -169,10 +165,10 @@ describe('a DM or group call stream in the shell (#51)', () => {
   it('watch_opens_full_view_in_place_of_the_conversation_back_leaves_the_mini_preview_over_it', async () => {
     mountShell()
     goTo('D1')
-    await settle()
+    await settleTask()
     // the band's Watch: full view in place of the conversation, the one video there
     q('.band button[aria-label="Watch sam\'s stream"]')!.click()
-    await settle()
+    await settleTask()
     expect(callView.full).toEqual(DM_SAM)
     expect(q('.full-view .stage video')).not.toBeNull()
     expect(q('.band')).toBeNull()
@@ -182,7 +178,7 @@ describe('a DM or group call stream in the shell (#51)', () => {
 
     // Back: the conversation and its call band, the stream still playing in the mini-preview
     ;[...document.querySelectorAll<HTMLButtonElement>('.full-view button')].find((b) => b.textContent?.trim() === 'Back')!.click()
-    await settle()
+    await settleTask()
     expect(q('.full-view')).toBeNull()
     expect(q('.band')).not.toBeNull()
     expect(q('.mini-preview video')).not.toBeNull()
@@ -191,7 +187,7 @@ describe('a DM or group call stream in the shell (#51)', () => {
 
     // the mini-preview takes you back to full view (a conversation has no grid to go back to)
     q('.mini-preview .open')!.click()
-    await settle()
+    await settleTask()
     expect(q('.full-view .stage video')).not.toBeNull()
     expect(q('.mini-preview')).toBeNull()
   })
@@ -201,13 +197,13 @@ describe('a DM or group call stream in the shell (#51)', () => {
     goTo('D1')
     await streamApi.watch('D1', 'U2')
     openFull(DM_SAM)
-    await settle()
+    await settleTask()
     goTo('T1')
-    await settle()
+    await settleTask()
     expect(q('.full-view')).toBeNull()
     expect(q('.mini-preview video')).not.toBeNull()
     q('.mini-preview .open')!.click()
-    await settle()
+    await settleTask()
     expect(q('.full-view .stage video')).not.toBeNull()
     expect(q('.mini-preview')).toBeNull()
   })
@@ -217,10 +213,10 @@ describe('a DM or group call stream in the shell (#51)', () => {
     goTo('D1')
     await streamApi.watch('D1', 'U2')
     openFull(DM_SAM)
-    await settle()
+    await settleTask()
     expect(q('.full-view')).not.toBeNull()
     await streamApi.unwatch('D1', 'U2')
-    await settle()
+    await settleTask()
     expect(q('.full-view')).toBeNull()
     expect(q('.band')).not.toBeNull()
     expect(callView.full).toBeNull()
@@ -237,7 +233,7 @@ describe('mini-preview', () => {
     await streamApi.watch('V1', 'U2')
     mountMini()
     q('.mini-preview button[aria-label="Stop watching"]')!.click()
-    await settle()
+    await settleTask()
     expect(stream.watching).toEqual([])
     expect(invoke).toHaveBeenCalledWith('stream_unwatch', { channelId: 'V1', streamer: 'U2' })
     // the ✕ is not a click on the preview

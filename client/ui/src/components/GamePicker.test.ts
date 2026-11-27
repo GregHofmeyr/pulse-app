@@ -9,6 +9,7 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: (cmd: string, args?: never) => 
 import GamePicker from './GamePicker.svelte'
 import { app } from '../lib/store.svelte'
 import { emptyState } from '../lib/state'
+import { nextTask } from '../lib/testSettle'
 
 const game = (id: string, name: string): Game => ({ id, server_id: 'S1', name, created_by: null, created_at: '2026-10-01T10:00:00.000Z' })
 
@@ -21,7 +22,6 @@ function show(props: { value?: string | null; guess?: string | null; onChange?: 
   flushSync()
   return { target, onChange }
 }
-const settle = () => new Promise((r) => setTimeout(r, 0))
 const type = (root: Element, text: string) => {
   const i = root.querySelector('input')!
   i.focus()
@@ -55,7 +55,7 @@ describe('GamePicker', () => {
     type(target, 'Valorant')
     expect(options(target)).toEqual(["Add 'Valorant'"])
     target.querySelector<HTMLElement>('[role=option]')!.click()
-    await settle()
+    await nextTask()
     expect(invoke).toHaveBeenCalledWith('add_game', { serverId: 'S1', name: 'Valorant' })
     expect(onChange).toHaveBeenCalledWith('G3')
   })
@@ -104,7 +104,7 @@ describe('GamePicker', () => {
     const { target, onChange } = show()
     type(target, 'Valorant')
     target.querySelector<HTMLElement>('[role=option]')!.click()
-    await settle(); flushSync()
+    await nextTask(); flushSync()
     expect(target.querySelector('[role=alert]')?.textContent).toContain('That game is already there.')
     expect(onChange).not.toHaveBeenCalled()
   })

@@ -318,17 +318,6 @@
     setColours(kind === 'solid' ? [a] : [a, b ?? a], true)
   }
 
-  // the tabs: a tablist, the arrows / Home / End move and pick
-  function tabKeys(e: KeyboardEvent) {
-    const i = TABS.findIndex((t) => t.key === tab)
-    const to = e.key === 'ArrowRight' ? (i + 1) % TABS.length : e.key === 'ArrowLeft' ? (i + TABS.length - 1) % TABS.length : e.key === 'Home' ? 0 : e.key === 'End' ? TABS.length - 1 : -1
-    if (to < 0) return
-    e.preventDefault()
-    tab = TABS[to].key
-    flushSync()
-    document.getElementById(`${uid}-tab-${tab}`)?.focus()
-  }
-
   // The custom card theme's two pickers, in a popover by the + tile (#467)
   let themePop = $state(false)
   function openCustomTheme() {
@@ -461,12 +450,8 @@
   {:else}
     <div class="layout">
       <div class="settings">
-        <div class="tabs" role="tablist" aria-label="Profile" tabindex="-1" onkeydown={tabKeys}>
-          {#each TABS as t (t.key)}
-            <button type="button" role="tab" id="{uid}-tab-{t.key}" aria-selected={tab === t.key} aria-controls="{uid}-panel-{t.key}" tabindex={tab === t.key ? 0 : -1}
-              onclick={() => (tab = t.key)}>{t.label}</button>
-          {/each}
-        </div>
+        <!-- the app's segmented row as a tablist (#716): one line at any width; too narrow, it scrolls with a fade -->
+        <Segmented label="Profile" tabs={uid} options={TABS.map((t) => ({ value: t.key, label: t.label }))} value={tab} onchange={(v) => (tab = v)} />
 
         <!-- every tab stays on the page, only the picked one shown: a half-typed bio or an upload carries on across tabs -->
         <div class="panel" role="tabpanel" id="{uid}-panel-about" aria-labelledby="{uid}-tab-about" hidden={tab !== 'about'}>

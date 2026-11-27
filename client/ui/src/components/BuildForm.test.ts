@@ -15,6 +15,7 @@ import BuildForm from './BuildForm.svelte'
 import BuildPage from './BuildPage.svelte'
 import { handleReady, resetState } from '../lib/store.svelte'
 import { testMe, testReady } from '../lib/testReady'
+import { nextTask } from '../lib/testSettle'
 
 const ready = () =>
   testReady([{ id: 'B1', server_id: 'S1', kind: 'builds', name: 'raven-builds', position: 0 }], {
@@ -40,12 +41,11 @@ const build = (b: Partial<Build> = {}, m: Partial<Message> = {}): Message => ({
 let n = 0
 const staged = (name: string) => ({ id: `st${++n}`, name, size: 500, content_type: 'image/webp', kind: 'image', width: 40, height: 20, preview: null })
 let cmp: ReturnType<typeof mount> | undefined
-const settle = () => new Promise((r) => setTimeout(r, 0))
 const calls = (cmd: string) => invoke.mock.calls.filter((c) => c[0] === cmd)
 async function flush() {
   for (let i = 0; i < 3; i++) {
     flushSync()
-    await settle()
+    await nextTask()
   }
   flushSync()
 }

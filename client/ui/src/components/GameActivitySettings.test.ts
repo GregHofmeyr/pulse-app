@@ -2,7 +2,7 @@
 // Settings → Privacy → Game activity (#380): the master switch and the finer ones (on by default, the finer ones
 // disabled while the master is off), each change saved and told to the core, and games added by hand by picking an
 // exe and naming it.
-import { flushSync, mount, tick, unmount } from 'svelte'
+import { flushSync, mount, unmount } from 'svelte'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const invoke = vi.fn(async (_cmd: string, _args?: unknown): Promise<unknown> => undefined)
@@ -10,15 +10,12 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: (cmd: string, args?: never) => 
 
 import GameActivitySettings from './GameActivitySettings.svelte'
 import { gameActivity, gamePrefs } from '../lib/gamePrefs.svelte'
+import { settle } from '../lib/testSettle'
 
 let cmp: ReturnType<typeof mount> | undefined
 const sw = (k: string) => document.querySelector<HTMLInputElement>(`input[data-switch="${k}"]`)!
 const told = () => invoke.mock.calls.filter((c) => c[0] === 'set_game_activity').map((c) => (c[1] as { settings: unknown }).settings)
 const button = (text: string) => [...document.querySelectorAll('button')].find((b) => b.textContent?.trim() === text)
-const settle = async () => {
-  for (let i = 0; i < 3; i++) await tick()
-  flushSync()
-}
 
 beforeEach(() => {
   invoke.mockReset()
@@ -68,7 +65,7 @@ describe('games added by hand', () => {
   it('pick an exe, name it, add it; remove it again', async () => {
     invoke.mockImplementation(async (cmd: string) => (cmd === 'pick_game_exe' ? { exe: 'D:\\Games\\Old\\old.exe', name: 'old' } : undefined))
     button('Add a game')!.click()
-    await settle()
+    await settle(3)
     const name = document.querySelector<HTMLInputElement>('input[aria-label="Game name"]')!
     expect(name.value).toBe('old')
     name.value = 'Old Game'
@@ -88,7 +85,7 @@ describe('games added by hand', () => {
   it('cancelling the dialog adds nothing', async () => {
     invoke.mockImplementation(async (cmd: string) => (cmd === 'pick_game_exe' ? null : undefined))
     button('Add a game')!.click()
-    await settle()
+    await settle(3)
     expect(document.querySelector('input[aria-label="Game name"]')).toBeNull()
     expect(told()).toEqual([])
   })
@@ -119,7 +116,7 @@ describe('Steam account (#379)', () => {
     expect(steamRows().textContent).toContain("Pulse never sees your Steam password")
     expect(sw('steam').disabled).toBe(true)
     button('Link Steam account')!.click()
-    await settle()
+    await settle(3)
     expect(invoke).toHaveBeenCalledWith('link_steam', undefined)
   })
 
@@ -130,7 +127,7 @@ describe('Steam account (#379)', () => {
     expect(steamRows().textContent).toContain('62.5 % completion · 3 perfect games')
     invoke.mockImplementation(async (cmd: string) => (cmd === 'unlink_steam' ? { linking_available: true, achievements_available: true, link: null } : undefined))
     button('Unlink')!.click()
-    await settle()
+    await settle(3)
     expect(invoke).toHaveBeenCalledWith('unlink_steam', undefined)
     expect(button('Link Steam account')).toBeTruthy()
   })
@@ -141,7 +138,7 @@ describe('Steam account (#379)', () => {
     expect(told().at(-1)).toMatchObject({ steam_achievements: true })
     invoke.mockImplementation(async (cmd: string) => (cmd === 'set_steam_share' ? linked({ share_achievements: false }) : undefined))
     sw('steam').click()
-    await settle()
+    await settle(3)
     expect(invoke).toHaveBeenCalledWith('set_steam_share', { on: false })
     expect(gamePrefs.steam_achievements).toBe(false)
     expect(told().at(-1)).toMatchObject({ steam_achievements: false })
@@ -153,7 +150,7 @@ describe('Steam account (#379)', () => {
     expect(steamRows().querySelector('[data-steam-hours]')!.textContent).toBe('21.5 h in Steam games over the last two weeks')
     invoke.mockImplementation(async (cmd: string) => (cmd === 'set_steam_hours' ? linked({ share_hours: false }) : undefined))
     sw('steam-hours').click()
-    await settle()
+    await settle(3)
     expect(invoke).toHaveBeenCalledWith('set_steam_hours', { on: false })
     expect(sw('steam-hours').checked).toBe(false)
     expect(steamRows().querySelector('[data-steam-hours]')).toBeNull()
@@ -171,7 +168,7 @@ describe('Steam account (#379)', () => {
     expect(sw('steam-join').checked && !sw('steam-join').disabled).toBe(true)
     invoke.mockImplementation(async (cmd: string) => (cmd === 'set_steam_join' ? linked({ share_join: false }) : undefined))
     sw('steam-join').click()
-    await settle()
+    await settle(3)
     expect(invoke).toHaveBeenCalledWith('set_steam_join', { on: false })
     expect(sw('steam-join').checked).toBe(false)
   })
@@ -223,7 +220,7 @@ describe('Deadlock (#390)', () => {
     for (const k of ['matches', 'rank', 'squad']) expect([k, sw(`deadlock-${k}`).checked, sw(`deadlock-${k}`).disabled]).toEqual([k, true, false])
     invoke.mockImplementation(async (cmd: string) => (cmd === 'set_deadlock_switch' ? linked({ deadlock_rank: false }) : undefined))
     sw('deadlock-rank').click()
-    await settle()
+    await settle(3)
     expect(invoke).toHaveBeenCalledWith('set_deadlock_switch', { key: 'rank', on: false })
     expect(sw('deadlock-rank').checked).toBe(false)
   })

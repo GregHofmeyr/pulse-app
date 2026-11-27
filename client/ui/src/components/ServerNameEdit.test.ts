@@ -8,13 +8,10 @@ const invoke = vi.fn()
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a: unknown[]) => invoke(...a) }))
 
 import ServerNameEdit from './ServerNameEdit.svelte'
+import { flushMicrotasks } from '../lib/testSettle'
 
 let cmp: ReturnType<typeof mount> | undefined
 let onDone = vi.fn()
-const settle = async () => {
-  for (let i = 0; i < 6; i++) await Promise.resolve()
-  flushSync()
-}
 function render() {
   onDone = vi.fn()
   cmp = mount(ServerNameEdit, { target: document.body, props: { server: { id: 'S1', name: 'Alpha', icon_hash: null }, onDone } })
@@ -45,7 +42,7 @@ describe('ServerNameEdit', () => {
     expect(field.value).toBe('Alpha')
     type(field, '  Lounge ')
     key(field, 'Enter')
-    await settle()
+    await flushMicrotasks(6)
     expect(invoke).toHaveBeenCalledWith('rename_server', { serverId: 'S1', name: 'Lounge' })
     expect(onDone).toHaveBeenCalledWith(true)
   })
@@ -66,7 +63,7 @@ describe('ServerNameEdit', () => {
     const field = render()
     type(field, '   ')
     key(field, 'Enter')
-    await settle()
+    await flushMicrotasks(6)
     expect(invoke).not.toHaveBeenCalled()
     expect(onDone).toHaveBeenCalledTimes(1)
   })
@@ -75,7 +72,7 @@ describe('ServerNameEdit', () => {
     const field = render()
     type(field, 'Lounge')
     field.dispatchEvent(new FocusEvent('blur'))
-    await settle()
+    await flushMicrotasks(6)
     expect(invoke).toHaveBeenCalledWith('rename_server', { serverId: 'S1', name: 'Lounge' })
     expect(onDone).toHaveBeenCalledWith(false)
   })
@@ -85,7 +82,7 @@ describe('ServerNameEdit', () => {
     const field = render()
     type(field, 'Lounge')
     key(field, 'Enter')
-    await settle()
+    await flushMicrotasks(6)
     expect(onDone).not.toHaveBeenCalled()
     expect(document.querySelector('[role=alert]')!.textContent).toContain('owner can rename')
   })
