@@ -91,6 +91,11 @@ describe('the Looks tiles', () => {
     expect(q('[role=dialog][aria-label="Card theme"]')).not.toBeNull()
     expect(q('[data-editor-layer]')).not.toBeNull()
   })
+  it('name_tile_opens_name_style_popover', () => {
+    show()
+    click(tile('Name style'))
+    expect(q('[role=dialog][aria-label="Name style"]')).not.toBeNull()
+  })
 })
 
 describe('tile faces', () => {
