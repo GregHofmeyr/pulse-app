@@ -88,9 +88,11 @@ impl Work {
 
 /// The open sources of this run, by id, each with its work. One map, so work exists exactly while
 /// its source is open: nothing is left behind for an id that was never opened or is closed.
+/// Parked sources (`park`) are closed to work but not gone: `unpark` opens them again.
 #[derive(Default)]
 pub struct Sources {
     map: Mutex<HashMap<String, (Entry, Arc<Work>)>>,
+    parked: Mutex<HashMap<String, Entry>>,
 }
 
 impl Sources {
@@ -118,14 +120,50 @@ impl Sources {
         Some(e)
     }
 
-    /// Close every source (sign-out, quitting); the caller deletes the folders. Each comes with
-    /// its work, to wait on (`Work::lock` is free once its run has stopped).
+    /// Close every source, parked ones too (sign-out); the caller deletes the folders. Each
+    /// comes with its work, to wait on (`Work::lock` is free once its run has stopped).
     pub fn drain(&self) -> Vec<(Entry, Arc<Work>)> {
-        let all: Vec<_> = self.map.lock().unwrap().drain().map(|(_, v)| v).collect();
+        let mut map = self.map.lock().unwrap();
+        let mut all: Vec<_> = map.drain().map(|(_, v)| v).collect();
+        all.extend(
+            self.parked
+                .lock()
+                .unwrap()
+                .drain()
+                .map(|(_, e)| (e, Arc::new(Work::new()))),
+        );
         for (_, work) in &all {
             work.close();
         }
         all
+    }
+
+    /// Winding down (quitting, or an update's installer about to take over): every source
+    /// closes to work, as with `drain`, so no ffmpeg runs or starts, but is kept (files and all)
+    /// for `unpark`, should the install fail (#545). Returns their work, to wait on.
+    pub fn park(&self) -> Vec<Arc<Work>> {
+        let mut map = self.map.lock().unwrap();
+        let mut parked = self.parked.lock().unwrap();
+        map.drain()
+            .map(|(id, (e, work))| {
+                work.close();
+                parked.insert(id, e);
+                work
+            })
+            .collect()
+    }
+
+    /// The parked sources open again, each with new work (the old one stays closed).
+    pub fn unpark(&self) {
+        let mut map = self.map.lock().unwrap();
+        for (id, e) in self.parked.lock().unwrap().drain() {
+            map.insert(id, (e, Arc::new(Work::new())));
+        }
+    }
+
+    /// Source `id` is parked: closed to work for now, but its folder is still its own.
+    pub fn is_parked(&self, id: &str) -> bool {
+        self.parked.lock().unwrap().contains_key(id)
     }
 
     /// `f()` if source `id` is open, run under the sources' lock: a close (`remove`, `drain`)
@@ -135,8 +173,11 @@ impl Sources {
         map.contains_key(id).then(f)
     }
 
+    /// Open and parked sources: the folders that aren't stale.
     pub fn ids(&self) -> HashSet<String> {
-        self.map.lock().unwrap().keys().cloned().collect()
+        let map = self.map.lock().unwrap();
+        let parked = self.parked.lock().unwrap();
+        map.keys().chain(parked.keys()).cloned().collect()
     }
 
     /// The work of an open source; `None` once it is closed (or for an id never opened).
@@ -372,6 +413,22 @@ mod tests {
         s.insert("b".into(), entry(Path::new("/t/b")));
         assert_eq!(s.drain().len(), 1);
         assert!(s.get("b").is_none());
+    }
+
+    #[test]
+    fn parked_sources_come_back_or_go_with_a_drain() {
+        let s = Sources::default();
+        s.insert("a".into(), entry(Path::new("/t/a")));
+        let work = s.park();
+        assert_eq!(work.len(), 1);
+        assert!(s.get("a").is_none() && s.lock_for("a").is_none());
+        assert!(s.ids().contains("a"), "its folder isn't stale");
+        s.unpark();
+        assert!(s.get("a").is_some() && s.lock_for("a").is_some());
+        s.park();
+        assert_eq!(s.drain().len(), 1, "a sign-out releases parked sources too");
+        s.unpark();
+        assert!(s.get("a").is_none() && s.ids().is_empty());
     }
 
     #[test]
