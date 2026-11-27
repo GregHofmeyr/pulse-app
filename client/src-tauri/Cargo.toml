@@ -70,7 +70,7 @@ tauri-plugin-dialog = "2"
 # "Show in folder" after a download (#333): `reveal_item_in_dir`, called from Rust only on a path
 # Pulse itself saved (no plugin registered, no webview permission granted).
 tauri-plugin-opener = { version = "2", default-features = false }
-base64 = "0.22"
+base64 = "0.23"
 # The 2FA setup QR code, drawn by the UI from a module matrix (the otpauth URI itself never leaves Rust).
 qrcode = { version = "0.15", default-features = false }
 # Avatars in desktop notifications (notify/avatar.rs): the cached WebP avatar as a small PNG, which
