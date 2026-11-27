@@ -25,6 +25,12 @@ describe('the card editor CSS', () => {
     expect(r).toMatch(/box-sizing:\s*border-box/)
     expect(r).toMatch(/line-height:\s*20px/)
   })
+  it('both_bio_states_have_the_same_padding', () => {
+    const r = css.match(/\.bio-field[^{}]*\.bio-box[^{}]*\{([^}]*)\}/)?.[1] ?? ''
+    expect(r).toMatch(/padding:\s*8px 40px 8px 12px/)
+    // the raw state's own rules don't change it
+    expect(css.match(/\.bio-edit[^{}]*\{[^}]*\}/g)!.join('')).not.toMatch(/padding/)
+  })
   it('name_clips_with_an_ellipsis', () => {
     expect(css).toMatch(/text-overflow:\s*ellipsis/)
   })

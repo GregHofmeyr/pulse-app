@@ -56,6 +56,7 @@ const click = (el: Element) => { (el as HTMLElement).click(); flushSync() }
 const menu = () => document.querySelector<HTMLElement>('[role=menu]')
 const items = () => [...(menu()?.querySelectorAll('[role=menuitem]') ?? [])].map((b) => b.textContent?.trim())
 const type = (el: HTMLInputElement, v: string) => { el.value = v; el.dispatchEvent(new Event('input', { bubbles: true })); flushSync() }
+const nameInput = () => { if (!document.querySelector('input[aria-label="Display name"]')) click(q('.name-view')); return q<HTMLInputElement>('input[aria-label="Display name"]') }
 const media = (hash: string) => ({ hash, still_hash: hash, width: 1, height: 1 })
 
 /** Pick a file through the (hidden) input of an image menu, then Apply the crop. */
@@ -149,9 +150,33 @@ describe('the editable card', () => {
     expect(q('.card').compareDocumentPosition(q('[role=alert]')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 
+  it('name_shows_styled_when_blurred_and_input_when_focused', () => {
+    show()
+    expect(document.querySelector('input[aria-label="Display name"]')).toBeNull()
+    expect(q('.name-view .name').textContent).toBe('alex')
+    click(q('.name-view'))
+    expect(q('input[aria-label="Display name"]')).not.toBeNull()
+    expect(document.querySelector('.name-view')).toBeNull()
+    q('input[aria-label="Display name"]').dispatchEvent(new FocusEvent('blur'))
+    flushSync()
+    expect(q('.name-view .name')).not.toBeNull()
+  })
+
+  it('escape_closes_the_emoji_picker_and_is_marked_handled', () => {
+    show()
+    click(q('.bio-view'))
+    click(q('button[aria-label="Emoji"]'))
+    expect(q('.emoji-popover')).not.toBeNull()
+    const e = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+    window.dispatchEvent(e)
+    flushSync()
+    expect(e.defaultPrevented).toBe(true)
+    expect(document.querySelector('.emoji-popover')).toBeNull()
+  })
+
   it('name_pronouns_bio_edit_in_place', () => {
     show()
-    type(q<HTMLInputElement>('input[aria-label="Display name"]'), 'Alex A')
+    type(nameInput(), 'Alex A')
     type(q<HTMLInputElement>('input[aria-label="Pronouns"]'), 'he/him')
     expect(st.draft.displayName).toBe('Alex A')
     expect(st.draft.pronouns).toBe('he/him')
@@ -167,9 +192,9 @@ describe('the editable card', () => {
 
   it('name_problem_and_limits_show_under_the_field', () => {
     show()
-    type(q<HTMLInputElement>('input[aria-label="Display name"]'), '   ')
+    type(nameInput(), '   ')
     expect(q('.who [role=alert]').textContent).toBe('Names can be 1 to 32 characters.')
-    type(q<HTMLInputElement>('input[aria-label="Display name"]'), 'alex')
+    type(nameInput(), 'alex')
     expect(document.querySelector('.who [role=alert]')).toBeNull()
     type(q<HTMLInputElement>('input[aria-label="Pronouns"]'), 'x'.repeat(PRONOUNS_MAX + 1))
     expect(q('.handle [role=alert]').textContent).toContain(`${PRONOUNS_MAX} characters`)
@@ -208,7 +233,7 @@ describe('the editable card', () => {
   it('long_inputs_stay_inside_the_card', () => {
     show(profile({ bio: 'z'.repeat(190) }))
     const card = q('.card')
-    const name = q<HTMLInputElement>('input[aria-label="Display name"]')
+    const name = nameInput()
     type(name, 'W'.repeat(60))
     click(q('.bio-view'))
     const box = q('[role=textbox][aria-label="Bio"]')

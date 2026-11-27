@@ -11,6 +11,10 @@
   import Icon from '../Icon.svelte'
   import ProfileCard from '../ProfileCard.svelte'
   import ImageMenu from './ImageMenu.svelte'
+  import Name from '../Name.svelte'
+  import { cardTheme, nameStop } from '../../lib/cardTheme'
+  import { cardLook } from '../../lib/theme.svelte'
+  import { baseName } from '../../lib/selectors'
   import { customToken, savedTone, withSkin, type Std } from '../../lib/emoji'
   import { insertAt } from '../../lib/emojiComplete'
   import { renderMarkdown } from '../../lib/markdown'
@@ -34,6 +38,17 @@
   const bioBreaksOver = $derived((bio.match(/\n/g)?.length ?? 0) > BIO_LINE_BREAKS_MAX)
   const bioHtml = $derived(bio ? renderMarkdown(bio, [], app.state.customEmoji) : '')
 
+  // the name as it will look (font, colours, effect), drawn as the card draws it
+  const theme = $derived(cardTheme(pc.theme_top, pc.theme_bottom, cardLook()))
+  const nameBg = $derived(nameStop(theme.vars['--card-top'], theme.vars['--card-bottom'], theme.light))
+  let nameEditing = $state(false)
+  let nameInput = $state<HTMLInputElement>()
+  async function editName() {
+    nameEditing = true
+    await tick()
+    nameInput?.focus()
+  }
+
   let editing = $state(false)
   let bioBox = $state<EmojiBox>()
   let emojiBtn = $state<HTMLButtonElement>()
@@ -56,6 +71,17 @@
     const r = insertAt(st.draft.bio, sel.start, sel.end, 'u' in e ? withSkin(e, savedTone()) : customToken(e))
     void bioBox?.setText(r, !keep)
   }
+  // Escape while the picker is open closes it, ahead of the editor's own Escape (which then sees it handled)
+  $effect(() => {
+    if (!picking) return
+    const key = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      e.preventDefault()
+      closePicker()
+    }
+    window.addEventListener('keydown', key, true)
+    return () => window.removeEventListener('keydown', key, true)
+  })
   function closePicker() {
     picking = false
     bioBox?.focus()
@@ -63,7 +89,17 @@
 </script>
 
 {#snippet nameField()}
-  <input class="name-in field" type="text" aria-label="Display name" aria-invalid={!!nameError} placeholder={me?.username} bind:value={st.draft.displayName} />
+  <div class="name-box">
+    {#if nameEditing}
+      <input bind:this={nameInput} class="name-in field" type="text" aria-label="Display name" aria-invalid={!!nameError} placeholder={me?.username} bind:value={st.draft.displayName}
+        onblur={() => (nameEditing = false)} />
+    {:else if pu}
+      <div class="name-view field" role="button" tabindex="0" aria-label="Edit display name" onclick={editName} onfocus={editName}
+        onkeydown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void editName() } }}>
+        <Name userId={pu.id} serverId={null} text={baseName(pu)} interactive={false} size="card" bg={nameBg} user={pu} play />
+      </div>
+    {/if}
+  </div>
   {#if nameError}<p class="err" role="alert">{nameError}</p>{/if}
 {/snippet}
 
@@ -114,16 +150,19 @@
   .field:hover, .field:focus-visible { outline-color: var(--card-text-2); }
   .field:focus { outline: 2px solid var(--accent); outline-offset: 2px; }
   /* the name as the card sets it (Name's card size: 20px x --k, bold), clipped with an ellipsis when it doesn't fit */
-  .name-in { width: 100%; padding: 2px 0; font-size: calc(20px * var(--k)); font-weight: 700; line-height: 1.3; text-overflow: ellipsis; overflow: hidden; white-space: nowrap; }
+  .name-box { height: calc(20px * var(--k) * 1.3 + 4px); min-width: 0; }
+  .name-view { display: flex; align-items: center; height: 100%; cursor: text; }
+  .name-view :global(.name) { font-weight: 700; }
+  .name-in { height: 100%; width: 100%; padding: 2px 0; font-size: calc(20px * var(--k)); font-weight: 700; line-height: 1.3; text-overflow: ellipsis; overflow: hidden; white-space: nowrap; }
   .pro-in { flex: 1 1 6em; padding: 0; color: var(--card-text-2); text-overflow: ellipsis; overflow: hidden; white-space: nowrap; }
   .err { margin: 2px 0 0; font-size: calc(12px * var(--k)); color: var(--card-danger); overflow-wrap: anywhere; }
   .err.wide { flex: 1 0 100%; }
 
   /* the bio box, raw or formatted: the same box with the same fixed minimum and maximum (3 to 5 lines), scrolling past it */
   .bio-field { position: relative; min-width: 0; }
-  .bio-field :global(.bio-box) { display: block; box-sizing: border-box; width: 100%; min-height: calc(20px * 3 + 18px); max-height: calc(20px * 5 + 18px); overflow-y: auto; padding: 8px 12px; border: 1px solid var(--card-edge); border-radius: var(--radius-md); background: var(--card-field); color: var(--card-text); font-size: calc(13px * var(--k)); line-height: 20px; overflow-wrap: anywhere; outline: 1px dashed transparent; outline-offset: 2px; }
+  .bio-field :global(.bio-box) { display: block; box-sizing: border-box; width: 100%; min-height: calc(20px * 3 + 18px); max-height: calc(20px * 5 + 18px); overflow-y: auto; padding: 8px 40px 8px 12px; border: 1px solid var(--card-edge); border-radius: var(--radius-md); background: var(--card-field); color: var(--card-text); font-size: calc(13px * var(--k)); line-height: 20px; overflow-wrap: anywhere; outline: 1px dashed transparent; outline-offset: 2px; }
   .bio-field :global(.bio-box:hover), .bio-field :global(.bio-box:focus-visible) { outline-color: var(--card-text-2); }
-  .bio-field :global(.bio-edit) { outline: 2px solid var(--accent); padding-right: 40px; }
+  .bio-field :global(.bio-edit) { outline: 2px solid var(--accent); }
   .bio-field :global(.bio-edit.empty::before) { color: var(--card-text-2); }
   .bio-view { cursor: text; }
   .bio-view.empty::before { content: attr(data-placeholder); color: var(--card-text-2); }
