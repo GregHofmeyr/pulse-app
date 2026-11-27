@@ -41,6 +41,7 @@
   let sending = $state(false)
   let sendError = $state('')
   let triedPrepared = false
+  let retryPrepare = false // the sources came back while a preview was preparing: if it fails, try once more
   let destroyed = false
   let frameCb: number | null = null
 
@@ -64,14 +65,19 @@
     percent = 0
     problem = ''
     src = null
+    let failed = false
     try {
       const path = await api.preparePreview(source.id)
       const url = await playable(path)
       if (!destroyed) src = url
     } catch (e) {
+      failed = true
       if (!destroyed) problem = errorText(e) || UNREADABLE
     } finally {
       if (!destroyed) preparing = false
+      const again = failed && retryPrepare && !destroyed
+      retryPrepare = false
+      if (again) void prepare()
     }
   }
 
@@ -89,7 +95,8 @@
     // #545: an update's install failed after Pulse wound down, which cut short a preview or filmstrip in flight
     const back = listen('clip://sources-back', () => {
       if (destroyed) return
-      if (problem && !preparing) void prepare()
+      if (preparing) retryPrepare = true
+      else if (problem) void prepare()
       if (!film) loadFilmstrip()
     })
     return () => {

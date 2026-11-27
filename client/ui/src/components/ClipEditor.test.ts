@@ -139,6 +139,42 @@ describe('ClipEditor', () => {
     expect(text()).not.toContain("couldn't prepare")
   })
 
+  it('sources coming back while a preview is preparing retry it if it then fails', async () => {
+    const runs: Array<{ ok: (p: string) => void; fail: (e: string) => void }> = []
+    invoke.mockImplementation(async (cmd) => {
+      if (cmd === 'prepare_preview') return new Promise((ok, fail) => { runs.push({ ok, fail }) })
+      if (cmd === 'clip_filmstrip') return { path: '/tmp/film.jpg', tiles: 24 }
+      return undefined
+    })
+    await show(source({ video_codec: 'hevc', preview: 'encode' }))
+    expect(runs).toHaveLength(1)
+    listeners['clip://sources-back']?.({ payload: null })
+    await nextTask(); flushSync()
+    expect(runs).toHaveLength(1) // not a second run alongside the first
+    runs[0].fail("Pulse couldn't prepare a preview of that video.")
+    await nextTask(); flushSync()
+    expect(runs).toHaveLength(2)
+    runs[1].ok('/tmp/preview.mp4')
+    await nextTask(); flushSync()
+    expect(video().getAttribute('src')).toBe('asset:///tmp/preview.mp4')
+    expect(text()).not.toContain("couldn't prepare")
+  })
+
+  it('a preview that succeeds after the sources came back is not prepared again', async () => {
+    const runs: Array<(p: string) => void> = []
+    invoke.mockImplementation(async (cmd) => {
+      if (cmd === 'prepare_preview') return new Promise((ok) => { runs.push(ok) })
+      if (cmd === 'clip_filmstrip') return { path: '/tmp/film.jpg', tiles: 24 }
+      return undefined
+    })
+    await show(source({ video_codec: 'hevc', preview: 'encode' }))
+    listeners['clip://sources-back']?.({ payload: null })
+    runs[0]('/tmp/preview.mp4')
+    await nextTask(); flushSync()
+    expect(runs).toHaveLength(1)
+    expect(video().getAttribute('src')).toBe('asset:///tmp/preview.mp4')
+  })
+
   it('a working editor ignores the sources coming back', async () => {
     await show()
     invoke.mockClear()
