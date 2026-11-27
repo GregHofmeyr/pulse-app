@@ -53,3 +53,28 @@ describe('the speaking ring tab never spills (#651)', () => {
     expect(preview).toMatch(/border-radius:\s*var\(--radius-xl\)/)
   })
 })
+
+describe('the profile tabs fit a narrow window (#716)', () => {
+  it('fits a narrow window: five tabs stay on one row and scroll with a fade instead of wrapping or spilling', () => {
+    // the tabs are the app's segmented row in tablist mode, not plain buttons with styles of their own
+    const src = readFileSync(resolve(__dirname, 'ProfileSettings.svelte'), 'utf8')
+    expect(src).toMatch(/<Segmented label="Profile" tabs=\{uid\}/)
+    expect(src).not.toMatch(/class="tabs"/)
+    const seg = compile(readFileSync(resolve(__dirname, 'Segmented.svelte'), 'utf8'), { filename: 'Segmented.svelte', css: 'external', cssHash: () => scope }).css!.code
+    const row = seg.match(new RegExp(`\\.seg\\.${scope}\\s*\\{([^}]*)\\}`))![1]
+    // never wider than its column: it scrolls sideways, and only sideways
+    expect(row).toMatch(/max-width:\s*100%/)
+    expect(row).toMatch(/min-width:\s*0/)
+    expect(row).toMatch(/overflow-x:\s*auto/)
+    expect(row).toMatch(/overflow-y:\s*hidden/)
+    expect(row).not.toMatch(/flex-wrap:\s*wrap/)
+    expect(row).toMatch(/mask-image:\s*linear-gradient/)
+    // a tab is one line at its own width: no wrapping label, no squeezing
+    const tab = seg.match(new RegExp(`\\.seg\\.${scope} button:where\\(\\.${scope}\\)\\s*\\{([^}]*)\\}`))![1]
+    expect(tab).toMatch(/white-space:\s*nowrap/)
+    expect(tab).toMatch(/flex:\s*none/)
+    // tokens only
+    expect(tab).not.toMatch(/#[0-9a-f]{3,8}\b|rgb/i)
+    expect(seg).toMatch(/button\.on:where\(\.svelte-test\)\s*\{[^}]*background:\s*var\(--accent\)/)
+  })
+})

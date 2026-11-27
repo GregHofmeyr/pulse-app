@@ -76,4 +76,23 @@ describe('Segmented', () => {
       for (const s of spies) s.mockRestore()
     }
   })
+
+  it('with tabs: a tablist whose tabs control their panels; arrows, Home and End move and pick (#716)', () => {
+    const onchange = vi.fn()
+    cmp = mount(Segmented, { target: document.body, props: { label: 'Show', options, value: 'threads', onchange, tabs: 'x' } })
+    flushSync()
+    expect(seg().getAttribute('role')).toBe('tablist')
+    const tabs = [...seg().querySelectorAll<HTMLButtonElement>('[role=tab]')]
+    expect(tabs[2].id).toBe('x-tab-threads')
+    expect(tabs[2].getAttribute('aria-controls')).toBe('x-panel-threads')
+    expect(tabs[2].getAttribute('aria-selected')).toBe('true')
+    expect(tabs.map((t) => t.tabIndex)).toEqual([-1, -1, 0, -1, -1, -1])
+    const cases: [string, string, number][] = [['ArrowRight', 'reminders', 3], ['ArrowLeft', 'mentions', 1], ['Home', 'all', 0], ['End', 'saved', 5]]
+    for (const [key, picked, focused] of cases) {
+      tabs[2].focus()
+      tabs[2].dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }))
+      expect(onchange).toHaveBeenLastCalledWith(picked)
+      expect(document.activeElement).toBe(tabs[focused])
+    }
+  })
 })
