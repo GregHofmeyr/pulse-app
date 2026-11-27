@@ -74,7 +74,7 @@ fn delay_ms(input: &[f32], output: &[f32]) -> f32 {
 }
 
 #[test]
-#[ignore]
+#[ignore = "a benchmark: cargo test --release --test denoise_bench -- --ignored --nocapture"]
 fn bench_denoisers() {
     let w = workload();
 
@@ -104,7 +104,7 @@ fn bench_denoisers() {
 /// Strong (low delay, #77): the model the app downloads, from libDF's checkout. Its own test, so its RSS figure is
 /// measured in a process the normal model hasn't grown (`--exact bench_low_delay`).
 #[test]
-#[ignore]
+#[ignore = "a benchmark, needs libDF's cargo checkout: cargo test --release --test denoise_bench -- --ignored --nocapture --exact bench_low_delay"]
 fn bench_low_delay() {
     let w = workload();
     let ll = pulse_client::models::checkout_low_delay_model_path()

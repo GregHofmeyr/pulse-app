@@ -216,3 +216,120 @@ pub async fn next_frame_beating(
         }
     }
 }
+
+/// Connects to the gateway and says Hello; returns the socket and its Ready (frames before it are
+/// skipped).
+pub async fn hello(app: &TestApp, token: &str) -> (Socket, pulse_protocol::gateway::Ready) {
+    use futures::SinkExt;
+    use pulse_protocol::gateway::{ClientFrame, ServerFrame};
+    use tokio_tungstenite::tungstenite::Message as Ws;
+    let mut ws = tokio_tungstenite::connect_async(app.ws_url("/gateway"))
+        .await
+        .unwrap()
+        .0;
+    let f = serde_json::to_string(&ClientFrame::Hello {
+        token: token.into(),
+        client_version: pulse_protocol::PROTOCOL_VERSION,
+    })
+    .unwrap();
+    ws.send(Ws::text(f)).await.unwrap();
+    loop {
+        if let Some(ServerFrame::Ready(r)) = next_frame(&mut ws).await {
+            return (ws, r);
+        }
+    }
+}
+
+/// The next frame, or `None` after 3 s of quiet or once the socket closes.
+pub async fn next_frame(ws: &mut Socket) -> Option<pulse_protocol::gateway::ServerFrame> {
+    use futures::StreamExt;
+    use tokio_tungstenite::tungstenite::Message as Ws;
+    loop {
+        let m = tokio::time::timeout(Duration::from_secs(3), ws.next())
+            .await
+            .ok()??
+            .ok()?;
+        match m {
+            Ws::Text(t) => return Some(serde_json::from_str(&t).unwrap()),
+            Ws::Close(_) => return None,
+            _ => continue,
+        }
+    }
+}
+
+/// Next event matching `pred` (skips others); panics after 3 s.
+pub async fn wait_for(
+    ws: &mut Socket,
+    pred: impl Fn(&pulse_protocol::gateway::Event) -> bool,
+) -> pulse_protocol::gateway::Event {
+    use pulse_protocol::gateway::ServerFrame;
+    loop {
+        match next_frame(ws).await.expect("socket ended") {
+            ServerFrame::Event(e) if pred(&e) => return e,
+            _ => continue,
+        }
+    }
+}
+
+/// How long `eventually` polls before giving up: generous, since a passing check returns at once.
+pub const EVENTUALLY: Duration = Duration::from_secs(5);
+
+/// Polls `f` until it holds, for up to `EVENTUALLY` (work the server does in the background).
+pub async fn eventually(f: impl FnMut() -> bool) -> bool {
+    eventually_within(EVENTUALLY, f).await
+}
+
+/// Polls `f` every 20 ms until it holds, for up to `within`.
+pub async fn eventually_within(within: Duration, mut f: impl FnMut() -> bool) -> bool {
+    let deadline = Instant::now() + within;
+    loop {
+        if f() {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
+/// Polls the async check `f` every 20 ms until it holds, for up to `EVENTUALLY`.
+pub async fn eventually_async<F, Fut>(mut f: F) -> bool
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = bool>,
+{
+    let deadline = Instant::now() + EVENTUALLY;
+    loop {
+        if f().await {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
+/// Says Hello afresh until the Ready satisfies `pred` (something the server settles in the
+/// background), for up to `EVENTUALLY`; panics naming `what` if it never does.
+pub async fn hello_until(
+    app: &TestApp,
+    token: &str,
+    what: &str,
+    pred: impl Fn(&pulse_protocol::gateway::Ready) -> bool,
+) -> (Socket, pulse_protocol::gateway::Ready) {
+    let deadline = Instant::now() + EVENTUALLY;
+    loop {
+        let (ws, r) = hello(app, token).await;
+        if pred(&r) {
+            return (ws, r);
+        }
+        assert!(
+            Instant::now() < deadline,
+            "no Ready with {what} in {EVENTUALLY:?}"
+        );
+        drop(ws);
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}

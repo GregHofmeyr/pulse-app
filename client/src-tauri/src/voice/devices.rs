@@ -2423,7 +2423,7 @@ mod tests {
     /// Real devices: run explicitly (`--ignored`).
     #[cfg(target_os = "linux")]
     #[test]
-    #[ignore]
+    #[ignore = "needs this machine's sound server: run by hand"]
     fn linux_lists_real_devices_from_the_sound_server() {
         let inputs = list_inputs();
         let outputs = list_outputs();
@@ -2715,7 +2715,7 @@ mod tests {
 mod smoke {
     /// `cargo test -p pulse-client -- --ignored print_devices --nocapture` — lists devices, opens nothing.
     #[test]
-    #[ignore]
+    #[ignore = "prints this machine's devices (opens nothing): run by hand with --nocapture"]
     fn print_devices() {
         println!("inputs: {:?}", super::list_inputs());
         println!("outputs: {:?}", super::list_outputs());

@@ -49,7 +49,7 @@ async fn until_listed(
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "needs dev LiveKit: just voice-it"]
 async fn a_video_connection_sharing_nothing_ends_the_stream_and_a_closed_room_lists_nobody() {
     let port = std::env::var("PULSE_DEV_LIVEKIT_PORT").unwrap_or_else(|_| "7880".into());
     let mut cfg = test_config();

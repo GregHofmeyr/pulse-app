@@ -674,14 +674,22 @@ async fn leaving_a_group_deletes_its_files() {
             .unwrap();
         assert!(r.status().is_success(), "leave {}", r.status());
     }
-    // the last one out takes the group, and its files after the commit
+    // the last one out takes the group, and its files after the commit; each object goes before
+    // its row, so wait for both
+    let rows = || async {
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM attachments")
+            .fetch_one(&app.db)
+            .await
+            .unwrap()
+    };
     for _ in 0..50 {
-        if s3(app).keys().is_empty() {
+        if s3(app).keys().is_empty() && rows().await == 0 {
             break;
         }
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
     assert!(s3(app).keys().is_empty(), "{:?}", s3(app).keys());
+    assert_eq!(rows().await, 0);
 }
 
 #[tokio::test]

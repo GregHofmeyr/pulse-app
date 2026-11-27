@@ -640,15 +640,25 @@ async fn an_open_call_with_nobody_left_ends_after_a_restart() {
     let (after, _state) = restart(&app, vec![]).await;
     let (_, ready) = hello(&after, &p.sam.1).await;
     assert_eq!(ready.calls.len(), 1, "still open, for its grace");
-    tokio::time::sleep(Duration::from_millis(900)).await;
-    let (_, later) = hello(&after, &p.sam.1).await;
+    // it ends when the grace runs out: poll for both the Ready and the row
+    let ended = || async {
+        sqlx::query_scalar::<_, Option<String>>("SELECT ended_at FROM calls WHERE id = ?")
+            .bind(call.id.to_string())
+            .fetch_one(&after.db)
+            .await
+            .unwrap()
+    };
+    let deadline = std::time::Instant::now() + EVENTUALLY;
+    let later = loop {
+        let (_, later) = hello(&after, &p.sam.1).await;
+        let done = later.calls.is_empty() && ended().await.is_some();
+        if done || std::time::Instant::now() >= deadline {
+            break later;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    };
     assert!(later.calls.is_empty());
-    let ended: Option<String> = sqlx::query_scalar("SELECT ended_at FROM calls WHERE id = ?")
-        .bind(call.id.to_string())
-        .fetch_one(&after.db)
-        .await
-        .unwrap();
-    assert!(ended.is_some());
+    assert!(ended().await.is_some());
 }
 
 #[tokio::test]

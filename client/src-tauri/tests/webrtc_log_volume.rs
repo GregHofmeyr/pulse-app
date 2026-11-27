@@ -32,7 +32,7 @@ impl log::Log for CountLibwebrtc {
 static LOGGER: CountLibwebrtc = CountLibwebrtc;
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore]
+#[ignore = "needs dev LiveKit: just webrtc-log-volume"]
 async fn libwebrtc_log_lines_per_second_in_a_call() {
     log::set_logger(&LOGGER).expect("logger");
     log::set_max_level(log::LevelFilter::Trace);

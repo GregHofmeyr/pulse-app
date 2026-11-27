@@ -57,7 +57,7 @@ impl Drop for PausedLiveKit {
 /// and never report a disconnect. Voice gives up on it (after a minute; 5 s here) and rejoins by
 /// itself.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore]
+#[ignore = "needs dev LiveKit: just voice-it"]
 async fn a_livekit_that_stops_answering_is_rejoined() {
     let mut cfg = testing::test_config();
     cfg.livekit_url = dev_livekit("ws");

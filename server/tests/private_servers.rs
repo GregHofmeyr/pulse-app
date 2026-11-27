@@ -12,9 +12,6 @@ use pulse_server::gateway::audience::{Audience, audience_for};
 use serde_json::json;
 use tokio_tungstenite::tungstenite::Message as Ws;
 
-type Socket =
-    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
-
 async fn hello(app: &TestApp, token: &str) -> (Socket, Ready) {
     hello_as(app, token, pulse_protocol::PROTOCOL_VERSION).await
 }

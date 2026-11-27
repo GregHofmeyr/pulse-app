@@ -16,9 +16,6 @@ use pulse_server::media;
 use sqlx::sqlite::SqliteConnectOptions;
 use tokio_tungstenite::tungstenite::Message as Ws;
 
-type Socket =
-    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
-
 /// A gateway connection that has said hello, and the `Ready` it got.
 async fn hello(app: &TestApp, token: &str) -> (Socket, Ready) {
     let (mut ws, _) = tokio_tungstenite::connect_async(app.ws_url("/gateway"))

@@ -171,9 +171,6 @@ impl Fx {
     }
 }
 
-type Socket =
-    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
-
 /// A connection past its Ready (inbox events reach it from then on), and the Ready's inbox count.
 async fn connect(app: &TestApp, token: &str) -> (Socket, u64) {
     use futures::{SinkExt, StreamExt};

@@ -152,7 +152,7 @@ fn config_check_catches_each_violation() {
 }
 
 #[tokio::test]
-#[ignore]
+#[ignore = "needs dev LiveKit: just voice-it"]
 async fn join_response_lists_only_our_own_ice_servers() {
     let env = |k: &str, dev: &str| std::env::var(k).unwrap_or_else(|_| dev.to_string());
     let port = env("PULSE_DEV_LIVEKIT_PORT", "7880"); // docker-compose.yml; `just voice-it-alt` moves it

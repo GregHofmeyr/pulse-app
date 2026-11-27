@@ -6,48 +6,11 @@ use std::io::Cursor;
 use std::time::Duration;
 
 use common::*;
-use futures::{SinkExt, StreamExt};
 use image::{ImageFormat, Rgba, RgbaImage};
-use pulse_protocol::gateway::{ClientFrame, Event, Ready, ServerFrame};
+use pulse_protocol::gateway::{Event, Ready, ServerFrame};
 use pulse_protocol::ids::{ServerId, UserId};
 use pulse_protocol::rest::{CustomEmoji, CustomStatus, MediaInfo, MyCustomStatus};
 use serde_json::json;
-use tokio_tungstenite::tungstenite::Message as Ws;
-
-type Socket =
-    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
-
-async fn hello(app: &TestApp, token: &str) -> (Socket, Ready) {
-    let mut ws = tokio_tungstenite::connect_async(app.ws_url("/gateway"))
-        .await
-        .unwrap()
-        .0;
-    let f = serde_json::to_string(&ClientFrame::Hello {
-        token: token.into(),
-        client_version: pulse_protocol::PROTOCOL_VERSION,
-    })
-    .unwrap();
-    ws.send(Ws::text(f)).await.unwrap();
-    loop {
-        if let Some(ServerFrame::Ready(r)) = next_frame(&mut ws).await {
-            return (ws, r);
-        }
-    }
-}
-
-async fn next_frame(ws: &mut Socket) -> Option<ServerFrame> {
-    loop {
-        let m = tokio::time::timeout(Duration::from_secs(3), ws.next())
-            .await
-            .ok()??
-            .ok()?;
-        match m {
-            Ws::Text(t) => return Some(serde_json::from_str(&t).unwrap()),
-            Ws::Close(_) => return None,
-            _ => continue,
-        }
-    }
-}
 
 /// Every event that arrives within `ms` of quiet.
 async fn drain(ws: &mut Socket, ms: u64) -> Vec<Event> {
@@ -227,8 +190,7 @@ async fn custom_status_reaches_only_those_who_see_you_online() {
 
     // offline: none
     drop((alex_ws, _a2, _a3));
-    tokio::time::sleep(Duration::from_millis(300)).await;
-    let (_s4, r) = hello(&app, &s).await;
+    let (_s4, r) = hello_until(&app, &s, "alex offline", |r| seen_in(r, a_id).is_none()).await;
     assert_eq!(seen_in(&r, a_id), None);
 
     // cleared: alex's recent ones stay

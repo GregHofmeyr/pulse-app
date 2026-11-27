@@ -12,9 +12,6 @@ use serde_json::json;
 use tokio_tungstenite::tungstenite::Message as Ws;
 use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
 
-type Socket =
-    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
-
 async fn connect(app: &TestApp) -> Socket {
     tokio_tungstenite::connect_async(app.ws_url("/gateway"))
         .await

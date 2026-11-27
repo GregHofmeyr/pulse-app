@@ -291,17 +291,6 @@ async fn spawn_lk() -> (TestApp, Lk) {
     )
 }
 
-/// Polls `f` for up to a second (background LiveKit calls).
-async fn eventually(mut f: impl FnMut() -> bool) -> bool {
-    for _ in 0..50 {
-        if f() {
-            return true;
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-    false
-}
-
 #[tokio::test]
 async fn mute_revokes_publish_at_livekit() {
     let (app, lk) = spawn_lk().await;
