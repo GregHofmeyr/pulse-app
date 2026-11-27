@@ -69,13 +69,6 @@ export function blockedReplyText(s: WithBlocks, repliedToAuthor: string | null |
   return null
 }
 
-/** Someone's name as a reaction tooltip or a voice row shows it when they're blocked (null: shown as usual; '' : left
- *  out entirely). */
-export function blockedLabel(s: WithBlocks, userId: string): string | null {
-  const mode = blockOf(s, userId)
-  return mode === 'line' ? 'Blocked person' : mode === 'hide' ? '' : null
-}
-
 /** A reaction's count as you see it (#508): Hide completely leaves out the people you hide. 0: its chip doesn't show.
  *  An older server doesn't say who reacted: its count as it is. */
 export function shownCount(s: WithBlocks, r: ReactionSummary): number {

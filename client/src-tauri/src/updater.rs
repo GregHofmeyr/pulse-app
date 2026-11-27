@@ -47,8 +47,8 @@ pub const UPDATE_EVENT: &str = "pulse://update";
 /// Download progress: [`Progress`].
 pub const PROGRESS_EVENT: &str = "pulse://update-progress";
 
-/// This build's platform, sent beside the version (`X-Pulse-Platform`): the server never asks a platform without an
-/// updater to update.
+/// This build's platform, sent beside the version (`X-Pulse-Platform`); the server doesn't use it today, but it lets
+/// a future server tell platforms apart.
 pub const PLATFORM: &str = if cfg!(windows) {
     "windows"
 } else if cfg!(target_os = "macos") {

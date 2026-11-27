@@ -405,13 +405,12 @@ pub fn limits_ts() -> String {
 /// Gateway protocol version this build speaks. Bump when an old client would misbehave
 /// against a new server; the server tells clients older than its minimum to update (close 4005).
 ///
-/// 4: private servers (#80). A server you join arrives whole in `ServerJoined`; a version-3 client, which skips that
-/// event, is reconnected instead so its next Ready brings the server.
+/// 4: private servers (#80). A server you join arrives whole in `ServerJoined`.
 ///
-/// 5: builds channels (#616); a version-4 client can't parse `ChannelKind::Builds`, so the server never sends it one,
-/// nor anything that happens in one.
+/// 5: builds channels (#616); a version-4 client can't parse `ChannelKind::Builds`. The server's minimum since 0.2.20
+/// (#634).
 pub const PROTOCOL_VERSION: u32 = 5;
 
-/// The REST header a client sends with its [`PROTOCOL_VERSION`] (5 on). A request without it is from an older client,
-/// and is answered as one would be (no builds channels in its channel lists).
+/// The REST header a client sends with its [`PROTOCOL_VERSION`] (5 on). The server answers every request the same
+/// way, with it or without it.
 pub const PROTOCOL_HEADER: &str = "x-pulse-protocol";

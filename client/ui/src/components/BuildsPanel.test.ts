@@ -25,6 +25,7 @@ import { app, handleReady, startListening, ui } from '../lib/store.svelte'
 import { applyEvent, applyReady, emptyState } from '../lib/state'
 import { testMe, testReady } from '../lib/testReady'
 import { chooseOption, selectLabels, selectTrigger, selectValue } from './selectHarness'
+import { nextTask } from '../lib/testSettle'
 
 const DAY = 86_400_000
 const ready = () =>
@@ -58,7 +59,6 @@ let facetsFail: (archived: boolean) => boolean = () => false
 let bulk: (body: { game_id: string | null; before: string; dry_run: boolean }) => unknown = () => ({ builds: [], archived: 0 })
 
 let cmp: ReturnType<typeof mount> | undefined
-const settle = () => new Promise((r) => setTimeout(r, 0))
 const calls = (cmd: string) => invoke.mock.calls.filter((c) => c[0] === cmd)
 const order = () => [...document.querySelectorAll<HTMLElement>('[data-build-id]')].map((e) => e.dataset.buildId)
 const panel = () => document.querySelector<HTMLElement>('.builds-panel')
@@ -110,7 +110,7 @@ afterEach(() => {
 async function show() {
   cmp = mount(BuildsChannel, { target: document.body, props: { channelId: 'B1', serverId: 'S1' } })
   flushSync()
-  await settle()
+  await nextTask()
   flushSync()
 }
 
@@ -122,14 +122,14 @@ describe('BuildsPanel', () => {
     expect(rows).toEqual([['All games', '3'], ['The First Descendant', '2'], ['Warframe', '1']])
     expect(gameRow('All games').getAttribute('aria-pressed')).toBe('true')
     gameRow('Warframe').click()
-    await settle()
+    await nextTask()
     flushSync()
     expect(calls('list_builds').at(-1)![1]).toMatchObject({ game: 'G2' })
     expect(order()).toEqual(['M002'])
     expect(document.querySelector('.builds-head h2')?.textContent).toBe('Warframe')
     expect(document.querySelector('.builds-head .count')?.textContent).toBe('1 build')
     gameRow('All games').click()
-    await settle()
+    await nextTask()
     flushSync()
     expect(order()).toEqual(['M003', 'M002', 'M001'])
   })
@@ -184,7 +184,7 @@ describe('BuildsPanel', () => {
   it('counts follow Show archived', async () => {
     await show()
     showArchived().click()
-    await settle()
+    await nextTask()
     flushSync()
     expect(calls('build_facets').at(-1)![1]).toEqual({ channelId: 'B1', archived: true })
     expect(gameRow('All games').querySelector('.n')?.textContent).toBe('4')
@@ -203,7 +203,7 @@ describe('BuildsPanel', () => {
     expect(selectLabels(game)).toEqual(['All games', 'The First Descendant', 'Warframe'])
     expect(selectValue(game)).toBe('')
     button('Archive matching builds…')!.click()
-    await settle()
+    await nextTask()
     flushSync()
     const body = (calls('bulk_archive_builds')[0][1] as { body: { game_id: string | null; before: string; dry_run: boolean } }).body
     expect(body.dry_run).toBe(true)
@@ -220,17 +220,17 @@ describe('BuildsPanel', () => {
     bulk = (b) => ({ builds: [{ message_id: 'M001', title: 'Build M001', game_id: 'G1', created_at: '2026-08-01T00:00:00Z' }], archived: b.dry_run ? 0 : 1 })
     await show()
     gameRow('The First Descendant').click()
-    await settle()
+    await nextTask()
     flushSync()
     // the dropdown follows the selected game; 90 days ago
     expect(selectValue(selectTrigger('Game to archive')!)).toBe('G1')
     button('90 days ago')!.click()
     flushSync()
     button('Archive matching builds…')!.click()
-    await settle()
+    await nextTask()
     flushSync()
     button('Archive 1 build')!.click()
-    await settle()
+    await nextTask()
     flushSync()
     const [dry, real] = calls('bulk_archive_builds').map((c) => (c[1] as { body: { game_id: string | null; before: string; dry_run: boolean } }).body)
     expect(dry).toMatchObject({ game_id: 'G1', dry_run: true })
@@ -246,7 +246,7 @@ describe('BuildsPanel', () => {
     chooseOption(selectTrigger('Game to archive')!, 'G2')
     pickDay(prevMonthDay(1))
     button('Archive matching builds…')!.click()
-    await settle()
+    await nextTask()
     flushSync()
     const body = (calls('bulk_archive_builds')[0][1] as { body: { game_id: string | null; before: string } }).body
     expect(body.game_id).toBe('G2')
@@ -258,7 +258,7 @@ describe('BuildsPanel', () => {
     bulk = () => ({ builds: [], archived: 0 })
     await show()
     button('Archive matching builds…')!.click()
-    await settle()
+    await nextTask()
     flushSync()
     expect(document.querySelector('[role=dialog]')).toBeNull()
     const none = button('No builds match')!
@@ -295,7 +295,7 @@ describe('BuildsPanel', () => {
     expect(cal.getAttribute('aria-pressed')).toBe('false')
     expect(cal.getAttribute('aria-label')).toBe('Pick a day')
     button('Archive matching builds…')!.click()
-    await settle()
+    await nextTask()
     flushSync()
     const body = (calls('bulk_archive_builds')[0][1] as { body: { before: string } }).body
     expect(Math.abs(Date.parse(body.before) - (Date.now() - 90 * DAY))).toBeLessThan(60_000)
@@ -323,7 +323,7 @@ describe('BuildsPanel', () => {
     await show()
     expect(document.querySelector('.bulk [role=status]')?.textContent?.trim() ?? '').toBe('')
     button('Archive matching builds…')!.click()
-    await settle()
+    await nextTask()
     flushSync()
     expect(document.querySelector('.bulk [role=status]')?.textContent?.trim()).toBe('No builds match. Try another game or an earlier day.')
   })
@@ -356,7 +356,7 @@ describe('BuildsChannel counts', () => {
   const added = (id: string) => ({ t: 'MessageCreated' as const, d: { message: build(id), nonce: null } })
   const toggleArchived = async () => {
     showArchived().click()
-    await settle()
+    await nextTask()
     flushSync()
   }
 
@@ -473,7 +473,7 @@ describe('BuildsChannel counts', () => {
     const asked = calls('build_facets').length
     facetsFail = () => false
     handleReady(ready())
-    await settle()
+    await nextTask()
     flushSync()
     expect(calls('build_facets').length).toBeGreaterThan(asked)
     expect(total()).toBe('3')

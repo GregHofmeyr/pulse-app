@@ -31,6 +31,7 @@ vi.mock('../lib/stream/stream.svelte', () => ({
 import GoLiveDialog from './GoLiveDialog.svelte'
 import { app, resetState } from '../lib/store.svelte'
 import { chooseOption, openSelect, selectLabels, selectTrigger, selectValue } from './selectHarness'
+import { flushMicrotasks } from '../lib/testSettle'
 
 const LOUNGE = { id: 'c1', server_id: 'S1', kind: 'voice' as const, name: 'Lounge', position: 0 }
 const DM = { id: 'DM1', server_id: null, kind: 'dm' as const, name: null, position: 0 }
@@ -156,10 +157,6 @@ describe('GoLiveDialog capture ownership', () => {
   })
 
   describe('sound choice (#458: the Pulse dropdown)', () => {
-    const settle = async () => {
-      for (let i = 0; i < 5; i++) await Promise.resolve()
-      flushSync()
-    }
     const trigger = () => selectTrigger('Sound')!
     const labels = () => selectLabels(trigger())
     const current = () => selectValue(trigger())
@@ -177,7 +174,7 @@ describe('GoLiveDialog capture ownership', () => {
     it('a_window_share_offers_the_app_by_name_everything_and_no_sound_defaulting_to_the_app', async () => {
       live.probe = { identified: true, app: 'Space Game', playing: false, level: 0, icon: ICON }
       const c = open({ ...picked(), hwnd: 1312 })
-      await settle()
+      await flushMicrotasks()
       expect(document.querySelector('input[name="sound"]')).toBeNull() // no native radios
       expect(document.querySelector('.sound-row .legend')!.textContent).toBe('Sound')
       expect(labels()).toEqual(['Space Game', 'Everything except Pulse and Discord', 'No sound'])
@@ -189,7 +186,7 @@ describe('GoLiveDialog capture ownership', () => {
     it('the_app_row_shows_its_icon_and_the_others_theirs', async () => {
       live.probe = { identified: true, app: 'Space Game', playing: false, level: 0, icon: ICON }
       const c = open()
-      await settle()
+      await flushMicrotasks()
       expect(trigger().querySelector<HTMLImageElement>('img.app-icon')!.getAttribute('src')).toBe(ICON)
       expect(option('everything').querySelector('svg')).not.toBeNull()
       expect(option('off').querySelector('svg')).not.toBeNull()
@@ -199,7 +196,7 @@ describe('GoLiveDialog capture ownership', () => {
     it('without an icon the app row falls back to a window icon, and without a name to This app', async () => {
       live.probe = { identified: true, app: null, playing: false, level: 0, icon: null }
       const c = open()
-      await settle()
+      await flushMicrotasks()
       expect(trigger().querySelector('img')).toBeNull()
       expect(trigger().querySelector('svg')).not.toBeNull()
       expect(labels()[0]).toBe('This app')
@@ -209,7 +206,7 @@ describe('GoLiveDialog capture ownership', () => {
     it('the_selected_app_row_has_a_live_level_meter', async () => {
       live.probe = { identified: true, app: 'Space Game', playing: true, level: 40 }
       const c = open()
-      await settle()
+      await flushMicrotasks()
       const meter = trigger().querySelector<HTMLElement>('[data-sound-level]')!
       expect(meter.getAttribute('aria-label')).toBe('Playing sound')
       expect(meter.querySelector<HTMLElement>('.fill')!.style.transform).toBe('scaleX(0.4)')
@@ -219,7 +216,7 @@ describe('GoLiveDialog capture ownership', () => {
       unmount(c)
       live.probe = { identified: true, app: 'Space Game', playing: false, level: 0 }
       const c2 = open()
-      await settle()
+      await flushMicrotasks()
       expect(trigger().querySelector('[data-sound-level]')!.getAttribute('aria-label')).toBe('Not playing sound right now')
       expect(trigger().querySelector<HTMLElement>('[data-sound-level] .fill')!.style.transform).toBe('scaleX(0)')
       unmount(c2)
@@ -228,7 +225,7 @@ describe('GoLiveDialog capture ownership', () => {
     it('no meter once another row is picked', async () => {
       live.probe = { identified: true, app: 'Space Game', playing: true, level: 40 }
       const c = open()
-      await settle()
+      await flushMicrotasks()
       chooseOption(trigger(), 'everything')
       expect(current()).toBe('everything')
       expect(trigger().querySelector('[data-sound-level]')).toBeNull()
@@ -238,7 +235,7 @@ describe('GoLiveDialog capture ownership', () => {
     it('the_app_row_is_disabled_with_the_reason_when_its_app_cannot_be_identified', async () => {
       live.probe = { identified: false, app: null, playing: false, level: 0 }
       const c = open()
-      await settle()
+      await flushMicrotasks()
       const row = option('app')
       expect(row.getAttribute('aria-disabled')).toBe('true')
       expect(row.getAttribute('data-tip')).toBe("Can't tell which app owns this window")
@@ -248,7 +245,7 @@ describe('GoLiveDialog capture ownership', () => {
 
     it('a_screen_share_offers_everything_and_no_sound', async () => {
       const c = open({ ...picked(), surface: 'monitor' })
-      await settle()
+      await flushMicrotasks()
       expect(labels()).toEqual(['Everything except Pulse and Discord', 'No sound'])
       expect(current()).toBe('everything')
       expect(live.probed).toEqual([]) // nothing to identify
@@ -258,18 +255,18 @@ describe('GoLiveDialog capture ownership', () => {
     it('the_choice_goes_with_go_live', async () => {
       live.probe = { identified: true, app: 'Game', playing: false, level: 0 }
       const c = open()
-      await settle()
+      await flushMicrotasks()
       chooseOption(trigger(), 'off')
       ;[...document.querySelectorAll('button')].find((b) => b.textContent === 'Go Live')!.click()
-      await settle()
+      await flushMicrotasks()
       expect(live.settings).toEqual([expect.objectContaining({ audio: false, sound: 'app' })])
       unmount(c)
       const c2 = open()
-      await settle()
+      await flushMicrotasks()
       expect(current()).toBe('off') // remembered
       chooseOption(trigger(), 'everything')
       ;[...document.querySelectorAll('button')].find((b) => b.textContent === 'Go Live')!.click()
-      await settle()
+      await flushMicrotasks()
       expect(live.settings[1]).toEqual(expect.objectContaining({ audio: true, sound: 'everything' }))
       unmount(c2)
     })

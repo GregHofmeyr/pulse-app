@@ -18,7 +18,7 @@
   import { isMember } from '../lib/selectors'
   import { SERVER_STATUS_CHOICES } from '../lib/serverStatus'
   import { orderOf, sidebarLayout } from '../lib/layout'
-  import { resetPersonalOrder, savePersonalOrder } from '../lib/channelOrder.svelte'
+  import { hasPersonalOrder, resetPersonalOrder, savePersonalOrder } from '../lib/channelOrder.svelte'
 
   let { serverId, name, x, y, opener, onClose, onSettings, onRename, onCreateCategory, onMoveLeft, onMoveRight, onError }: {
     serverId: string
@@ -49,7 +49,7 @@
   const canCreateCategory = $derived(!!onCreateCategory && isMember(app.state, serverId) && !!app.state.layouts[serverId])
   // your own channel order (#304): members of a server with categories; started from the list as it is now
   const canArrange = $derived(isMember(app.state, serverId) && !!app.state.layouts[serverId])
-  const ownOrder = $derived(!!app.state.channelOrders[serverId])
+  const ownOrder = $derived(hasPersonalOrder(serverId))
   const startOwnOrder = () => savePersonalOrder(serverId, orderOf(sidebarLayout(app.state, serverId)))
 
   let el = $state<HTMLElement>()

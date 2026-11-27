@@ -8,6 +8,7 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: (cmd: string, args?: never) => 
 import ServerSettings from './ServerSettings.svelte'
 import { app } from '../lib/store.svelte'
 import { emptyState } from '../lib/state'
+import { nextTask } from '../lib/testSettle'
 
 let cmp: ReturnType<typeof mount> | undefined
 afterEach(() => {
@@ -36,7 +37,6 @@ describe('ServerSettings dialog', () => {
 
   // Svelte delegates onkeydown to the mount root, so these run the real inner handlers first.
   const esc = (el: Element) => el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
-  const settle = () => new Promise((r) => setTimeout(r, 0))
   const emoji = { id: 'X1', server_id: 'S1', name: 'pog', hash: 'h1', still_hash: null, animated: false, added_by: null, created_at: '2026-10-01T00:00:00.000Z' }
 
   // Overview is the first page (#55): the emoji tests go to Emoji first
@@ -72,7 +72,7 @@ describe('ServerSettings dialog', () => {
     const file = document.querySelector<HTMLInputElement>('input[type=file]')!
     Object.defineProperty(file, 'files', { value: [new File([new Uint8Array([1])], 'a.png')], configurable: true })
     file.dispatchEvent(new Event('change', { bubbles: true }))
-    await settle()
+    await nextTask()
     flushSync()
     esc(document.querySelector('input[aria-label="Emoji name"]')!)
     flushSync()
@@ -140,11 +140,11 @@ describe('ServerSettings dialog', () => {
     find.dispatchEvent(new Event('input', { bubbles: true }))
     flushSync()
     ;[...document.querySelectorAll<HTMLButtonElement>('.link button')].find((b) => b.textContent === 'kim')!.click()
-    await settle()
+    await nextTask()
     expect(invoke).toHaveBeenCalledWith('link_speaker', { serverId: 'S1', body: { name: 'a friend', user_id: 'U3' } })
 
     ;[...document.querySelectorAll<HTMLButtonElement>('.link button')].find((b) => b.textContent === 'Undo')!.click()
-    await settle()
+    await nextTask()
     expect(invoke).toHaveBeenCalledWith('unlink_speaker', { serverId: 'S1', nameKey: 'a friend' })
   })
 
@@ -212,7 +212,6 @@ describe('ServerSettings sections', () => {
 // #203: the server's notification level, as the server tab's right-click menu offers it (#195).
 describe('ServerSettings: Notifications', () => {
   type Level = { target_kind: 'server' | 'channel'; target_id: string; level: 'all' | 'mentions' | 'nothing' }
-  const settle = () => new Promise((r) => setTimeout(r, 0))
   const open = (levels: Level[] = []) => {
     invoke.mockReset()
     invoke.mockResolvedValue(undefined)
@@ -240,13 +239,13 @@ describe('ServerSettings: Notifications', () => {
   it('picking one sets it; All messages puts the default back; the tick follows the change', async () => {
     open()
     radios()[2].click()
-    await settle()
+    await nextTask()
     expect(invoke).toHaveBeenCalledWith('set_notify_level', { targetKind: 'server', targetId: 'S1', level: 'nothing' })
     app.state = { ...app.state, notifyLevels: [{ target_kind: 'server', target_id: 'S1', level: 'nothing' }] }
     flushSync()
     expect(ticked()).toEqual(['Nothing'])
     radios()[0].click()
-    await settle()
+    await nextTask()
     expect(invoke).toHaveBeenLastCalledWith('set_notify_level', { targetKind: 'server', targetId: 'S1', level: null })
   })
 
@@ -254,7 +253,7 @@ describe('ServerSettings: Notifications', () => {
     open()
     radios()[0].focus()
     radios()[0].dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }))
-    await settle()
+    await nextTask()
     expect(invoke).toHaveBeenCalledWith('set_notify_level', { targetKind: 'server', targetId: 'S1', level: 'mentions' })
     expect(document.activeElement).toBe(radios()[1])
   })
@@ -263,7 +262,7 @@ describe('ServerSettings: Notifications', () => {
     open()
     invoke.mockRejectedValue('rate limited')
     radios()[1].click()
-    await settle()
+    await nextTask()
     flushSync()
     expect(document.querySelector('.content [role=alert]')?.textContent).toContain('rate limited')
   })

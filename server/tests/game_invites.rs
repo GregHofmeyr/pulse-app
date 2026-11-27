@@ -16,30 +16,13 @@ use pulse_server::testing::fake_steam::FakeSteam;
 use serde_json::json;
 use tokio_tungstenite::tungstenite::Message as Ws;
 
-type Socket =
-    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
-
 const ALEX_STEAM: &str = "76500000000000001";
 const SPACE: u32 = 4_000_001;
 /// An obviously fake lobby (account 1).
 const LOBBY: &str = "109775240917155841";
 
 async fn hello(app: &TestApp, token: &str) -> Socket {
-    let mut ws = tokio_tungstenite::connect_async(app.ws_url("/gateway"))
-        .await
-        .unwrap()
-        .0;
-    let f = serde_json::to_string(&ClientFrame::Hello {
-        token: token.into(),
-        client_version: pulse_protocol::PROTOCOL_VERSION,
-    })
-    .unwrap();
-    ws.send(Ws::text(f)).await.unwrap();
-    loop {
-        if let Some(ServerFrame::Ready(_)) = next_frame(&mut ws).await {
-            return ws;
-        }
-    }
+    common::hello(app, token).await.0
 }
 
 /// The next frame, as parsed, with its raw text.
@@ -55,10 +38,6 @@ async fn next_raw(ws: &mut Socket) -> Option<(ServerFrame, String)> {
             _ => continue,
         }
     }
-}
-
-async fn next_frame(ws: &mut Socket) -> Option<ServerFrame> {
-    next_raw(ws).await.map(|(f, _)| f)
 }
 
 /// Every event for `ms`, with the raw text of everything received.
@@ -593,14 +572,16 @@ async fn an_invite_whose_sender_is_no_longer_a_member_hands_out_nothing() {
     gone().await;
     play(&app, &mut alex_ws, alex, false).await;
     play(&app, &mut alex_ws, alex, true).await;
-    tokio::time::sleep(Duration::from_millis(200)).await;
-    let ended: Option<String> =
-        sqlx::query_scalar("SELECT ended_at FROM game_invites WHERE message_id = ?")
-            .bind(msg.id.to_string())
-            .fetch_one(&app.db)
-            .await
-            .unwrap();
-    assert!(ended.is_some());
+    let ended = || async {
+        sqlx::query_scalar::<_, Option<String>>(
+            "SELECT ended_at FROM game_invites WHERE message_id = ?",
+        )
+        .bind(msg.id.to_string())
+        .fetch_one(&app.db)
+        .await
+        .unwrap()
+    };
+    assert!(eventually_async(|| async { ended().await.is_some() }).await);
 }
 
 #[tokio::test]

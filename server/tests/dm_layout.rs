@@ -2,17 +2,12 @@
 //! never anyone else's; only your own conversations; deleting a category puts its conversations back.
 mod common;
 
-use std::time::Duration;
-
 use common::*;
-use futures::{SinkExt, StreamExt};
+use futures::SinkExt;
 use pulse_protocol::gateway::{ClientFrame, Event, ServerFrame};
 use pulse_protocol::rest::DmLayout;
 use serde_json::{Value, json};
 use tokio_tungstenite::tungstenite::Message as Ws;
-
-type Socket =
-    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
 async fn hello(app: &TestApp, token: &str) -> (Socket, DmLayout) {
     let mut ws = tokio_tungstenite::connect_async(app.ws_url("/gateway"))
@@ -28,20 +23,6 @@ async fn hello(app: &TestApp, token: &str) -> (Socket, DmLayout) {
     loop {
         if let Some(ServerFrame::Ready(r)) = next_frame(&mut ws).await {
             return (ws, r.dm_layout);
-        }
-    }
-}
-
-async fn next_frame(ws: &mut Socket) -> Option<ServerFrame> {
-    loop {
-        let m = tokio::time::timeout(Duration::from_secs(3), ws.next())
-            .await
-            .ok()??
-            .ok()?;
-        match m {
-            Ws::Text(t) => return Some(serde_json::from_str(&t).unwrap()),
-            Ws::Close(_) => return None,
-            _ => continue,
         }
     }
 }

@@ -12,9 +12,6 @@ use pulse_server::gateway::audience::{Audience, audience_for};
 use serde_json::json;
 use tokio_tungstenite::tungstenite::Message as Ws;
 
-type Socket =
-    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
-
 async fn hello(app: &TestApp, token: &str) -> (Socket, Ready) {
     hello_as(app, token, pulse_protocol::PROTOCOL_VERSION).await
 }
@@ -411,6 +408,8 @@ async fn people_and_their_profiles_reach_only_who_shares_something() {
             avatar_still: None,
             style: Default::default(),
             typing_text: None,
+            ring_style: None,
+            ring_color: None,
         },
     };
     assert_eq!(
@@ -477,41 +476,4 @@ async fn people_and_their_profiles_reach_only_who_shares_something() {
     // and a fresh Ready leaves kim out
     let (_, ready) = hello(&w.app, &w.sam.1).await;
     assert!(ready.people.iter().all(|p| p.user.id != kim.0));
-}
-
-/// A 0.2.15 client (protocol 3) skips `ServerJoined`, so the server it joins would stay empty until it reconnected
-/// (#80): instead it's closed with 4007 as it joins, and the Ready it reconnects to has the server whole.
-#[tokio::test]
-#[ignore = "protocol 3 is refused at the gateway since #634; goes with SERVER_JOINED_SINCE in a later PR"]
-async fn an_older_client_that_joins_is_reconnected_into_a_ready_with_the_server() {
-    let w = world().await;
-    let (mut old, ready) = hello_as(&w.app, &w.jo.1, 3).await;
-    assert!(ready.servers.is_empty());
-    // a current client of jo's is sent the event, not closed
-    let (mut new, _) = hello(&w.app, &w.jo.1).await;
-
-    assert_eq!(join_server(&w.app, &w.jo.1, w.server).await.status(), 200);
-    let code = loop {
-        match tokio::time::timeout(Duration::from_secs(3), old.next())
-            .await
-            .expect("the old client was never closed")
-        {
-            Some(Ok(Ws::Close(f))) => break f.map(|f| u16::from(f.code)),
-            Some(Ok(Ws::Text(t))) => {
-                assert!(
-                    !t.contains("\"ServerJoined\""),
-                    "sent to an old client: {t}"
-                );
-            }
-            Some(Ok(_)) => continue,
-            other => panic!("closed without a frame: {other:?}"),
-        }
-    };
-    assert_eq!(code, Some(pulse_server::gateway::hub::CLOSE_RESYNC));
-    let got = until(&mut new, |e| matches!(e, Event::ServerJoined { .. })).await;
-    assert!(!got.is_empty());
-
-    let (_old, ready) = hello_as(&w.app, &w.jo.1, 3).await;
-    assert!(ready.servers.iter().any(|s| s.id == w.server));
-    assert!(ready.channels.iter().any(|c| c.id == w.general.id));
 }

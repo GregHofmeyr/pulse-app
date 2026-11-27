@@ -16,14 +16,11 @@ import BlockDialog from './BlockDialog.svelte'
 import BlockedPeople from './BlockedPeople.svelte'
 import { app, resetState, ui } from '../lib/store.svelte'
 import { applyEvent, emptyState } from '../lib/state'
+import { flushMicrotasks } from '../lib/testSettle'
 
 const user = (id: string, name: string) => ({ id, username: name, display_name: name, avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } })
 const alex = user('U1', 'alex')
 let cmp: ReturnType<typeof mount> | undefined
-const settle = async () => {
-  for (let i = 0; i < 6; i++) await Promise.resolve()
-  flushSync()
-}
 const calls = () => invoke.mock.calls.filter(([c]) => c === 'set_block').map(([, a]) => a)
 
 beforeEach(() => {
@@ -66,7 +63,7 @@ describe('Block… in a person menu', () => {
     const { button } = item('U2')
     expect(button!.textContent?.trim()).toBe('Unblock')
     button!.click()
-    await settle()
+    await flushMicrotasks(6)
     expect(calls()).toEqual([{ userId: 'U2', mode: null }])
   })
 
@@ -88,7 +85,7 @@ describe('the block dialog', () => {
     radios[1].click()
     flushSync()
     ;[...d.querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent === 'Block')!.click()
-    await settle()
+    await flushMicrotasks(6)
     expect(calls()).toEqual([{ userId: 'U2', mode: 'hide' }])
     expect(onClose).toHaveBeenCalled()
   })
@@ -115,20 +112,20 @@ describe('Settings › Privacy › Blocked people', () => {
     app.state = { ...app.state, blocks: [{ user_id: 'U2', mode: 'line' }] }
     open()
     rowOf('U2').dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 10, clientY: 10 }))
-    await settle()
+    await flushMicrotasks(6)
     const menu = document.querySelector<HTMLElement>('[role=menu][aria-label="Actions for sam"]')!
     const items = [...menu.querySelectorAll<HTMLButtonElement>('[role^=menuitem]')]
     expect(items.map((b) => b.textContent?.trim())).toEqual(['Show a line', 'Hide completely', 'Unblock'])
     expect(items.map((b) => b.getAttribute('aria-checked'))).toEqual(['true', 'false', null])
     items[1].click()
-    await settle()
+    await flushMicrotasks(6)
     expect(calls()).toEqual([{ userId: 'U2', mode: 'hide' }])
     expect(document.querySelector('[role=menu]')).toBeNull()
     // the keyboard opens it too, and Unblock
     rowOf('U2').dispatchEvent(new KeyboardEvent('keydown', { key: 'F10', shiftKey: true, bubbles: true, cancelable: true }))
-    await settle()
+    await flushMicrotasks(6)
     ;[...document.querySelectorAll<HTMLButtonElement>('[role=menu] [role^=menuitem]')][2].click()
-    await settle()
+    await flushMicrotasks(6)
     expect(calls()).toEqual([{ userId: 'U2', mode: 'hide' }, { userId: 'U2', mode: null }])
   })
 

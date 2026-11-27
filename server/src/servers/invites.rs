@@ -1052,6 +1052,7 @@ async fn online_count(s: &AppState, server: ServerId, viewer: UserId) -> AppResu
 const FACES: i64 = 3;
 
 /// Up to [`FACES`] members of `server` whom `viewer` already knows: they share another live server or a DM or group.
+/// Someone who has blocked the viewer stays a face, emptied ([`crate::blocks::emptied_user`]).
 async fn faces(
     db: &SqlitePool,
     server: ServerId,
@@ -1074,11 +1075,17 @@ async fn faces(
     .bind(FACES)
     .fetch_all(db)
     .await?;
+    // a face who has blocked the viewer (#474) is emptied, as in a members list (#708)
+    let blockers = crate::blocks::blocked_by(db, viewer).await?;
     let mut out = Vec::with_capacity(ids.len());
     for id in ids {
-        out.push(
-            crate::auth::routes::load_user(db, id.parse().map_err(anyhow::Error::from)?).await?,
-        );
+        let id: UserId = id.parse().map_err(anyhow::Error::from)?;
+        let user = crate::auth::routes::load_user(db, id).await?;
+        out.push(if blockers.contains(&id) {
+            crate::blocks::emptied_user(user)
+        } else {
+            user
+        });
     }
     Ok(out)
 }
@@ -1152,7 +1159,7 @@ async fn accept_in(
         return Ok(Outcome::Refused(AppError::NotFound, Some(Failure::Revoked)));
     }
     // An invite works only while its maker is in the server: theirs are revoked when they leave or are removed
-    // ([`revoke_made_in`]); this covers any made before that.
+    // ([`revoke_made_in`]), and migration 0086 revoked any left from before that (#547); this stays as a backstop.
     if !member_in(tx, server, row.maker()?).await? {
         return Ok(Outcome::Refused(AppError::NotFound, Some(Failure::Revoked)));
     }

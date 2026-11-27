@@ -222,6 +222,7 @@ macro_rules! app_commands {
             commands::stop_mic_test,
             commands::record_mic_sample,
             commands::watch_voice_meters,
+            commands::watch_voice_rings,
             commands::watch_voice_link,
             commands::play_sound,
             commands::start_ringtone,

@@ -8,8 +8,8 @@
   import Icon from './Icon.svelte'
   import { attachmentLink } from '../lib/attachmentLinks'
   import { modal } from '../lib/actions'
-  import { buildShots } from '../lib/builds'
-  import { TITLE_MAX, type QuickPrefill } from '../lib/buildPaste'
+  import { BUILD_LIMITS, buildShots } from '../lib/builds'
+  import type { QuickPrefill } from '../lib/buildPaste'
   import { api, errorText, type StagedFile } from '../lib/tauri'
   import type { Attachment } from '../lib/protocol/Attachment'
   import type { BuildGameEdit } from '../lib/protocol/BuildGameEdit'
@@ -26,10 +26,7 @@
     onSaved?: (m: Message) => void
   } = $props()
 
-  const MAX_SHOTS = 10
-  const MAX_NOTES = 4000
-  const MAX_LINK = 2048
-  const TOO_MANY = 'Up to 10 screenshots.'
+  const TOO_MANY = `Up to ${BUILD_LIMITS.maxScreenshots} screenshots.`
 
   type Shot = { key: string; kind: 'kept'; attachment: Attachment; url: string | null } | { key: string; kind: 'staged'; file: StagedFile }
 
@@ -57,7 +54,7 @@
   let failedSave = false
 
   const titleLen = $derived([...title.trim()].length)
-  const canSave = $derived(titleLen > 0 && titleLen <= TITLE_MAX && !busy)
+  const canSave = $derived(titleLen > 0 && titleLen <= BUILD_LIMITS.titleChars && !busy)
   const offerSorted = $derived(!!b?.quick_drop && (!game || guessed) && !notes.trim())
 
   // kept screenshots' links, for their thumbnails
@@ -77,7 +74,7 @@
   const shotSrc = (s: Shot) => (s.kind === 'kept' ? s.url : s.file.preview)
 
   function room(): boolean {
-    if (shots.length < MAX_SHOTS) return true
+    if (shots.length < BUILD_LIMITS.maxScreenshots) return true
     shotsNote = TOO_MANY
     return false
   }
@@ -204,7 +201,7 @@
     onpastecapture={pasteCapture} ondragover={(e) => { if (e.dataTransfer?.types.includes('Files')) e.preventDefault() }} ondrop={drop}>
     <h1 class="modal-title">{editing ? 'Edit build' : 'Add build'}</h1>
     <label class="field">
-      <span class="label">Title <span class="counter" class:over={titleLen > TITLE_MAX}>{titleLen}/{TITLE_MAX}</span></span>
+      <span class="label">Title <span class="counter" class:over={titleLen > BUILD_LIMITS.titleChars}>{titleLen}/{BUILD_LIMITS.titleChars}</span></span>
       <input bind:this={titleEl} class="input" type="text" aria-label="Title" placeholder="Raven crit build" bind:value={title} disabled={busy} />
     </label>
     <div class="field">
@@ -217,7 +214,7 @@
     </div>
     <label class="field">
       <span class="label">Build link</span>
-      <input class="input" type="url" aria-label="Build link" placeholder="A video or a build planner (optional)" maxlength={MAX_LINK} bind:value={link} disabled={busy} />
+      <input class="input" type="url" aria-label="Build link" placeholder="A video or a build planner (optional)" maxlength={BUILD_LIMITS.linkChars} bind:value={link} disabled={busy} />
     </label>
     <div class="field">
       <span class="label">Screenshots <span class="hint">Paste, drop or pick; drag to reorder</span></span>
@@ -234,7 +231,7 @@
             </span>
           </li>
         {/each}
-        {#if shots.length < MAX_SHOTS}
+        {#if shots.length < BUILD_LIMITS.maxScreenshots}
           <li class="add"><button type="button" class="btn btn-quiet" onclick={() => void pick()}><Icon name="image" size={14} />Add screenshots</button></li>
         {/if}
       </ul>
@@ -242,7 +239,7 @@
     </div>
     <label class="field">
       <span class="label">Notes</span>
-      <textarea class="input" aria-label="Notes" rows="5" placeholder="Modules, gear, how to play it (markdown works)" maxlength={MAX_NOTES} bind:value={notes} disabled={busy}></textarea>
+      <textarea class="input" aria-label="Notes" rows="5" placeholder="Modules, gear, how to play it (markdown works)" maxlength={BUILD_LIMITS.notesChars} bind:value={notes} disabled={busy}></textarea>
     </label>
     {#if offerSorted}
       <label class="sorted"><input type="checkbox" name="sorted" bind:checked={sorted} disabled={busy} /> Mark as sorted <span class="hint">(no longer a quick drop)</span></label>

@@ -5,46 +5,9 @@ mod common;
 use std::time::Duration;
 
 use common::*;
-use futures::{SinkExt, StreamExt};
-use pulse_protocol::gateway::{ClientFrame, Event, Ready, ServerFrame};
+use pulse_protocol::gateway::{Event, ServerFrame};
 use pulse_protocol::ids::UserId;
 use pulse_server::gateway::audience::{Audience, audience_for};
-use tokio_tungstenite::tungstenite::Message as Ws;
-
-type Socket =
-    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
-
-async fn hello(app: &TestApp, token: &str) -> (Socket, Ready) {
-    let mut ws = tokio_tungstenite::connect_async(app.ws_url("/gateway"))
-        .await
-        .unwrap()
-        .0;
-    let f = serde_json::to_string(&ClientFrame::Hello {
-        token: token.into(),
-        client_version: pulse_protocol::PROTOCOL_VERSION,
-    })
-    .unwrap();
-    ws.send(Ws::text(f)).await.unwrap();
-    loop {
-        if let Some(ServerFrame::Ready(r)) = next_frame(&mut ws).await {
-            return (ws, r);
-        }
-    }
-}
-
-async fn next_frame(ws: &mut Socket) -> Option<ServerFrame> {
-    loop {
-        let m = tokio::time::timeout(Duration::from_secs(3), ws.next())
-            .await
-            .ok()??
-            .ok()?;
-        match m {
-            Ws::Text(t) => return Some(serde_json::from_str(&t).unwrap()),
-            Ws::Close(_) => return None,
-            _ => continue,
-        }
-    }
-}
 
 /// Every event that arrives within `ms` of quiet.
 async fn drain(ws: &mut Socket, ms: u64) -> Vec<Event> {

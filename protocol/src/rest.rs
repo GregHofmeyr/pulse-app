@@ -76,6 +76,15 @@ pub struct User {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub typing_text: Option<String>,
+    /// The speaking ring's style (#651); absent: Classic (and from older servers; older clients
+    /// ignore it).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub ring_style: Option<String>,
+    /// The speaking ring's colour (#651); absent: green.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub ring_color: Option<String>,
 }
 
 /// How a name is drawn: a bundled font and 0 (default), 1 (solid) or 2 (gradient, first to
@@ -271,7 +280,6 @@ pub struct SeenBadge {
 
 /// `POST /me/badges/seen`: the badges your trophy case showed [NEW]. Only those, at those tiers,
 /// stop being [NEW]: one earned (or a tier reached) after the case loaded stays [NEW] (#129).
-/// No body at all (older clients) marks everything seen.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct MarkBadgesSeenRequest {
     pub badges: Vec<SeenBadge>,
@@ -329,6 +337,16 @@ pub struct UpdateProfileRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub typing_text: Option<String>,
+    /// The new speaking ring style (#651): `"classic"` is the default; absent keeps the current
+    /// one (older clients don't send it).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub ring_style: Option<String>,
+    /// The new speaking ring colour (#651): `"green"` is the default; absent keeps the current
+    /// one (older clients don't send it).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub ring_color: Option<String>,
 }
 
 /// `PUT /servers/{id}/members/{user}/nickname` and `PUT /me/private-nicknames/{user}`: `None`
@@ -602,8 +620,7 @@ pub enum ChannelKind {
     Quotes,
     /// A server channel for video clips: posts are clips, replies live in threads.
     Clips,
-    /// A server channel for character builds (#616): posts are builds, comments live in threads. Protocol 5 on: a
-    /// version-4 client is never sent one.
+    /// A server channel for character builds (#616): posts are builds, comments live in threads. Protocol 5 on.
     Builds,
     /// A kind this build doesn't know (one added after it). Never sent or stored by this server; a client keeps such a
     /// channel out of sight instead of failing to read everything around it.
@@ -4205,6 +4222,8 @@ mod tests {
                         avatar_still: None,
                         style: Default::default(),
                         typing_text: None,
+                        ring_style: None,
+                        ring_color: None,
                     },
                 }
             ),

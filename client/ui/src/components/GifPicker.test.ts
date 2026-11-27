@@ -25,6 +25,7 @@ import GifPicker, { SEARCH_DELAY_MS } from './GifPicker.svelte'
 import { app, resetState } from '../lib/store.svelte'
 import { emptyState } from '../lib/state'
 import { gifFavs, resetGifFavs } from '../lib/gifs.svelte'
+import { flushMicrotasks } from '../lib/testSettle'
 
 let cmp: ReturnType<typeof mount> | undefined
 const picked: [Gif, string][] = []
@@ -33,7 +34,6 @@ function open() {
   cmp = mount(GifPicker, { target: document.body, props: { onPick: (g: Gif, link: string) => picked.push([g, link]), onClose: () => closed++ } })
   flushSync()
 }
-const flush = async () => { for (let i = 0; i < 6; i++) await Promise.resolve(); flushSync() }
 const picker = () => document.querySelector<HTMLElement>('[role="dialog"][aria-label="GIF picker"]')!
 const search = () => picker().querySelector<HTMLInputElement>('input[aria-label="Search GIPHY"]')!
 const cells = () => [...picker().querySelectorAll<HTMLButtonElement>('.pick')]
@@ -72,7 +72,7 @@ afterEach(() => {
 describe('GifPicker', () => {
   it('opens on trending, in GIPHY’s order, with GIPHY’s URLs untouched', async () => {
     open()
-    await flush()
+    await flushMicrotasks(6)
     expect(feedCalls()).toEqual([{ query: '', offset: 0 }])
     expect(labels().sort()).toEqual(['T0a GIF', 'T0b GIF'])
     const img = cells()[0].querySelector('img')!
@@ -83,20 +83,20 @@ describe('GifPicker', () => {
 
   it('says Powered by GIPHY', async () => {
     open()
-    await flush()
+    await flushMicrotasks(6)
     expect(picker().querySelector('.foot')!.textContent).toContain('Powered by GIPHY')
   })
 
   it('searches a moment after typing stops, and only the newest answer shows', async () => {
     open()
-    await flush()
+    await flushMicrotasks(6)
     type('c')
     type('ca')
     type('cats')
-    await flush()
+    await flushMicrotasks(6)
     expect(feedCalls()).toHaveLength(1) // still waiting
     vi.advanceTimersByTime(SEARCH_DELAY_MS)
-    await flush()
+    await flushMicrotasks(6)
     expect(feedCalls()).toEqual([{ query: '', offset: 0 }, { query: 'cats', offset: 0 }])
     expect(labels().sort()).toEqual(['cats0a GIF', 'cats0b GIF'])
 
@@ -107,31 +107,31 @@ describe('GifPicker', () => {
     vi.advanceTimersByTime(SEARCH_DELAY_MS)
     type('birds')
     vi.advanceTimersByTime(SEARCH_DELAY_MS)
-    await flush()
+    await flushMicrotasks(6)
     release({ gifs: [r('dogs')], next: null })
-    await flush()
+    await flushMicrotasks(6)
     expect(labels()).toEqual(['birds GIF'])
   })
 
   it('loads the next page near the end of the grid, without showing a GIF twice', async () => {
     feed = async (_q, offset) => ({ gifs: offset ? [r('B'), r('C')] : [r('A'), r('B')], next: offset ? null : 2 })
     open()
-    await flush()
+    await flushMicrotasks(6)
     const grid = picker().querySelector<HTMLElement>('.grid')!
     Object.defineProperties(grid, { scrollHeight: { value: 500 }, clientHeight: { value: 420 }, scrollTop: { value: 0, writable: true } })
     grid.dispatchEvent(new Event('scroll'))
-    await flush()
+    await flushMicrotasks(6)
     expect(feedCalls()).toEqual([{ query: '', offset: 0 }, { query: '', offset: 2 }])
     expect(labels().sort()).toEqual(['A GIF', 'B GIF', 'C GIF'])
     // the end: no more asking
     grid.dispatchEvent(new Event('scroll'))
-    await flush()
+    await flushMicrotasks(6)
     expect(feedCalls()).toHaveLength(2)
   })
 
   it('a pick hands over the GIF and its GIPHY page', async () => {
     open()
-    await flush()
+    await flushMicrotasks(6)
     const first = cells().find((c) => c.getAttribute('aria-label') === 'T0a GIF')!
     first.click()
     expect(picked).toEqual([[{ id: 'T0a', title: 'T0a GIF', width: 480, height: 270 }, 'https://giphy.com/gifs/fun-T0a']])
@@ -139,12 +139,12 @@ describe('GifPicker', () => {
 
   it('Enter sends the first result of what’s typed, never the old results while the search is on its way', async () => {
     open()
-    await flush()
+    await flushMicrotasks(6)
     type('cats')
     search().dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
     expect(picked).toHaveLength(0) // trending still showing
     vi.advanceTimersByTime(SEARCH_DELAY_MS)
-    await flush()
+    await flushMicrotasks(6)
     search().dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
     expect(picked.map(([g]) => g.id)).toEqual(['cats0a'])
   })
@@ -155,26 +155,26 @@ describe('GifPicker', () => {
       return { gifs: [r('A'), r('B')], next: 2 }
     }
     open()
-    await flush()
+    await flushMicrotasks(6)
     const grid = picker().querySelector<HTMLElement>('.grid')!
     Object.defineProperties(grid, { scrollHeight: { value: 500 }, clientHeight: { value: 420 }, scrollTop: { value: 0, writable: true } })
     grid.dispatchEvent(new Event('scroll'))
-    await flush()
+    await flushMicrotasks(6)
     grid.dispatchEvent(new Event('scroll'))
     grid.dispatchEvent(new Event('scroll'))
-    await flush()
+    await flushMicrotasks(6)
     expect(feedCalls()).toHaveLength(2)
     expect(text()).toContain('GIF search is busy')
     feed = async () => ({ gifs: [r('C')], next: null })
     ;[...picker().querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent === 'Try again')!.click()
-    await flush()
+    await flushMicrotasks(6)
     expect(feedCalls()).toEqual([{ query: '', offset: 0 }, { query: '', offset: 2 }, { query: '', offset: 2 }])
     expect(labels().sort()).toEqual(['A GIF', 'B GIF', 'C GIF'])
   })
 
   it('Escape closes it', async () => {
     open()
-    await flush()
+    await flushMicrotasks(6)
     search().dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
     expect(closed).toBe(1)
   })
@@ -182,7 +182,7 @@ describe('GifPicker', () => {
   it('without a key on the server: GIFs aren’t set up', async () => {
     feed = async () => null
     open()
-    await flush()
+    await flushMicrotasks(6)
     expect(text()).toContain("GIFs aren't set up on this server yet")
     expect(search().disabled).toBe(true)
     expect(cells()).toHaveLength(0)
@@ -191,24 +191,24 @@ describe('GifPicker', () => {
   it('GIPHY busy says so', async () => {
     feed = async () => { throw 'GIF search is busy right now. Try again in a minute.' }
     open()
-    await flush()
+    await flushMicrotasks(6)
     expect(text()).toContain('GIF search is busy right now. Try again in a minute.')
   })
 
   it('no results says so', async () => {
     open()
-    await flush()
+    await flushMicrotasks(6)
     feed = async () => ({ gifs: [], next: null })
     type('zzzz')
     vi.advanceTimersByTime(SEARCH_DELAY_MS)
-    await flush()
+    await flushMicrotasks(6)
     expect(text()).toContain('No GIFs found')
   })
 
   it('Favourites shows yours, drawn from GIPHY’s media links for each id', async () => {
     favs = [{ id: 'fav1', title: 'Fav one', width: 300, height: 200 }]
     open()
-    await flush()
+    await flushMicrotasks(6)
     expect(invoke.mock.calls.some(([c]) => c === 'gif_favourites')).toBe(true)
     rail('Favourites').click()
     flushSync()
@@ -225,7 +225,7 @@ describe('GifPicker', () => {
     favs = [{ id: 'fav1', title: 'Fav one', width: 300, height: 200 }, { id: 'stk1', title: 'Wave', width: 200, height: 200, sticker: true }]
     feed = async (q, offset, stickers) => ({ gifs: [r(`${stickers ? 'S' : 'G'}${q || 'T'}${offset}`)], next: null })
     open()
-    await flush()
+    await flushMicrotasks(6)
     rail('Favourites').click()
     flushSync()
     expect(labels()).toEqual(['Fav one'])
@@ -237,9 +237,9 @@ describe('GifPicker', () => {
     expect(picked.at(-1)![0]).toEqual(favs[1])
     // a sticker starred from the Stickers rail joins them, marked
     rail('Stickers').click()
-    await flush()
+    await flushMicrotasks(6)
     picker().querySelector<HTMLButtonElement>('.cell .star[aria-label="Add to favourite stickers"]')!.click()
-    await flush()
+    await flushMicrotasks(6)
     expect(invoke).toHaveBeenCalledWith('set_gif_favourite', { gif: expect.objectContaining({ id: 'ST0', sticker: true }), on: true })
     rail('Favourite stickers').click()
     flushSync()
@@ -256,7 +256,7 @@ describe('GifPicker', () => {
 
   it('no favourite stickers yet says how to add one (#498)', async () => {
     open()
-    await flush()
+    await flushMicrotasks(6)
     rail('Favourite stickers').click()
     flushSync()
     expect(text()).toContain('Star a sticker to keep it here')
@@ -264,7 +264,7 @@ describe('GifPicker', () => {
 
   it('no favourites yet says how to add one', async () => {
     open()
-    await flush()
+    await flushMicrotasks(6)
     rail('Favourites').click()
     flushSync()
     expect(text()).toContain('Star a GIF to keep it here')
@@ -272,25 +272,25 @@ describe('GifPicker', () => {
 
   it('the star adds a GIF to your favourites and takes it off again', async () => {
     open()
-    await flush()
+    await flushMicrotasks(6)
     const star = picker().querySelector<HTMLButtonElement>('.cell .star[aria-label="Add to favourite GIFs"]')!
     star.click()
-    await flush()
+    await flushMicrotasks(6)
     expect(invoke).toHaveBeenCalledWith('set_gif_favourite', { gif: expect.objectContaining({ id: expect.stringMatching(/^T0/) }), on: true })
     expect(gifFavs.list).toHaveLength(1)
     picker().querySelector<HTMLButtonElement>('.cell .star[aria-label="Remove from favourite GIFs"]')!.click()
-    await flush()
+    await flushMicrotasks(6)
     expect(invoke).toHaveBeenLastCalledWith('set_gif_favourite', expect.objectContaining({ on: false }))
     expect(gifFavs.list).toHaveLength(0)
   })
 
   it('a refused star is put back and says why', async () => {
     open()
-    await flush()
+    await flushMicrotasks(6)
     invoke.mockImplementationOnce(async () => { throw 'You can keep 200 favourite GIFs. Unstar one to make room.' })
     picker().querySelector<HTMLButtonElement>('.cell .star')!.click()
-    await flush()
-    await flush()
+    await flushMicrotasks(6)
+    await flushMicrotasks(6)
     expect(gifFavs.list).toHaveLength(0)
     expect(text()).toContain('You can keep 200 favourite GIFs')
   })
@@ -298,22 +298,22 @@ describe('GifPicker', () => {
   it('the Stickers rail shows GIPHY stickers for the same search, sent marked as stickers (#293)', async () => {
     feed = async (q, offset, stickers) => ({ gifs: [r(`${stickers ? 'S' : 'G'}${q || 'T'}${offset}`)], next: null })
     open()
-    await flush()
+    await flushMicrotasks(6)
     expect(labels()).toEqual(['GT0 GIF'])
     rail('Stickers').click()
-    await flush()
+    await flushMicrotasks(6)
     expect(feedCalls()).toEqual([{ query: '', offset: 0 }, { query: '', offset: 0, stickers: true }])
     expect(labels()).toEqual(['ST0 GIF'])
     expect(picker().querySelector('.cell.sticker .star')!.getAttribute('aria-label')).toBe('Add to favourite stickers')
     type('wave')
     vi.advanceTimersByTime(SEARCH_DELAY_MS)
-    await flush()
+    await flushMicrotasks(6)
     expect(feedCalls().at(-1)).toEqual({ query: 'wave', offset: 0, stickers: true })
     cells()[0].click()
     expect(picked.at(-1)![0]).toEqual({ id: 'Swave0', title: 'Swave0 GIF', width: 480, height: 270, sticker: true })
     // back to GIFs: the same search as GIFs, and they carry no sticker mark
     rail('Search results').click()
-    await flush()
+    await flushMicrotasks(6)
     expect(feedCalls().at(-1)).toEqual({ query: 'wave', offset: 0 })
     cells()[0].click()
     expect(picked.at(-1)![0]).toEqual({ id: 'Gwave0', title: 'Gwave0 GIF', width: 480, height: 270 })

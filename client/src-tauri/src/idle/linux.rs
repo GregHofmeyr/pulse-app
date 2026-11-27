@@ -344,7 +344,7 @@ mod tests {
     /// Against this machine's compositor, with nobody touching it for 2 s: run by hand on a wlroots/Hyprland/sway
     /// desktop (`cargo test -p pulse-client --lib idle::linux -- --ignored`), hands off the keyboard and mouse.
     #[test]
-    #[ignore]
+    #[ignore = "needs a real wlroots compositor and hands off the keyboard and mouse: run by hand"]
     fn wayland_says_idle_after_the_timeout_on_a_real_compositor() {
         let mut source = Wayland::new(Duration::from_secs(2));
         assert_eq!(

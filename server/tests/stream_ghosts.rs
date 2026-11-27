@@ -248,17 +248,6 @@ fn ghost_counts(events: &[Event]) -> Vec<u32> {
         .collect()
 }
 
-/// Polls `f` for up to two seconds (LiveKit removals run in the background).
-async fn eventually(mut f: impl FnMut() -> bool) -> bool {
-    for _ in 0..100 {
-        if f() {
-            return true;
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-    false
-}
-
 #[tokio::test]
 async fn ghost_tickets_are_anonymous_subscribe_only_and_stream_room_only() {
     let app = spawn().await;

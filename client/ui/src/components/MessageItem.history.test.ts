@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 // Edit history (#301): "(edited)" is a button that opens the message's versions, newest first, with their times; the
 // message menu's Edit history (#415) opens the same dialog.
-import { flushSync, mount, tick, unmount } from 'svelte'
+import { flushSync, mount, unmount } from 'svelte'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Message } from '../lib/protocol/Message'
 import type { MessageVersion } from '../lib/protocol/MessageVersion'
@@ -12,6 +12,7 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: (cmd: string, args?: never) => 
 import MessageItem from './MessageItem.svelte'
 import { app } from '../lib/store.svelte'
 import { emptyState } from '../lib/state'
+import { flushMicrotasks } from '../lib/testSettle'
 
 const msg = (over: Partial<Message> = {}): Message => ({
   id: 'M1', channel_id: 'C1', author_id: 'U2', kind: 'normal', content: 'see you at 8',
@@ -37,7 +38,6 @@ function show(m: Message) {
   } })
   flushSync()
 }
-async function settle() { for (let i = 0; i < 5; i++) await Promise.resolve(); await tick() }
 const dialog = () => document.querySelector<HTMLElement>('[role=dialog][aria-label="Edit history"]')
 
 beforeEach(() => {
@@ -56,7 +56,7 @@ describe('edit history (#301)', () => {
     const edited = document.querySelector<HTMLButtonElement>('button.edited')!
     expect(edited.textContent).toBe('(edited)')
     edited.click(); flushSync()
-    await settle()
+    await flushMicrotasks(6)
     expect(invoke).toHaveBeenCalledWith('message_edits', { messageId: 'M1' })
     const rows = [...dialog()!.querySelectorAll('.version')]
     expect(rows.map((r) => r.querySelector('.text')!.textContent)).toEqual(['see you at 8', 'see you at 7', 'see you at 6'])
@@ -67,12 +67,12 @@ describe('edit history (#301)', () => {
   it('Escape closes it; a refusal says why', async () => {
     show(msg())
     document.querySelector<HTMLButtonElement>('button.edited')!.click(); flushSync()
-    await settle()
+    await flushMicrotasks(6)
     dialog()!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); flushSync()
     expect(dialog()).toBeNull()
     invoke.mockImplementation(async () => { throw { kind: 'NotFound', message: 'not found' } })
     document.querySelector<HTMLButtonElement>('button.edited')!.click(); flushSync()
-    await settle()
+    await flushMicrotasks(6)
     expect(dialog()!.querySelector('[role=alert]')).not.toBeNull()
   })
 
@@ -87,7 +87,7 @@ describe('edit history (#301)', () => {
     const item = [...document.querySelectorAll<HTMLButtonElement>('[role=menu] [role=menuitem]')].find((b) => b.textContent === 'Edit history')!
     expect(item.getAttribute('aria-haspopup')).toBe('dialog')
     item.click(); flushSync()
-    await settle()
+    await flushMicrotasks(6)
     expect(document.querySelector('[role=menu][aria-label="Message actions"]')).toBeNull()
     expect(invoke).toHaveBeenCalledWith('message_edits', { messageId: 'M1' })
     expect(dialog()!.querySelectorAll('.version')).toHaveLength(3)

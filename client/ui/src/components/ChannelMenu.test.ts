@@ -15,6 +15,7 @@ import { voice } from '../lib/voice.svelte'
 import { testMe, testReady } from '../lib/testReady'
 import type { Channel } from '../lib/protocol/Channel'
 import type { Ready } from '../lib/protocol/Ready'
+import { settle } from '../lib/testSettle'
 
 const channels: Channel[] = [
   { id: 'T1', server_id: 'S1', kind: 'text', name: 'general', position: 0 },
@@ -61,10 +62,6 @@ const key = (el: Element, k: string) => {
   flushSync()
   return e
 }
-const settle = async () => {
-  for (let i = 0; i < 4; i++) await tick()
-  flushSync()
-}
 
 beforeEach(() => {
   invoke.mockReset()
@@ -94,7 +91,7 @@ describe('a text channel', () => {
   it('mark_as_read_marks_the_channel_and_its_threads_read_on_the_server', async () => {
     rightClick('old-stuff')
     item('Mark as read')!.click()
-    await settle()
+    await settle(4)
     // one call (#111): the server finds the newest message and every thread's newest reply
     expect(invoke).toHaveBeenCalledWith('mark_channel_read', { channelId: 'T2' })
     expect(invoke).not.toHaveBeenCalledWith('mark_read', expect.anything())
@@ -108,7 +105,7 @@ describe('a text channel', () => {
     rightClick('quotes')
     expect(item('Mark as read')!.disabled).toBe(false)
     item('Mark as read')!.click()
-    await settle()
+    await settle(4)
     expect(invoke).toHaveBeenCalledWith('mark_channel_read', { channelId: 'Q1' })
     // what the server sends back for it: a ThreadSeen per thread, carrying the channel's count
     const me = app.state.me!.id
@@ -125,7 +122,7 @@ describe('a text channel', () => {
     rightClick('general')
     hover(muteItem())
     flyoutItem('For 15 minutes')!.click()
-    await settle()
+    await settle(4)
     const [, args] = invoke.mock.calls.find(([c]) => c === 'set_mute')!
     expect(args.targetKind).toBe('channel')
     expect(args.targetId).toBe('T1')
@@ -137,7 +134,7 @@ describe('a text channel', () => {
     expect(labels()).not.toContain('Mute channel')
     expect(item('Unmute channel')!.hasAttribute('aria-haspopup')).toBe(false)
     item('Unmute channel')!.click()
-    await settle()
+    await settle(4)
     expect(invoke).toHaveBeenCalledWith('clear_mute', { targetKind: 'channel', targetId: 'T1' })
   })
 
@@ -152,7 +149,7 @@ describe('a text channel', () => {
     input.value = 'Chat Room'
     input.dispatchEvent(new Event('input', { bubbles: true }))
     input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
-    await settle()
+    await settle(4)
     expect(invoke).toHaveBeenCalledWith('rename_channel', { channelId: 'T1', name: 'chat-room' })
     expect(document.querySelector('input[aria-label="Rename #general"]')).toBeNull()
   })
@@ -166,7 +163,7 @@ describe('a text channel', () => {
     input.value = 'chat'
     input.dispatchEvent(new Event('input', { bubbles: true }))
     input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
-    await settle()
+    await settle(4)
     expect(document.activeElement).toBe(row('general'))
   })
 
@@ -194,7 +191,7 @@ describe('a text channel', () => {
     input.value = 'nope'
     input.dispatchEvent(new Event('input', { bubbles: true }))
     input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
-    await settle()
+    await settle(4)
     expect(invoke).not.toHaveBeenCalledWith('rename_channel', expect.anything())
     expect(row('general')).toBeTruthy()
   })
@@ -208,7 +205,7 @@ describe('a text channel', () => {
     input.value = 'x'
     input.dispatchEvent(new Event('input', { bubbles: true }))
     input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
-    await settle()
+    await settle(4)
     expect(document.querySelector('input[aria-label="Rename #general"]')).not.toBeNull()
     expect(document.querySelector('.err')?.textContent).not.toBe('')
   })
@@ -232,7 +229,7 @@ describe('a text channel', () => {
     item('Delete channel…')!.click()
     flushSync()
     ;[...document.querySelectorAll<HTMLButtonElement>('[role=dialog] button')].find((b) => b.textContent === 'Delete channel')!.click()
-    await settle()
+    await settle(4)
     expect(invoke).toHaveBeenCalledWith('delete_channel', { channelId: 'T2' })
     expect(document.querySelector('[role=dialog]')).toBeNull()
   })
@@ -244,7 +241,7 @@ describe('a text channel', () => {
     flushSync()
     expect(document.querySelector('[role=dialog]')?.textContent).toContain('Delete #quotes? It moves to Recently deleted')
     ;[...document.querySelectorAll<HTMLButtonElement>('[role=dialog] button')].find((b) => b.textContent === 'Delete channel')!.click()
-    await settle()
+    await settle(4)
     expect(document.querySelector('[role=dialog] [role=alert]')).not.toBeNull()
   })
 })
@@ -380,7 +377,7 @@ describe('the mute flyout', () => {
     key(muteItem(), 'ArrowRight')
     key(document.activeElement!, 'End')
     ;(document.activeElement as HTMLButtonElement).click()
-    await settle()
+    await settle(4)
     expect(invoke).toHaveBeenCalledWith('set_mute', { targetKind: 'channel', targetId: 'T1', until: null })
     expect(menu()).toBeNull()
     expect(document.activeElement).toBe(row('general'))
@@ -434,7 +431,7 @@ describe('a voice channel', () => {
     rightClick('Lounge')
     expect(labels()[0]).toBe('Leave')
     item('Leave')!.click()
-    await settle()
+    await settle(4)
     expect(invoke).toHaveBeenCalledWith('leave_voice')
   })
 
@@ -447,7 +444,7 @@ describe('a voice channel', () => {
     input.value = 'Game Night'
     input.dispatchEvent(new Event('input', { bubbles: true }))
     input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
-    await settle()
+    await settle(4)
     expect(invoke).toHaveBeenCalledWith('rename_channel', { channelId: 'V1', name: 'Game Night' })
   })
 
@@ -575,13 +572,13 @@ describe('the notifications flyout (#195)', () => {
     rightClick('general', 600)
     hover(item('Notifications')!)
     choice('Only @mentions').click()
-    await settle()
+    await settle(4)
     expect(invoke).toHaveBeenCalledWith('set_notify_level', { targetKind: 'channel', targetId: 'T1', level: 'mentions' })
     expect(menu()).toBeNull()
     rightClick('general', 600)
     hover(item('Notifications')!)
     choice('Follow server').click()
-    await settle()
+    await settle(4)
     expect(invoke).toHaveBeenCalledWith('set_notify_level', { targetKind: 'channel', targetId: 'T1', level: null })
   })
 

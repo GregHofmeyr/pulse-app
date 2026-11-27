@@ -2,7 +2,7 @@
 // Server settings → Members (#418): avatar, name and join date for everyone in the server, the owner marked, no
 // buttons on the rows but the avatar's card; a person's actions are on their right-click menu (Remove from server and
 // Make owner for the owner). The rejoin-block list is gone (#80: servers are invite-only, and bans keep people out).
-import { flushSync, mount, tick, unmount } from 'svelte'
+import { flushSync, mount, unmount } from 'svelte'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const invoke = vi.fn(async (_cmd: string, _args?: unknown): Promise<unknown> => undefined)
@@ -10,7 +10,7 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: (cmd: string, args?: never) => 
 
 import ServerSettings from './ServerSettings.svelte'
 import { app, ui } from '../lib/store.svelte'
-import { applyEvent, emptyState } from '../lib/state'
+import { emptyState } from '../lib/state'
 
 const user = (id: string, name: string) => ({ id, username: name, display_name: name, avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } })
 const alex = user('U1', 'alex')

@@ -72,9 +72,9 @@ jobs:
               - '.cargo/**'
               - '.github/workflows/ci.yml'
             deps:
-              - 'Cargo.toml'
-              - 'Cargo.lock'
+              # paths-filter matches with picomatch: '**/Cargo.toml' includes the root one
               - '**/Cargo.toml'
+              - 'Cargo.lock'
               - 'deny.toml'
               - 'client/ui/package.json'
               - 'client/ui/pnpm-lock.yaml'

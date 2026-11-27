@@ -7,6 +7,10 @@
 //! forward, `GET /messages/{forward}/attachments/urls`, for anyone who can see the forward), and its link previews are
 //! read from it too. Once the original is deleted (or its chat is) the forward shows nothing of it, and its viewers are
 //! told. The forward names a server channel's channel, never a DM or group.
+//!
+//! A forward of a 1:1 DM message withheld from someone (#474) is its author's re-share (only they can see it): it
+//! carries the original's files wherever it reaches, as it does its words; into the DM with that person it's withheld
+//! like any send there (#547).
 
 use axum::extract::{Path, State};
 use axum::routing::post;

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { flushSync, mount, tick, unmount } from 'svelte'
+import { flushSync, mount, unmount } from 'svelte'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Sound } from '../lib/protocol/Sound'
 
@@ -10,6 +10,7 @@ import SoundboardSettings from './SoundboardSettings.svelte'
 import { app } from '../lib/store.svelte'
 import { emptyState } from '../lib/state'
 import { reloadMixer } from '../lib/mixer.svelte'
+import { settle } from '../lib/testSettle'
 
 const server = { id: 'S1', name: 'Home', icon_hash: null }
 const snd = (id: string, name: string, over: Partial<Sound> = {}): Sound => ({
@@ -18,10 +19,6 @@ const snd = (id: string, name: string, over: Partial<Sound> = {}): Sound => ({
 })
 
 let cmp: ReturnType<typeof mount> | undefined
-const settle = async () => {
-  for (let i = 0; i < 4; i++) await tick()
-  flushSync()
-}
 const calls = (c: string) => invoke.mock.calls.filter((x) => x[0] === c)
 const rows = () => [...document.querySelectorAll<HTMLElement>('li')]
 const row = (name: string) => rows().find((r) => r.textContent?.includes(name))!
@@ -63,7 +60,7 @@ describe('SoundboardSettings', () => {
 
   it('previews a sound only here', async () => {
     btn('Preview Airhorn').click()
-    await settle()
+    await settle(4)
     expect(calls('soundboard_play')[0][1]).toMatchObject({ hash: 'ha', soundPercent: 120 })
     expect(calls('play_sound_to_call')).toHaveLength(0)
   })
@@ -78,18 +75,18 @@ describe('SoundboardSettings', () => {
     btn('Remove Airhorn').click()
     flushSync()
     text('Remove').click()
-    await settle()
+    await settle(4)
     expect(calls('delete_sound')[0][1]).toEqual({ id: 'a' })
   })
 
   it('opens the add and edit dialog', async () => {
     text('Add sound').click()
-    await settle()
+    await settle(4)
     expect(document.querySelector('[role=dialog][aria-label="Add a sound"]')).not.toBeNull()
     text('Cancel').click()
-    await settle()
+    await settle(4)
     btn('Edit Airhorn').click()
-    await settle()
+    await settle(4)
     expect(document.querySelector('[role=dialog][aria-label="Edit sound"]')).not.toBeNull()
     expect(document.querySelector<HTMLInputElement>('[aria-label="Name"]')!.value).toBe('Airhorn')
   })

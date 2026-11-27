@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { ringPrefs, setClassicRings } from '../lib/speakingRing.svelte'
   import { onDestroy, onMount } from 'svelte'
   import Select from './Select.svelte'
   import Segmented from './Segmented.svelte'
@@ -247,6 +248,12 @@
         onclick={() => { cfg[t.key] = !cfg[t.key]; apply() }}><span></span></button>
     </div>
   {/each}
+  <!-- this device only, and never sent to the core (#651) -->
+  <div class="row">
+    <div><strong>Show everyone's rings as Classic</strong><small>Shows every speaking ring as the plain ring. Lighter on slower PCs, and calmer if motion distracts you.</small></div>
+    <button class="switch" aria-label="Show everyone's rings as Classic" aria-pressed={ringPrefs.classic} class:on={ringPrefs.classic}
+      onclick={() => setClassicRings(!ringPrefs.classic)}><span></span></button>
+  </div>
 </div>
 
 <SoundSettings />

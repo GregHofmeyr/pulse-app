@@ -21,6 +21,7 @@ import { reactiveProps } from '../lib/testProps.svelte'
 import { testMe, testReady } from '../lib/testReady'
 import { windowFocus } from '../lib/windowFocus.svelte'
 import { downloads } from '../lib/downloads.svelte'
+import { nextTask } from '../lib/testSettle'
 
 const sam = { id: 'U2', username: 'sam', display_name: 'sam', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
 const ready = (lastRead: string | null = null) =>
@@ -45,7 +46,6 @@ let pages: Message[][] = []
 let pendingPage: ((m: Message[]) => void) | null = null
 let hold = false
 let cmp: ReturnType<typeof mount> | undefined
-const settle = () => new Promise((r) => setTimeout(r, 0))
 const calls = (cmd: string) => invoke.mock.calls.filter((c) => c[0] === cmd)
 const order = () => [...document.querySelectorAll<HTMLElement>('[data-clip-id]')].map((e) => e.dataset.clipId)
 const card = (cid: string) => document.querySelector<HTMLElement>(`[data-clip-id="${cid}"]`)!
@@ -80,7 +80,7 @@ async function show(props: { layout: 'list' | 'wall'; filter?: { game?: string; 
   const p = reactiveProps({ channelId: 'C1', filter: props.filter ?? {}, layout: props.layout })
   cmp = mount(ClipFeed, { target: document.body, props: p })
   flushSync()
-  await settle()
+  await nextTask()
   flushSync()
   await tick()
   return p
@@ -108,7 +108,7 @@ describe('ClipFeed', () => {
     pages = [[clip('M002', { clip: { ...clip('M002').clip!, reply_count: 1 } }), clip('M001', { clip: { ...clip('M001').clip!, reply_count: 3 } })]]
     cmp = mount(ClipFeed, { target: document.body, props: { channelId: 'C1', filter: {}, layout: 'list', onOpenReplies } })
     flushSync()
-    await settle()
+    await nextTask()
     flushSync()
     expect(card('M002').querySelector('.replies')?.textContent?.trim()).toBe('View 1 reply')
     const btn = card('M001').querySelector<HTMLButtonElement>('.replies')!
@@ -153,17 +153,17 @@ describe('ClipFeed', () => {
     FakeIntersectionObserver.set(sentinel, true)
     FakeIntersectionObserver.set(sentinel, true) // one page at a time
     flushSync()
-    await settle()
+    await nextTask()
     expect(calls('list_clips')).toHaveLength(2)
     expect(calls('list_clips')[1][1]).toEqual({ channelId: 'C1', before: 'M101', game: null, author: null })
     pendingPage!(range(100, 95))
-    await settle()
+    await nextTask()
     flushSync()
     expect(order()).toHaveLength(36)
     expect(order().at(-1)).toBe('M095')
     // the start is reached: no more fetches, even with the sentinel still showing
     FakeIntersectionObserver.set(sentinel, true)
-    await settle()
+    await nextTask()
     expect(calls('list_clips')).toHaveLength(2)
   })
 
@@ -175,7 +175,7 @@ describe('ClipFeed', () => {
     expect(sentinel.nextElementSibling?.getAttribute('data-clip-id') ?? sentinel.nextElementSibling?.querySelector('[data-clip-id]')?.getAttribute('data-clip-id')).toBe('M101')
     pages = [range(100, 99)]
     FakeIntersectionObserver.set(sentinel, true)
-    await settle()
+    await nextTask()
     flushSync()
     expect(calls('list_clips')[1][1]).toEqual({ channelId: 'C1', before: 'M101', game: 'G1', author: 'U2' })
     expect(order()[0]).toBe('M099')
@@ -195,12 +195,12 @@ describe('ClipFeed', () => {
     expect(calls('list_clips')).toHaveLength(1)
     const alert = document.querySelector('[role="alert"]')!
     expect(alert.textContent).toContain('Server unreachable')
-    await settle()
+    await nextTask()
     expect(calls('list_clips')).toHaveLength(1) // no retry loop on its own
     fail = false
     ;[...alert.querySelectorAll('button')].find((b) => b.textContent === 'Try again')!.click()
     flushSync()
-    await settle()
+    await nextTask()
     flushSync()
     expect(calls('list_clips')).toHaveLength(2)
     expect(order()).toEqual(['M002', 'M001'])
@@ -219,13 +219,13 @@ describe('ClipFeed', () => {
     expect(document.querySelector('[role="alert"]')).not.toBeNull()
     p.filter = {}
     flushSync()
-    await settle()
+    await nextTask()
     flushSync()
     expect(order()).toEqual(['M002', 'M001'])
     failGame = false
     p.filter = { game: 'G1' }
     flushSync()
-    await settle()
+    await nextTask()
     flushSync()
     expect(calls('list_clips').filter((c) => (c[1] as { game: string | null }).game === 'G1')).toHaveLength(2)
     expect(order()).toEqual(['M003'])
@@ -244,7 +244,7 @@ describe('ClipFeed', () => {
     p.layout = 'wall'
     flushSync()
     await tick()
-    await settle()
+    await nextTask()
     expect(order()[0]).toBe('M004') // the wall now
     expect(scrolled).toEqual(['M003'])
   })
@@ -255,13 +255,13 @@ describe('ClipFeed', () => {
     expect(document.querySelectorAll('[aria-label="Clip player"]')).toHaveLength(0)
     card('M004').querySelector<HTMLButtonElement>('button.thumb')!.click()
     flushSync()
-    await settle()
+    await nextTask()
     expect(card('M004').querySelector('[aria-label="Clip player"]')).not.toBeNull()
     expect(calls('clip_url').map((c) => c[1])).toEqual([{ messageId: 'M004' }]) // autoplay, with sound
     expect(playback.muted).toBe(false)
     card('M003').querySelector<HTMLButtonElement>('button.thumb')!.click()
     flushSync()
-    await settle()
+    await nextTask()
     expect(document.querySelectorAll('[aria-label="Clip player"]')).toHaveLength(1)
     expect(card('M003').querySelector('[aria-label="Clip player"]')).not.toBeNull()
     expect(card('M004').querySelector('button.thumb')).not.toBeNull()
@@ -324,7 +324,7 @@ describe('ClipFeed', () => {
     caption.dispatchEvent(new Event('input', { bubbles: true }))
     flushSync()
     ;[...dialog.querySelectorAll('button')].find((b) => b.textContent?.trim() === 'Save')!.click()
-    await settle()
+    await nextTask()
     flushSync()
     expect(calls('edit_clip').map((c) => c[1])).toEqual([{ messageId: 'M004', body: { caption: 'what a shot', game_id: 'G1' } }])
     expect(document.querySelector('[aria-label="Edit clip"]')).toBeNull()
@@ -332,7 +332,7 @@ describe('ClipFeed', () => {
     open()
     item('Delete').click()
     flushSync()
-    await settle()
+    await nextTask()
     const ask = document.querySelector<HTMLElement>('[role="alertdialog"]')!
     expect(document.activeElement).toBe([...ask.querySelectorAll('button')].find((b) => b.textContent?.trim() === 'Cancel'))
     expect(ask.textContent).toContain('Delete this clip? Its replies go too.')
@@ -343,7 +343,7 @@ describe('ClipFeed', () => {
     item('Delete').click()
     flushSync()
     ;[...document.querySelector<HTMLElement>('[role="alertdialog"]')!.querySelectorAll('button')].find((b) => b.textContent?.trim() === 'Delete')!.click()
-    await settle()
+    await nextTask()
     expect(calls('delete_message').map((c) => c[1])).toEqual([{ messageId: 'M004' }])
     // the gateway's delete takes it out of the feed
     app.state = applyEvent(app.state, { t: 'MessageDeleted', d: { channel_id: 'C1', message_id: 'M004', author_id: 'U1', mentions: [], thread_root_id: null } }, Date.now())
@@ -365,7 +365,7 @@ describe('ClipFeed', () => {
       pages = [[clip('M003', { content: 'clutch 1v3' })]]
       await show({ layout: 'list' })
       menuDownload('M003')
-      await settle()
+      await nextTask()
       expect(saves()).toEqual([{ messageId: 'M003', caption: 'clutch 1v3' }])
       expect(document.querySelector('[role="menu"]')).toBeNull()
     })
@@ -375,7 +375,7 @@ describe('ClipFeed', () => {
       await show({ layout: 'list' })
       expect(overlay('M003')?.dataset.tip).toBe('Download')
       overlay('M003')!.click()
-      await settle()
+      await nextTask()
       expect(saves()).toEqual([{ messageId: 'M003', caption: 'caption M003' }])
       unmount(cmp!)
       cmp = undefined
@@ -384,12 +384,12 @@ describe('ClipFeed', () => {
       await show({ layout: 'wall' })
       expect(overlay('M003')?.dataset.tip).toBe('Download')
       overlay('M003')!.click()
-      await settle()
+      await nextTask()
       expect(saves()).toHaveLength(2)
       // still one once the wall's card is playing
       card('M003').querySelector<HTMLButtonElement>('button.thumb')!.click()
       flushSync()
-      await settle()
+      await nextTask()
       flushSync()
       expect(card('M003').querySelectorAll('button[aria-label="Download clip"]')).toHaveLength(1)
     })
@@ -401,12 +401,12 @@ describe('ClipFeed', () => {
       invoke.mockImplementation(async (cmd: string, args?: unknown) => (cmd === 'save_clip' ? answer() : base(cmd, args)))
       await show({ layout: 'list' })
       overlay('M003')!.click()
-      await settle()
+      await nextTask()
       flushSync()
       expect(card('M003').querySelector('[role="alert"]')).toBeNull()
       answer = async () => Promise.reject('the download was refused (403)')
       menuDownload('M003')
-      await settle()
+      await nextTask()
       flushSync()
       expect(card('M003').querySelector('[role="alert"]')?.textContent).toBe('the download was refused (403)')
     })
@@ -422,17 +422,17 @@ describe('ClipFeed', () => {
       await show({ layout: 'list' })
       overlay('M003')!.click()
       overlay('M003')!.click()
-      await settle()
+      await nextTask()
       expect(saves()).toHaveLength(1)
       finish('/home/kim/Videos/clip.mp4')
-      await settle()
+      await nextTask()
       overlay('M003')!.click()
-      await settle()
+      await nextTask()
       expect(saves()).toHaveLength(2)
       // let that one land too: the one-at-a-time guard is module state, and a save left open would ignore the
       // next test's clicks on this clip
       finish('/home/kim/Videos/clip.mp4')
-      await settle()
+      await nextTask()
     })
   })
 
@@ -455,7 +455,7 @@ describe('ClipFeed', () => {
       pages = [[clip(cid)]]
       await show({ layout: 'list' })
       icon(cid).click()
-      await settle()
+      await nextTask()
       downloads.progress({ key: `clip:${cid}`, received, total })
       flushSync()
     }
@@ -472,7 +472,7 @@ describe('ClipFeed', () => {
       const c = Number(fill.getAttribute('stroke-dasharray'))
       expect(Number(fill.getAttribute('stroke-dashoffset'))).toBeCloseTo(c * 0.58, 3)
       finish('/home/kim/Videos/clip.mp4')
-      await settle()
+      await nextTask()
     })
 
     it('an unknown size turns instead', async () => {
@@ -480,17 +480,17 @@ describe('ClipFeed', () => {
       expect(icon('M003').querySelector('.ring')!.classList.contains('spin')).toBe(true)
       expect(icon('M003').getAttribute('aria-label')).toBe('Cancel download')
       finish('/home/kim/Videos/clip.mp4')
-      await settle()
+      await nextTask()
     })
 
     it('clicking the ring again cancels it, with no error line', async () => {
       await downloading('M003', 10, 100)
       icon('M003').click()
-      await settle()
+      await nextTask()
       expect(calls('cancel_download').map((c) => c[1])).toEqual([{ key: 'clip:M003' }])
       expect(calls('save_clip')).toHaveLength(1)
       finish(null) // the core stopped and deleted the partial file
-      await settle()
+      await nextTask()
       flushSync()
       expect(icon('M003').getAttribute('aria-label')).toBe('Download clip')
       expect(icon('M003').classList.contains('active')).toBe(false)
@@ -502,10 +502,10 @@ describe('ClipFeed', () => {
       openMenu('M003')
       expect(items()).toEqual(['Downloading 42%', 'Cancel download', 'Pin clip', 'Remind me'])
       ;[...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((b) => b.textContent?.trim() === 'Cancel download')!.click()
-      await settle()
+      await nextTask()
       expect(calls('cancel_download').map((c) => c[1])).toEqual([{ key: 'clip:M003' }])
       finish(null)
-      await settle()
+      await nextTask()
       flushSync()
       openMenu('M003')
       expect(items()).toEqual(['Download', 'Pin clip', 'Remind me'])
@@ -514,7 +514,7 @@ describe('ClipFeed', () => {
     it('a finished download says Saved, quietly', async () => {
       await downloading('M003', 100, 100)
       finish('/home/kim/Videos/clip.mp4')
-      await settle()
+      await nextTask()
       flushSync()
       expect(icon('M003').getAttribute('aria-label')).toBe('Saved')
       expect(icon('M003').dataset.tip).toBe('Saved')
@@ -526,16 +526,16 @@ describe('ClipFeed', () => {
     it('Saved offers Show in folder (#333), on the video and in the menu, for the file it saved', async () => {
       await downloading('M003', 100, 100)
       finish('/home/kim/Videos/clip.mp4')
-      await settle()
+      await nextTask()
       flushSync()
       const pill = card('M003').querySelector<HTMLButtonElement>('button.clip-dl-folder')!
       expect(pill.textContent?.trim()).toBe('Show in folder')
       pill.click()
-      await settle()
+      await nextTask()
       expect(calls('reveal_path').map((c) => c[1])).toEqual([{ path: '/home/kim/Videos/clip.mp4' }])
       openMenu('M003')
       ;[...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((b) => b.textContent?.trim() === 'Show in folder')!.click()
-      await settle()
+      await nextTask()
       flushSync()
       expect(calls('reveal_path')).toHaveLength(2)
       expect(document.querySelector('[role="menu"]')).toBeNull()
@@ -544,13 +544,13 @@ describe('ClipFeed', () => {
     it("Show in folder that can't open the folder says so on the clip", async () => {
       await downloading('M003', 100, 100)
       finish('/home/kim/Videos/clip.mp4')
-      await settle()
+      await nextTask()
       flushSync()
       const base = invoke.getMockImplementation()!
       invoke.mockImplementation(async (cmd: string, args?: unknown) =>
         cmd === 'reveal_path' ? Promise.reject("Couldn't open that folder. The file may have moved.") : base(cmd, args))
       card('M003').querySelector<HTMLButtonElement>('button.clip-dl-folder')!.click()
-      await settle()
+      await nextTask()
       flushSync()
       expect(card('M003').querySelector('[role="alert"]')?.textContent).toBe("Couldn't open that folder. The file may have moved.")
     })
@@ -562,7 +562,7 @@ describe('ClipFeed', () => {
       pages = [[clip('M001')]]
       cmp = mount(ClipFeed, { target: document.body, props: { channelId: 'C1', filter: {}, layout, onOpenReplies } })
       flushSync()
-      await settle()
+      await nextTask()
       flushSync()
       expect(card('M001').querySelector('.replies')).toBeNull()
       card('M001').querySelector<HTMLButtonElement>('button[aria-label="Reply"]')!.click()
@@ -591,7 +591,7 @@ describe('ClipFeed', () => {
       flushSync()
       ;[...document.querySelectorAll<HTMLButtonElement>('.cell')].find((c) => c.dataset.key === '👍')!.click()
       flushSync()
-      await settle()
+      await nextTask()
       flushSync()
       expect(calls('add_reaction').map((c) => c[1])).toEqual([{ messageId: 'M001', emoji: '👍' }])
       expect(card('M001').querySelector('.reactions .chip.mine')?.textContent?.trim()).toBe('1')
@@ -602,7 +602,7 @@ describe('ClipFeed', () => {
       await show({ layout })
       card('M001').querySelector<HTMLButtonElement>('.reactions .chip.mine')!.click()
       flushSync()
-      await settle()
+      await nextTask()
       flushSync()
       expect(calls('remove_reaction').map((c) => c[1])).toEqual([{ messageId: 'M001', emoji: '🔥' }])
       expect(card('M001').querySelector('.reactions .chip.mine')).toBeNull()
@@ -616,7 +616,7 @@ describe('ClipFeed', () => {
       const sug = [...card('M001').querySelectorAll<HTMLButtonElement>('.chip.suggest')]
       expect(sug.map((b) => b.getAttribute('aria-label'))).toEqual(['React with 👍', 'React with 😂', 'React with 🎉'])
       sug[0].click()
-      await settle()
+      await nextTask()
       flushSync()
       // a clip keeps your other reactions (no take-back as on a quote)
       expect(calls('add_reaction').map((c) => c[1])).toEqual([{ messageId: 'M001', emoji: '👍' }])
@@ -643,7 +643,7 @@ describe('ClipFeed', () => {
       flushSync()
       expect(lengths().map((b) => b.textContent?.trim())).toEqual(['1 hour', '1 day', '1 week', 'Forever'])
       lengths()[3].click()
-      await settle()
+      await nextTask()
       expect(calls('pin_message').map((c) => c[1])).toEqual([{ messageId: 'M001', duration: 'forever' }])
       expect(document.querySelector('[role="menu"]')).toBeNull()
     })
@@ -660,7 +660,7 @@ describe('ClipFeed', () => {
       openMenu('M001')
       expect(item('Pin clip')).toBeUndefined()
       item('Unpin clip')!.click()
-      await settle()
+      await nextTask()
       expect(calls('unpin_message').map((c) => c[1])).toEqual([{ messageId: 'M001' }])
       app.state = applyEvent(app.state, { t: 'MessageUnpinned', d: { channel_id: 'C1', message_id: 'M001' } }, 0)
       flushSync()
@@ -678,7 +678,7 @@ describe('ClipFeed', () => {
       item('Pin clip')!.dispatchEvent(new Event('pointerenter'))
       flushSync()
       lengths()[0].click()
-      await settle()
+      await nextTask()
       flushSync()
       expect(card('M001').querySelector('[role=alert]')?.textContent).toBe('This chat already has 50 pins. Unpin something first.')
       expect(calls('list_pins').map((c) => c[1])).toEqual([{ channelId: 'C1' }])

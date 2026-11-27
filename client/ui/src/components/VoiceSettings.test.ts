@@ -7,6 +7,7 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: (cmd: string, args?: unknown) =
 
 import VoiceSettings from './VoiceSettings.svelte'
 import { voice } from '../lib/voice.svelte'
+import { flushMicrotasks } from '../lib/testSettle'
 
 const meterCalls = () => invoke.mock.calls.filter(([cmd]) => cmd === 'watch_voice_meters').map(([, a]) => a)
 
@@ -104,10 +105,6 @@ describe('VoiceSettings Strong (low delay) (#77)', () => {
       return undefined
     })
   })
-  const settle = async () => {
-    for (let i = 0; i < 6; i++) await Promise.resolve()
-    flushSync()
-  }
   const radios = () => [...document.querySelectorAll<HTMLButtonElement>('[role=radiogroup][aria-label="Noise suppression"] [role=radio]')]
   const calls = (name: string) => invoke.mock.calls.filter(([cmd]) => cmd === name)
   const text = () => document.body.textContent ?? ''
@@ -120,10 +117,10 @@ describe('VoiceSettings Strong (low delay) (#77)', () => {
 
   it('picking it applies it, starts the download, shows progress, and the line goes once ready', async () => {
     const c = mount(VoiceSettings, { target: document.body })
-    await settle()
+    await flushMicrotasks(6)
     expect(text()).not.toContain('Less delay')
     radios()[4].click()
-    await settle()
+    await flushMicrotasks(6)
     expect(radios().map((r) => r.getAttribute('aria-checked'))).toEqual(['false', 'false', 'false', 'false', 'true'])
     const applied = calls('set_audio_config').at(-1)?.[1]
     expect(JSON.stringify(applied)).toContain('"noise_suppression":"strong_low_delay"')
@@ -131,7 +128,7 @@ describe('VoiceSettings Strong (low delay) (#77)', () => {
     expect(calls('model_download')).toHaveLength(1)
     expect(document.querySelector('[data-model-state]')?.textContent).toContain('Downloading…')
     finish!({ state: 'ready' })
-    await settle()
+    await flushMicrotasks(6)
     expect(document.querySelector('[data-model-state]')).toBeNull()
     expect(text()).toContain('Less delay, uses more CPU and memory.')
     done(c)
@@ -139,16 +136,16 @@ describe('VoiceSettings Strong (low delay) (#77)', () => {
 
   it('a failed download says why, and Retry downloads again', async () => {
     const c = mount(VoiceSettings, { target: document.body })
-    await settle()
+    await flushMicrotasks(6)
     radios()[4].click()
-    await settle()
+    await flushMicrotasks(6)
     finish!({ state: 'failed', error: "couldn't reach the server" })
-    await settle()
+    await flushMicrotasks(6)
     const line = document.querySelector('[data-model-state="failed"]')
     expect(line?.textContent).toContain("Couldn't download it: couldn't reach the server")
     const retry = [...line!.querySelectorAll('button')].find((b) => b.textContent === 'Retry')!
     retry.click()
-    await settle()
+    await flushMicrotasks(6)
     expect(calls('model_download')).toHaveLength(2)
     expect(document.querySelector('[data-model-state]')?.textContent).toContain('Downloading…')
     done(c)
@@ -157,9 +154,9 @@ describe('VoiceSettings Strong (low delay) (#77)', () => {
   it('already downloaded: picking it downloads nothing', async () => {
     status = { state: 'ready' }
     const c = mount(VoiceSettings, { target: document.body })
-    await settle()
+    await flushMicrotasks(6)
     radios()[4].click()
-    await settle()
+    await flushMicrotasks(6)
     expect(calls('model_download')).toHaveLength(0)
     expect(document.querySelector('[data-model-state]')).toBeNull()
     done(c)
@@ -168,12 +165,12 @@ describe('VoiceSettings Strong (low delay) (#77)', () => {
   it('chosen earlier but not there (deleted, or damaged): it says so, with a Download button', async () => {
     localStorage.setItem('pulse.audio', JSON.stringify({ noise_suppression: 'strong_low_delay' }))
     const c = mount(VoiceSettings, { target: document.body })
-    await settle()
+    await flushMicrotasks(6)
     const line = document.querySelector('[data-model-state="missing"]')
     expect(line?.textContent).toContain('Not downloaded yet')
     expect(calls('model_download'), 'not without asking').toHaveLength(0)
     ;[...line!.querySelectorAll('button')].find((b) => b.textContent === 'Download')!.click()
-    await settle()
+    await flushMicrotasks(6)
     expect(calls('model_download')).toHaveLength(1)
     done(c)
   })
@@ -292,10 +289,6 @@ describe('VoiceSettings pre-processed mic hint (#588)', () => {
     invoke.mockClear()
     localStorage.clear()
   })
-  const settle = async () => {
-    for (let i = 0; i < 3; i++) await Promise.resolve()
-    flushSync()
-  }
   const hint = () => document.querySelector('[data-processed-mic-hint]')
 
   it('shows under Strong for a Sonar default mic, suggests Light, goes away on Light, and never changes the level', async () => {
@@ -311,14 +304,14 @@ describe('VoiceSettings pre-processed mic hint (#588)', () => {
         : undefined,
     )
     const c = mount(VoiceSettings, { target: document.body })
-    await settle()
+    await flushMicrotasks(3)
     expect(hint()?.textContent).toBe(
       'Your mic already cleans up its sound (SteelSeries Sonar). Light noise suppression may sound more natural.',
     )
     expect(invoke.mock.calls.some(([cmd]) => cmd === 'set_audio_config')).toBe(false)
     const radios = [...document.querySelectorAll<HTMLElement>('[role=radiogroup][aria-label="Noise suppression"] [role=radio]')]
     radios.find((r) => r.textContent === 'Light')!.click()
-    await settle()
+    await flushMicrotasks(3)
     expect(hint()).toBeNull()
     unmount(c)
     document.body.innerHTML = ''
@@ -351,17 +344,13 @@ describe('VoiceSettings on Linux', () => {
         ? { inputs: inputs.map((name) => ({ name, is_default: false })), outputs: outputs.map((name) => ({ name, is_default: false })) }
         : undefined,
     )
-  const settle = async () => {
-    for (let i = 0; i < 3; i++) await Promise.resolve()
-    flushSync()
-  }
   const hint = () => [...document.querySelectorAll('.hint')].find((p) => p.textContent?.includes('system sound settings'))
 
   it('lists the sound server devices and drops the system-settings hint', async () => {
     asLinux()
     devices(['Laptop Mic'], ['Earbuds'])
     const c = mount(VoiceSettings, { target: document.body })
-    await settle()
+    await flushMicrotasks(3)
     expect(hint()).toBeUndefined()
     unmount(c)
     document.body.innerHTML = ''
@@ -373,7 +362,7 @@ describe('VoiceSettings on Linux', () => {
     asLinux()
     devices(['default'], ['default'])
     const c = mount(VoiceSettings, { target: document.body })
-    await settle()
+    await flushMicrotasks(3)
     expect(hint()).toBeDefined()
     unmount(c)
     document.body.innerHTML = ''
@@ -387,7 +376,7 @@ describe('VoiceSettings on Linux', () => {
       return undefined
     })
     const c = mount(VoiceSettings, { target: document.body })
-    await settle()
+    await flushMicrotasks(3)
     expect(hint()).toBeUndefined()
     unmount(c)
     document.body.innerHTML = ''
@@ -405,10 +394,6 @@ describe('VoiceSettings mic test during a call', () => {
   })
   const button = () => [...document.querySelectorAll<HTMLButtonElement>('.check button')][0]
   const hint = () => document.querySelector('[data-mic-test-hint]')?.textContent
-  const settle = async () => {
-    for (let i = 0; i < 3; i++) await Promise.resolve()
-    flushSync()
-  }
 
   it('in a call the test is off, with a hint to leave the call first', () => {
     voice.channelId = 'c1'
@@ -446,7 +431,7 @@ describe('VoiceSettings mic test during a call', () => {
       expect(button().disabled).toBe(false)
       expect(hint()).toBe('Hear your mic the way others will.')
       button().click()
-      await settle()
+      await flushMicrotasks(3)
       expect(invoke.mock.calls.some(([cmd]) => cmd === 'start_mic_test')).toBe(true)
       expect(button().textContent).toBe('Stop')
       voice.channelId = 'c1'
@@ -470,10 +455,6 @@ describe('VoiceSettings input too hot (#591)', () => {
     voice.micClipping = false
   })
   const warn = () => document.querySelector('[data-mic-clipping]')
-  const settle = async () => {
-    for (let i = 0; i < 3; i++) await Promise.resolve()
-    flushSync()
-  }
 
   it('in a call: shows while the core says the mic clips, and goes when it stops', () => {
     voice.channelId = 'c1'
@@ -505,13 +486,13 @@ describe('VoiceSettings input too hot (#591)', () => {
       flushSync()
       expect(warn(), 'no mic running: nothing to say').toBeNull()
       button().click()
-      await settle()
+      await flushMicrotasks(3)
       expect(warn(), 'a new test starts clean').toBeNull()
       voice.micClipping = true
       flushSync()
       expect(warn()).not.toBeNull()
       button().click()
-      await settle()
+      await flushMicrotasks(3)
       expect(warn()).toBeNull()
     } finally {
       unmount(c)
@@ -526,13 +507,13 @@ describe('VoiceSettings input too hot (#591)', () => {
     try {
       flushSync()
       button().click()
-      await settle()
+      await flushMicrotasks(3)
       voice.micClipping = true
       flushSync()
       expect(warn()).not.toBeNull()
       invoke.mockClear()
       document.querySelector<HTMLButtonElement>('button.switch[aria-label="Voice clarity EQ"]')!.click()
-      await settle()
+      await flushMicrotasks(3)
       expect(invoke.mock.calls.some(([cmd]) => cmd === 'start_mic_test'), 'the test restarted').toBe(true)
       expect(voice.micClipping).toBe(false)
       flushSync()
@@ -550,7 +531,7 @@ describe('VoiceSettings input too hot (#591)', () => {
     try {
       flushSync()
       button().click()
-      await settle()
+      await flushMicrotasks(3)
       voice.micClipping = true
       flushSync()
       expect(warn()).not.toBeNull()
@@ -577,10 +558,6 @@ describe('VoiceSettings mic test: hear yourself as others do (#659)', () => {
   })
   const sw = () => document.querySelector<HTMLButtonElement>('button.switch[aria-label="Hear yourself as others do"]')!
   const note = () => document.querySelector('[data-as-others-delay]')
-  const settle = async () => {
-    for (let i = 0; i < 3; i++) await Promise.resolve()
-    flushSync()
-  }
 
   it('off by default; turning it on saves it and notes the added delay', async () => {
     const c = mount(VoiceSettings, { target: document.body })
@@ -589,7 +566,7 @@ describe('VoiceSettings mic test: hear yourself as others do (#659)', () => {
       expect(sw().getAttribute('aria-pressed')).toBe('false')
       expect(note()).toBeNull()
       sw().click()
-      await settle()
+      await flushMicrotasks(3)
       expect(sw().getAttribute('aria-pressed')).toBe('true')
       expect(note()?.textContent).toMatch(/delay/)
       expect(localStorage.getItem('pulse.audio')).toContain('"mic_test_as_others_hear":true')
@@ -616,10 +593,10 @@ describe('VoiceSettings mic test: hear yourself as others do (#659)', () => {
     try {
       flushSync()
       document.querySelector<HTMLButtonElement>('.check button')!.click()
-      await settle()
+      await flushMicrotasks(3)
       invoke.mockClear()
       sw().click()
-      await settle()
+      await flushMicrotasks(3)
       const starts = invoke.mock.calls.filter(([cmd]) => cmd === 'start_mic_test')
       expect(invoke.mock.calls.some(([cmd]) => cmd === 'stop_mic_test')).toBe(true)
       expect(JSON.stringify(starts.at(-1)?.[1])).toContain('"mic_test_as_others_hear":true')
@@ -638,10 +615,6 @@ describe('VoiceSettings record a mic sample (#583)', () => {
   })
   const button = () => document.querySelector<HTMLButtonElement>('.sample button')!
   const hint = () => document.querySelector('[data-mic-sample-hint]')?.textContent
-  const settle = async () => {
-    for (let i = 0; i < 5; i++) await Promise.resolve()
-    flushSync()
-  }
 
   it('needs the mic running: off outside a call and the test, with a hint', () => {
     invoke.mockImplementation(async () => undefined)
@@ -668,16 +641,16 @@ describe('VoiceSettings record a mic sample (#583)', () => {
       flushSync()
       expect(button().disabled).toBe(false)
       button().click()
-      await settle()
+      await flushMicrotasks()
       expect(button().textContent).toBe('Recording…')
       expect(button().disabled).toBe(true)
       finish({ raw: '/logs/mic-sample-raw.wav', sent: '/logs/mic-sample-sent.wav', folder: '/logs', seconds: 15 })
-      await settle()
+      await flushMicrotasks()
       const saved = document.querySelector('[data-mic-sample-saved]')!
       expect(saved.textContent).toContain('/logs')
       expect(saved.textContent).toContain('mic-sample-sent.wav')
       saved.querySelector('button')!.click()
-      await settle()
+      await flushMicrotasks()
       expect(invoke).toHaveBeenCalledWith('reveal_path', { path: '/logs/mic-sample-raw.wav' })
     } finally {
       unmount(c)
@@ -696,7 +669,7 @@ describe('VoiceSettings record a mic sample (#583)', () => {
     try {
       flushSync()
       button().click()
-      await settle()
+      await flushMicrotasks()
       expect(document.querySelector('[role=alert]')?.textContent).toBe('No audio from your mic.')
       expect(button().textContent).toBe('Record a mic sample')
     } finally {
@@ -704,5 +677,38 @@ describe('VoiceSettings record a mic sample (#583)', () => {
       document.body.innerHTML = ''
       voice.channelId = null
     }
+  })
+})
+
+describe("VoiceSettings: show everyone's rings as Classic (#651)", () => {
+  beforeEach(() => {
+    invoke.mockClear()
+    localStorage.clear()
+  })
+
+  it('the_classic_rings_toggle_persists_and_turns_rings_classic', async () => {
+    const { ringPrefs, setClassicRings } = await import('../lib/speakingRing.svelte')
+    setClassicRings(false)
+    localStorage.clear()
+    const c = mount(VoiceSettings, { target: document.body })
+    flushSync()
+    invoke.mockClear()
+    const sw = () => document.querySelector<HTMLButtonElement>(`button.switch[aria-label="Show everyone's rings as Classic"]`)!
+    expect(sw().getAttribute('aria-pressed')).toBe('false')
+    // after the audio toggles, in the same list
+    const rows = [...document.querySelectorAll('.toggles .row')]
+    expect(rows.at(-1)!.contains(sw())).toBe(true)
+    expect(rows.at(-1)!.textContent).toContain('Shows every speaking ring as the plain ring. Lighter on slower PCs, and calmer if motion distracts you.')
+    sw().click()
+    flushSync()
+    await Promise.resolve()
+    expect(sw().getAttribute('aria-pressed')).toBe('true')
+    expect(ringPrefs.classic).toBe(true)
+    expect(localStorage.getItem('pulse.classicRings')).toBe('true')
+    // UI only: it never reaches the core
+    expect(invoke.mock.calls.filter(([cmd]) => cmd === 'set_audio_config')).toEqual([])
+    unmount(c)
+    document.body.innerHTML = ''
+    setClassicRings(false)
   })
 })

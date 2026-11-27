@@ -27,6 +27,7 @@ import { clipView } from '../lib/clips'
 import { clipPanelOpen } from '../lib/clipPrefs'
 import { reactiveProps } from '../lib/testProps.svelte'
 import { testMe, testReady } from '../lib/testReady'
+import { nextTask } from '../lib/testSettle'
 
 const sam = { id: 'U2', username: 'sam', display_name: 'sam', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
 const kim = { id: 'U3', username: 'kim', display_name: 'kim', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
@@ -42,7 +43,6 @@ const ready = (over = {}) =>
 const facets = { games: [{ game_id: 'G2', count: 4 }, { game_id: 'G1', count: 2 }], authors: [{ user_id: 'U2', count: 5 }, { user_id: 'U3', count: 1 }], total: 7 }
 
 let cmp: ReturnType<typeof mount> | undefined
-const settle = () => new Promise((r) => setTimeout(r, 0))
 const calls = (cmd: string) => invoke.mock.calls.filter((c) => c[0] === cmd)
 /** A row of the clips panel's `games` or `people` list, by its name. */
 const row = (list: string, name: string) =>
@@ -107,7 +107,7 @@ describe('ClipsHeader', () => {
     // the clear button goes with the summary: the focus lands on the panel toggle, not on the page
     p.filter = {}
     flushSync()
-    await settle()
+    await nextTask()
     expect(document.activeElement).toBe(document.querySelector('button[aria-label="Show filters panel"]'))
     p.filter = { game: 'G2', author: 'U3' }
     flushSync()
@@ -158,7 +158,7 @@ describe('ClipsHeader', () => {
     flushSync()
     wall.click()
     expect(clipView(app.state, 'C1')).toBe('wall')
-    await settle()
+    await nextTask()
     expect(clipView(app.state, 'C1')).toBe('list')
   })
 
@@ -193,7 +193,7 @@ describe('ClipsChannel', () => {
     invoke.mockImplementation(async (cmd: string) => (cmd === 'list_clips' ? [clip('M2'), clip('M1')] : cmd === 'clip_facets' ? facets : undefined))
     cmp = mount(ClipsChannel, { target: document.body, props: { channelId: 'C1', serverId: 'S1' } })
     flushSync()
-    await settle()
+    await nextTask()
     flushSync()
     expect(document.body.textContent).toContain('highlights')
     expect(document.querySelector('button[aria-label="Wall view"]')?.getAttribute('aria-pressed')).toBe('true')
@@ -206,13 +206,13 @@ describe('ClipsChannel', () => {
     app.state = applyReady(emptyState(), ready({ clip_views: [{ channel_id: 'C1', view: 'list' }] }))
     cmp = mount(ClipsChannel, { target: document.body, props: { channelId: 'C1', serverId: 'S1' } })
     flushSync()
-    await settle()
+    await nextTask()
     flushSync()
     expect(document.querySelector('.grid')).toBeNull()
     expect(document.querySelector('.feed.list')).not.toBeNull()
     row('games', 'Apex').click()
     flushSync()
-    await settle()
+    await nextTask()
     expect(calls('list_clips').at(-1)![1]).toEqual({ channelId: 'C1', before: null, game: 'G1', author: null })
   })
 
@@ -262,11 +262,11 @@ describe('ClipsChannel', () => {
     app.state = applyReady(emptyState(), ready({ clip_views: [{ channel_id: 'C1', view: 'list' }] }))
     cmp = mount(ClipsChannel, { target: document.body, props: { channelId: 'C1', serverId: 'S1' } })
     flushSync()
-    await settle()
+    await nextTask()
     flushSync()
     button('View 2 replies').click()
     flushSync()
-    await settle()
+    await nextTask()
     const panel = document.querySelector<HTMLElement>('.replies-panel')!
     expect(panel).not.toBeNull()
     expect(panel.querySelector('.pinned [data-clip-id="M1"]')).not.toBeNull()
@@ -280,17 +280,17 @@ describe('ClipsChannel', () => {
     app.state = applyReady(emptyState(), ready({ clip_views: [{ channel_id: 'C1', view: 'list' }] }))
     cmp = mount(ClipsChannel, { target: document.body, props: { channelId: 'C1', serverId: 'S1' } })
     flushSync()
-    await settle()
+    await nextTask()
     flushSync()
     button('View 1 reply').click()
     flushSync()
-    await settle()
+    await nextTask()
     const askIn = async (root: Element) => {
       root.querySelector<HTMLButtonElement>('button[aria-label="Clip actions"]')!.click()
       flushSync()
       ;[...root.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((b) => b.textContent?.trim() === 'Delete')!.click()
       flushSync()
-      await settle()
+      await nextTask()
       return root.querySelector<HTMLElement>('[role="alertdialog"] .keep')!
     }
     await askIn(document.querySelector('.feed [data-clip-id="M1"]')!)
@@ -301,7 +301,7 @@ describe('ClipsChannel', () => {
   async function openChannel(id = 'C1') {
     cmp = mount(ClipsChannel, { target: document.body, props: { channelId: id, serverId: 'S1' } })
     flushSync()
-    await settle()
+    await nextTask()
     flushSync()
   }
 
@@ -331,18 +331,18 @@ describe('ClipsChannel', () => {
     await openChannel()
     row('games', 'Rocket League').click()
     flushSync()
-    await settle()
+    await nextTask()
     expect(calls('list_clips').at(-1)![1]).toEqual({ channelId: 'C1', before: null, game: 'G2', author: null })
     expect(row('games', 'Rocket League').getAttribute('aria-pressed')).toBe('true')
     expect(row('games', 'All games').getAttribute('aria-pressed')).toBe('false')
     row('people', 'Kimmy').click()
     flushSync()
-    await settle()
+    await nextTask()
     expect(calls('list_clips').at(-1)![1]).toEqual({ channelId: 'C1', before: null, game: 'G2', author: 'U3' })
     expect(row('people', 'Kimmy').getAttribute('aria-pressed')).toBe('true')
     row('games', 'All games').click()
     flushSync()
-    await settle()
+    await nextTask()
     expect(calls('list_clips').at(-1)![1]).toEqual({ channelId: 'C1', before: null, game: null, author: 'U3' })
   })
 
@@ -375,7 +375,7 @@ describe('ClipsChannel', () => {
     expect(document.querySelector('.clips-panel')).not.toBeNull()
     button('View 2 replies').click()
     flushSync()
-    await settle()
+    await nextTask()
     expect(document.querySelector('.replies-panel')).not.toBeNull()
     expect(document.querySelector('.clips-panel')).toBeNull()
     expect(clipPanelOpen('C1')).toBe(true) // not a choice to close it
@@ -385,7 +385,7 @@ describe('ClipsChannel', () => {
     expect(toggle().hasAttribute('aria-controls')).toBe(false)
     document.querySelector<HTMLButtonElement>('.replies-panel button[aria-label="Close replies"]')!.click()
     flushSync()
-    await settle()
+    await nextTask()
     flushSync()
     expect(document.querySelector('.replies-panel')).toBeNull()
     expect(document.querySelector('.clips-panel')).not.toBeNull()
@@ -399,18 +399,18 @@ describe('ClipsChannel', () => {
     await openChannel()
     row('games', 'Apex').click()
     flushSync()
-    await settle()
+    await nextTask()
     flushSync()
     button('View 2 replies').click()
     flushSync()
-    await settle()
+    await nextTask()
     flushSync()
     expect(document.querySelector('.head .filtering .what')?.textContent).toBe('Apex')
     const toggle = document.querySelector<HTMLButtonElement>('.head button[aria-label="Show filters panel"]')!
     toggle.focus()
     toggle.click()
     flushSync()
-    await settle()
+    await nextTask()
     flushSync()
     expect(document.querySelector('.replies-panel')).toBeNull()
     const panel = document.querySelector<HTMLElement>('.clips-panel')!
@@ -431,10 +431,10 @@ describe('ClipsChannel', () => {
     flushSync()
     button('View 2 replies').click()
     flushSync()
-    await settle()
+    await nextTask()
     document.querySelector<HTMLButtonElement>('.head button[aria-label="Show filters panel"]')!.click()
     flushSync()
-    await settle()
+    await nextTask()
     flushSync()
     expect(document.querySelector('.replies-panel')).toBeNull()
     expect(document.querySelector('.clips-panel')).not.toBeNull()
@@ -445,7 +445,7 @@ describe('ClipsChannel', () => {
     await openChannel()
     row('people', 'Kimmy').click()
     flushSync()
-    await settle()
+    await nextTask()
     app.state = { ...app.state, clipFacets: { C1: { ...facets, authors: [{ user_id: 'U2', count: 5 }], total: 6 } } }
     flushSync()
     expect(rows('people')).toEqual([['Everyone', '6'], ['sam', '5'], ['Kimmy', '0']])
@@ -468,7 +468,7 @@ describe('ClipsChannel', () => {
     expect(calls('clip_facets').at(-1)![1]).toEqual({ channelId: 'C1' })
     row('people', 'sam').click()
     flushSync()
-    await settle()
+    await nextTask()
     flushSync()
     expect(calls('clip_facets').at(-1)![1]).toEqual({ channelId: 'C1', author: 'U2' })
     // Games are Sam's: Rocket League has none of his, but "All games" is his three; People keeps the whole channel
@@ -476,14 +476,14 @@ describe('ClipsChannel', () => {
     expect(rows('people')).toEqual([['Everyone', '7'], ['sam', '5'], ['Kimmy', '1']])
     row('games', 'Apex').click()
     flushSync()
-    await settle()
+    await nextTask()
     flushSync()
     expect(calls('clip_facets').at(-1)![1]).toEqual({ channelId: 'C1', game: 'G1', author: 'U2' })
     // while the new counts are on their way the last ones stay on screen, never blank
     expect(rows('games')).toEqual([['All games', '3'], ['Apex', '2']])
     expect(rows('people')).toEqual([['Everyone', '7'], ['sam', '5'], ['Kimmy', '1']])
     release!()
-    await settle()
+    await nextTask()
     flushSync()
     // People are Apex's: "Everyone" is Apex's two, Kimmy has none (gone), Sam still picked
     expect(rows('people')).toEqual([['Everyone', '2'], ['sam', '2']])
@@ -491,7 +491,7 @@ describe('ClipsChannel', () => {
     // back to all games: People go back to the whole channel's (asked again for that filter)
     row('games', 'All games').click()
     flushSync()
-    await settle()
+    await nextTask()
     flushSync()
     expect(calls('clip_facets').at(-1)![1]).toEqual({ channelId: 'C1', author: 'U2' })
     expect(rows('people')).toEqual([['Everyone', '7'], ['sam', '5'], ['Kimmy', '1']])
@@ -512,9 +512,9 @@ describe('ClipsChannel', () => {
     await openChannel()
     row('people', 'sam').click()
     flushSync()
-    await settle()
+    await nextTask()
     flushSync()
-    await settle()
+    await nextTask()
     flushSync()
     expect(calls('clip_facets')).toHaveLength(2)
     expect(rows('games')).toEqual([['All games', '7'], ['Rocket League', '4'], ['Apex', '2']])

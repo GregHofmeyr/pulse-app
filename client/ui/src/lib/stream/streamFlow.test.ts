@@ -2,6 +2,7 @@
 // The stream store's lifecycle against a fake `#v` connection and a fake Tauri core.
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { defaultMixer } from '../mixer'
+import { nextTask } from '../testSettle'
 
 type Handler = (args: Record<string, unknown> | undefined) => Promise<unknown>
 const core = vi.hoisted(() => ({
@@ -73,12 +74,11 @@ function fakeTrack(surface: 'monitor' | 'window' = 'monitor') {
 }
 
 const calls = (cmd: string) => core.calls.filter(([c]) => c === cmd).map(([, a]) => a)
-const settle = () => new Promise((r) => setTimeout(r, 0))
 /** Settles until `done()` holds; a bounded wait that names what never happened instead of a test timeout. */
 async function until(done: () => boolean, what: string, max = 500) {
   for (let i = 0; i < max; i++) {
     if (done()) return
-    await settle()
+    await nextTask()
   }
   throw new Error(`still waiting for ${what} after ${max} settles`)
 }
@@ -150,10 +150,10 @@ describe('go live', () => {
     const going = streamApi.goLive('c1', track as never, 'Game', settings(true))
     await until(() => calls('stream_audio_start').length > 0, 'stream_audio_start')
     track.end() // the shared window closed while stream audio was starting
-    await settle()
+    await nextTask()
     audioStarted.resolve(undefined)
     await going
-    await settle()
+    await nextTask()
     expect(stream.live).toBeNull()
     expect(room.disconnect).toHaveBeenCalled()
     expect(stream.room).toBeNull()
@@ -172,7 +172,7 @@ describe('stop', () => {
     expect(calls('stream_stop')).toEqual([{ channelId: 'c1' }])
     expect(calls('stream_audio_stop')).toHaveLength(1)
     expect(stream.live).toBeNull()
-    await settle()
+    await nextTask()
     expect(done).toBe(false) // the stop is over once stream sound is too
     soundStopped.resolve(undefined)
     await stopping
@@ -299,7 +299,7 @@ describe('streams back after a server restart', () => {
     await streamApi.onReady(ready, before)
     core.calls = []
     streamApi.onEvent(started('other'))
-    await settle()
+    await nextTask()
     expect(calls('stream_watch')).toEqual([{ channelId: 'c1', streamer: 'other' }])
   })
 })
@@ -794,7 +794,7 @@ describe('live sounds', () => {
     app.state = { ...app.state, myStatus: { status: 'dnd', dnd_until: null } }
     stream.watching = [{ channelId: 'c2', streamer: 'sam', quality: 'auto', view: 'preview' }]
     streamApi.onEvent(ended('sam', 'stopped', 'c2'))
-    await settle()
+    await nextTask()
     expect(played('live_end')).toHaveLength(1)
   })
 
@@ -822,7 +822,7 @@ describe('live sounds', () => {
     fake.connect = async () => fakeRoom()
     await streamApi.watch('c1', 'sam')
     streamApi.onEvent(ended('sam', 'stopped'))
-    await settle()
+    await nextTask()
     expect(played('live_end')).toHaveLength(1)
   })
 
@@ -831,7 +831,7 @@ describe('live sounds', () => {
     const { streamApi, stream } = await inVoice()
     stream.watching = [{ channelId: 'c2', streamer: 'sam', quality: 'auto', view: 'preview' }]
     streamApi.onEvent(ended('sam', 'stopped', 'c2'))
-    await settle()
+    await nextTask()
     expect(stream.watching).toEqual([])
     expect(played('live_end')).toHaveLength(1)
   })
@@ -839,7 +839,7 @@ describe('live sounds', () => {
   it('an_unwatched_stream_ending_in_another_channel_is_silent', async () => {
     const { streamApi } = await inVoice()
     streamApi.onEvent(ended('sam', 'stopped', 'c2'))
-    await settle()
+    await nextTask()
     expect(played('live_end')).toEqual([])
   })
 
@@ -1117,7 +1117,7 @@ describe('ghost viewers (#46)', () => {
     const { streamApi, stream } = await restarted()
     // the streamer isn't back yet when we are
     await streamApi.onReady({ me: { id: 'me' }, streams: [] } as never)
-    await settle()
+    await nextTask()
     expect(stream.watching).toHaveLength(0)
     streamApi.onEvent({ t: 'StreamStarted', d: { stream: info('alex') } } as never)
     await until(() => stream.watching.length === 1, 'the watch to start again')
@@ -1127,7 +1127,7 @@ describe('ghost viewers (#46)', () => {
   it('a_ghost_watch_dropped_by_a_restart_is_not_watched_again_once_ghosts_are_off', async () => {
     const { streamApi, stream } = await restarted()
     await streamApi.onReady({ me: { id: 'me' }, streams: [info('alex', false)] } as never)
-    await settle()
+    await nextTask()
     expect(stream.watching).toHaveLength(0)
     expect(stream.notice).toMatch(/switched to voice-only$/)
   })
@@ -1143,7 +1143,7 @@ describe('ghost viewers (#46)', () => {
     }
     expect(stream.notice).toBe('Stopped watching: the connection was lost')
     streamApi.onEvent({ t: 'StreamStarted', d: { stream: info('alex') } } as never)
-    await settle()
+    await nextTask()
     expect(stream.watching).toHaveLength(0)
   })
 
@@ -1152,7 +1152,7 @@ describe('ghost viewers (#46)', () => {
     fake.connect = async () => fakeRoom()
     await mod.streamApi.watch('c1', 'alex') // in the call
     mod.streamApi.onEvent({ t: 'StreamUpdated', d: { stream: info('alex', false) } } as never)
-    await settle()
+    await nextTask()
     expect(mod.stream.notice).toBe('')
     expect(mod.stream.watching).toHaveLength(1)
   })
@@ -1183,8 +1183,8 @@ describe('ghost viewers (#46)', () => {
     voice.channelId = 'c1'
     voice.connection = 'connecting' as never
     const going = streamApi.onVoiceChanged('c1')
-    await settle()
-    await settle()
+    await nextTask()
+    await nextTask()
     expect(calls('stream_watch')).toEqual([])
     voice.connection = 'connected'
     await going
@@ -1372,7 +1372,7 @@ describe('the stream connection lost for good', () => {
     const next = fakeRoom()
     fake.connect = () => connecting.p
     room.lose()
-    await settle()
+    await nextTask()
     await streamApi.stop()
     connecting.resolve(next)
     await until(() => track.stop.mock.calls.length > 0, 'the capture to stop')
@@ -1397,7 +1397,7 @@ describe('the stream connection lost for good', () => {
     await streamApi.stop() // lets the connection go (nothing else on it)
     expect(room.disconnect).toHaveBeenCalled()
     room.lose() // LiveKit reports that disconnect too
-    await settle()
+    await nextTask()
     expect(stream.notice).toBeFalsy()
   })
 })
@@ -1417,7 +1417,7 @@ describe('a stream the server lists for us that we are not sending', () => {
     const { streamApi } = await setVoice(await load(), 'c1')
     streamApi.onEvent(ev('StreamUpdated', 'me'))
     streamApi.onEvent(ev('StreamStarted', 'me'))
-    await settle()
+    await nextTask()
     expect(calls('stream_stop')).toEqual([{ channelId: 'c1' }, { channelId: 'c1' }])
   })
 
@@ -1429,7 +1429,7 @@ describe('a stream the server lists for us that we are not sending', () => {
     await until(() => mod.stream.live === null, 'the local share to end')
     core.calls = []
     mod.streamApi.onEvent(ev('StreamUpdated', 'me'))
-    await settle()
+    await nextTask()
     expect(calls('stream_stop')).toEqual([{ channelId: 'c1' }])
   })
 
@@ -1443,7 +1443,7 @@ describe('a stream the server lists for us that we are not sending', () => {
     mod.streamApi.onEvent(ev('StreamStarted', 'me', 'c3')) // a call we're not in
     await setVoice(mod, null)
     mod.streamApi.onEvent(ev('StreamStarted', 'me', 'c3')) // in no call: another of our devices
-    await settle()
+    await nextTask()
     expect(calls('stream_stop')).toEqual([])
 
     // a go-live in flight: its own StreamStarted can come before it's done
@@ -1457,7 +1457,7 @@ describe('a stream the server lists for us that we are not sending', () => {
     fresh.streamApi.onEvent(ev('StreamStarted', 'me'))
     announcing.resolve(info('me'))
     await going
-    await settle()
+    await nextTask()
     expect(calls('stream_stop')).toEqual([])
   })
 })

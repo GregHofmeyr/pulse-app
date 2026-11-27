@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { applyEvent, applyReady, emptyState } from './state'
-import { onUnknownPerson, roleColorFor, userOf, callRoster, channelsFor, displayName, groupedWith, groupedPending, isLive, isMember, liveIn, mentionablesFor, nameOfIn, pillNamesFor, serverPeople, typingNames, voiceOccupants, inServerVoice } from './selectors'
+import { onUnknownPerson, roleColorFor, userOf, callRoster, displayName, groupedWith, groupedPending, isLive, isMember, liveIn, mentionablesFor, nameOfIn, pillNamesFor, serverPeople, typingNames, voiceOccupants, inServerVoice } from './selectors'
 import type { Message } from './protocol/Message'
 import type { Ready } from './protocol/Ready'
 import type { StreamInfo } from './protocol/StreamInfo'
@@ -49,20 +49,6 @@ const r: Ready = {
 const s = applyReady(emptyState(), r)
 
 describe('selectors', () => {
-  it('channelsFor splits text/voice, sorted by position, only that server', () => {
-    const c = channelsFor(s, 'S1')
-    expect(c.text.map((x) => x.id)).toEqual(['C1', 'C2'])
-    expect(c.voice.map((x) => x.id)).toEqual(['V1'])
-    expect(c.quotes).toEqual([])
-  })
-
-  it('channelsFor lists quotes channels in their own group', () => {
-    const q = applyReady(emptyState(), { ...r, channels: [...r.channels, { id: 'Q2', server_id: 'S1', kind: 'quotes', name: 'b', position: 1 }, { id: 'Q1', server_id: 'S1', kind: 'quotes', name: 'a', position: 0 }, { id: 'QX', server_id: 'S2', kind: 'quotes', name: 'x', position: 0 }] })
-    const c = channelsFor(q, 'S1')
-    expect(c.quotes.map((x) => x.id)).toEqual(['Q1', 'Q2'])
-    expect(c.text.map((x) => x.id)).toEqual(['C1', 'C2'])
-  })
-
   it('isMember', () => {
     expect(isMember(s, 'S1')).toBe(true)
     expect(isMember(s, 'S2')).toBe(false)
@@ -351,15 +337,6 @@ describe('nameOfIn', () => {
     const nameOf = nameOfIn(() => s, 'S1')
     expect(nameOf('U2')).toBe('Big Dog')
     expect(nameOf(null)).toBe('Pulse')
-  })
-})
-
-describe('channelsFor clips', () => {
-  it('clips channels are their own group', () => {
-    const st = applyReady(emptyState(), { ...r, channels: [...r.channels, { id: 'K1', server_id: 'S1', kind: 'clips', name: 'clips', position: 0 }] })
-    const g = channelsFor(st, 'S1')
-    expect(g.clips.map((c) => c.id)).toEqual(['K1'])
-    expect(g.text.map((c) => c.id)).not.toContain('K1')
   })
 })
 

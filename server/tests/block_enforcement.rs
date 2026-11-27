@@ -7,48 +7,15 @@ use std::time::Duration;
 
 use base64::Engine;
 use common::*;
-use futures::{SinkExt, StreamExt};
 use livekit_api::access_token::AccessToken;
-use pulse_protocol::gateway::{ClientFrame, Event, ServerFrame};
+use pulse_protocol::gateway::{Event, ServerFrame};
 use pulse_protocol::ids::{ChannelId, UserId};
-use pulse_protocol::rest::{Message, ServerInvite};
+use pulse_protocol::rest::{InviteState, Message, ServerInvite};
 use serde_json::json;
 use sha2::{Digest, Sha256};
-use tokio_tungstenite::tungstenite::Message as Ws;
-
-type Socket =
-    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
 async fn hello(app: &TestApp, token: &str) -> Socket {
-    let mut ws = tokio_tungstenite::connect_async(app.ws_url("/gateway"))
-        .await
-        .unwrap()
-        .0;
-    let f = serde_json::to_string(&ClientFrame::Hello {
-        token: token.into(),
-        client_version: pulse_protocol::PROTOCOL_VERSION,
-    })
-    .unwrap();
-    ws.send(Ws::text(f)).await.unwrap();
-    loop {
-        if let Some(ServerFrame::Ready(_)) = next_frame(&mut ws).await {
-            return ws;
-        }
-    }
-}
-
-async fn next_frame(ws: &mut Socket) -> Option<ServerFrame> {
-    loop {
-        let m = tokio::time::timeout(Duration::from_secs(3), ws.next())
-            .await
-            .ok()??
-            .ok()?;
-        match m {
-            Ws::Text(t) => return Some(serde_json::from_str(&t).unwrap()),
-            Ws::Close(_) => return None,
-            _ => continue,
-        }
-    }
+    common::hello(app, token).await.0
 }
 
 async fn drain(ws: &mut Socket, ms: u64) -> Vec<Event> {
@@ -346,6 +313,78 @@ async fn a_withheld_message_s_files_and_view_once_stay_withheld() {
     assert_eq!(r.status(), 404);
 }
 
+/// A forward of a message withheld from the blocker (#547) is its author's new message, a re-share they chose: where
+/// the blocker can see it (a server they share) it carries the original's files, as it carries its words, and the
+/// blocker's client treats it as any message of theirs. Into the 1:1 DM with the blocker it is withheld like a send.
+#[tokio::test]
+async fn a_forward_of_a_withheld_message_carries_its_files_only_where_the_forward_reaches() {
+    let app = spawn().await;
+    let (alex_id, alex) = register(&app, "alex").await;
+    let (sam_id, sam) = register(&app, "sam").await;
+    let server = create_server(&app, &alex, "Den").await.id;
+    assert_eq!(join_server(&app, &sam, server).await.status(), 200);
+    let general = general(&app, &alex, server).await.id;
+    let dm = create_dm(&app, &sam, &[alex_id]).await.id;
+    block(&app, &alex, sam_id).await;
+    let m = send(&app, &sam, dm, "withheld").await;
+    let att = pulse_protocol::ids::next_ulid().to_string();
+    sqlx::query(
+        "INSERT INTO attachments (id, key, user_id, channel_id, message_id, name, content_type, kind, size, created_at)
+         VALUES (?, ?, ?, ?, ?, 'a.png', 'image/png', 'image', 10, ?)",
+    )
+    .bind(att.clone())
+    .bind(format!("k/{att}"))
+    .bind(sam_id.to_string())
+    .bind(dm.to_string())
+    .bind(m.id.to_string())
+    .bind(pulse_server::db::now())
+    .execute(&app.db)
+    .await
+    .unwrap();
+    let forward = |to: ChannelId| {
+        let (app, sam) = (&app, &sam);
+        async move {
+            let r = post_json(
+                app,
+                sam,
+                &format!("/messages/{}/forward", m.id),
+                json!({ "channel_id": to }),
+            )
+            .await;
+            assert_eq!(r.status(), 200);
+            r.json::<Message>().await.unwrap()
+        }
+    };
+    let urls = |id: pulse_protocol::ids::MessageId| {
+        let (app, alex) = (&app, &alex);
+        async move {
+            let r = app
+                .http
+                .get(app.url(&format!("/messages/{id}/attachments/urls")))
+                .bearer_auth(alex)
+                .send()
+                .await
+                .unwrap();
+            let status = r.status().as_u16();
+            let n = if status == 200 {
+                r.json::<Vec<serde_json::Value>>().await.unwrap().len()
+            } else {
+                0
+            };
+            (status, n)
+        }
+    };
+    // into the server they share: the forward and its file reach alex
+    let shared = forward(general).await;
+    assert_eq!(urls(shared.id).await, (200, 1));
+    // into their DM: withheld from alex, with its file
+    let direct = forward(dm).await;
+    assert_eq!(urls(direct.id).await, (404, 0));
+    assert!(history(&app, &alex, dm).await.is_empty());
+    // the original stays withheld
+    assert_eq!(urls(m.id).await, (404, 0));
+}
+
 async fn make_invite(app: &TestApp, token: &str, server: impl std::fmt::Display) -> ServerInvite {
     let r = post_json(app, token, &format!("/servers/{server}/invites"), json!({})).await;
     assert_eq!(r.status(), 200);
@@ -408,6 +447,72 @@ async fn invites_stop_working_when_their_maker_leaves_or_is_removed() {
     let alexs = make_invite(&app, &alex, server).await;
     assert_eq!(accept(&app, &jo, &alexs.code).await, 200);
     let _ = sam_id;
+}
+
+/// An invite left live from before makers' invites were revoked on leave (#547): the accept refuses it, and once the
+/// migration has revoked it the preview, the public page and the owner's Invites list say so too.
+#[tokio::test]
+async fn a_departed_maker_s_invite_from_before_stops_looking_valid() {
+    let app = spawn().await;
+    let (_alex_id, alex) = register(&app, "alex").await;
+    let (_sam_id, sam) = register(&app, "sam").await;
+    let (_jo_id, jo) = register(&app, "jo").await;
+    let server = create_server(&app, &alex, "Den").await.id;
+    assert_eq!(join_server(&app, &sam, server).await.status(), 200);
+    let sams = make_invite(&app, &sam, server).await;
+    let alexs = make_invite(&app, &alex, server).await;
+    let r = post_json(&app, &sam, &format!("/servers/{server}/leave"), json!({})).await;
+    assert_eq!(r.status(), 204);
+    // as a server from before the rule has it: sam gone, sam's invite never revoked
+    sqlx::query("UPDATE server_invites SET revoked_at = NULL WHERE code = ?")
+        .bind(&sams.code)
+        .execute(&app.db)
+        .await
+        .unwrap();
+
+    sqlx::raw_sql(include_str!(
+        "../migrations/0086_revoke_departed_makers_invites.sql"
+    ))
+    .execute(&app.db)
+    .await
+    .unwrap();
+
+    let preview = |code: String| {
+        let (app, jo) = (&app, &jo);
+        async move {
+            app.http
+                .get(app.url(&format!("/invites/{code}")))
+                .bearer_auth(jo)
+                .send()
+                .await
+                .unwrap()
+                .status()
+                .as_u16()
+        }
+    };
+    let page = |code: String| {
+        let app = &app;
+        async move {
+            app.http
+                .get(app.url(&format!("/i/{code}")))
+                .send()
+                .await
+                .unwrap()
+                .status()
+                .as_u16()
+        }
+    };
+    assert_eq!(preview(sams.code.clone()).await, 404, "the preview");
+    assert_eq!(page(sams.code.clone()).await, 404, "the invite page");
+    let list: Vec<ServerInvite> =
+        get_json(&app, &alex, &format!("/servers/{server}/invites")).await;
+    let state = |code: &str| list.iter().find(|i| i.code == code).unwrap().state;
+    assert_eq!(state(&sams.code), InviteState::Revoked, "the Invites list");
+    // a member's invite is left alone
+    assert_eq!(state(&alexs.code), InviteState::Valid);
+    assert_eq!(preview(alexs.code.clone()).await, 200);
+    assert_eq!(accept(&app, &jo, &sams.code).await, 404);
+    assert_eq!(accept(&app, &jo, &alexs.code).await, 200);
 }
 
 #[tokio::test]

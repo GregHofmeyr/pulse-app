@@ -31,10 +31,6 @@ pub fn router() -> Router<AppState> {
 /// updater's `User-Agent` names only the updater plugin.
 pub const VERSION_HEADER: &str = "x-pulse-version";
 
-/// The header apps from 0.2.18 send their platform in (`windows`, `linux`, `macos`), beside [`VERSION_HEADER`]: only
-/// the Windows app updates itself, so the others are never turned away to update.
-pub const PLATFORM_HEADER: &str = "x-pulse-platform";
-
 /// A header's value for the log: printable ASCII only, at most 64 characters, `-` when absent.
 fn header_for_log(headers: &HeaderMap, name: impl header::AsHeaderName) -> String {
     match headers.get(name).and_then(|v| v.to_str().ok()) {

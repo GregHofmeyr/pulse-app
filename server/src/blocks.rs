@@ -21,6 +21,10 @@
 //! - **No shared DM call**: you can't call or join them in your DM (as you can't message them), and they can't join a
 //!   call you're in there; blocking them mid-call takes them out of it (`voice::routes::may_join_now`).
 //! - **Their edits in your DM never reach you**: an edit withholds the message from you, as a send would.
+//!   Hiding or showing one of their messages' link previews there reaches only their own sessions (#547).
+//! - **A forward of something withheld from you is their new message** (#547): they chose to share it again, so where
+//!   it reaches you (a server or group you share) it carries the original's words and files, and your client treats it
+//!   as any message of theirs. Into your DM it's withheld like a send.
 //!
 //! You can't message someone you've blocked (unblock them first).
 
@@ -361,13 +365,15 @@ pub fn emptied(
     (user, card)
 }
 
-/// Just the [`pulse_protocol::rest::User`] part of [`emptied`]: the default avatar, no name style
-/// and the plain "is typing" (#652).
+/// Just the [`pulse_protocol::rest::User`] part of [`emptied`]: the default avatar, no name style,
+/// the plain "is typing" (#652) and the plain green ring (#651).
 pub fn emptied_user(mut user: pulse_protocol::rest::User) -> pulse_protocol::rest::User {
     user.avatar_hash = None;
     user.avatar_still = None;
     user.style = Default::default();
     user.typing_text = None;
+    user.ring_style = None;
+    user.ring_color = None;
     user
 }
 
