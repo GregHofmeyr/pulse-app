@@ -60,6 +60,7 @@ beforeEach(() => {
 afterEach(() => {
   while (mounted.length) unmount(mounted.pop()!)
   document.body.innerHTML = ''
+  vi.useRealTimers()
 })
 
 describe('the watch party panel (#384)', () => {
@@ -111,6 +112,7 @@ describe('the watch party panel (#384)', () => {
   })
 
   it('drives the player to the party, only from its own frame and our origin', async () => {
+    vi.useFakeTimers()
     const host = show(party({ viewers: ['U2', 'U1'], position_ms: 60_000, playing: true, set_at_ms: Date.now() }))
     await flushMicrotasks(6)
     const f = host.querySelector('iframe')!
@@ -124,7 +126,7 @@ describe('the watch party panel (#384)', () => {
     expect(posted).toEqual([])
     // the player is paused at 0 while the party plays at a minute: play and seek
     say({ pulse: 'party', state: 'info', player: 2, time: 0, duration: 300 })
-    await new Promise((r) => setTimeout(r, 1100))
+    await vi.advanceTimersByTimeAsync(1100)
     const cmds = posted.map(([m]) => m as { func: string; to?: number })
     expect(cmds[0]).toEqual({ pulse: 'party-cmd', func: 'volume', to: 100 })
     expect(cmds.some((c) => c.func === 'play')).toBe(true)
@@ -155,6 +157,7 @@ describe('the watch party panel (#384)', () => {
   }
 
   it('a pause keeps the same player (no reload, which autoplays from the top of the page) and it stays paused', async () => {
+    vi.useFakeTimers()
     const host = showLive(party({ host_id: 'U1', viewers: ['U1', 'U2'], position_ms: 0, playing: true, set_at_ms: Date.now() - 5_000 }))
     await flushMicrotasks(6)
     const f = host.querySelector('iframe')!
@@ -172,7 +175,7 @@ describe('the watch party panel (#384)', () => {
     // the player says it paused: nothing more is sent, ever (no play to fight it)
     say({ player: 2, time: 9.4 })
     posted.length = 0
-    await new Promise((r) => setTimeout(r, 1100))
+    await vi.advanceTimersByTimeAsync(1100)
     expect(posted).toEqual([])
     // resumed: the same player plays on from where it paused
     change({ playing: true, position_ms: 9_400, set_at_ms: Date.now() })
@@ -182,6 +185,7 @@ describe('the watch party panel (#384)', () => {
   })
 
   it('a late joiner to a paused party gets a paused player at the paused moment', async () => {
+    vi.useFakeTimers()
     const host = showLive(party({ viewers: ['U2', 'U1'], position_ms: 95_000, playing: false, set_at_ms: Date.now() - 600_000 }))
     await flushMicrotasks(6)
     const f = host.querySelector('iframe')!
@@ -189,7 +193,7 @@ describe('the watch party panel (#384)', () => {
     const { posted, say } = wire(f)
     // the page autoplays: the party says paused, so it's paused there, and seeked to the moment
     say({ player: 1, time: 95.2, duration: 300 })
-    await new Promise((r) => setTimeout(r, 1100))
+    await vi.advanceTimersByTimeAsync(1100)
     expect(posted.filter((c) => c.func !== 'volume').map((c) => c.func)).toEqual(['pause'])
     expect(host.querySelector('[aria-label="Play"]')).not.toBeNull()
   })

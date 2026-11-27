@@ -82,6 +82,7 @@ afterEach(async () => {
   await streamApi.unwatchAll()
   document.body.innerHTML = ''
   vi.restoreAllMocks()
+  vi.useRealTimers()
 })
 
 describe('full view', () => {
@@ -206,6 +207,7 @@ describe('full view', () => {
   })
 
   it('a_drag_or_the_click_that_brings_the_window_to_the_front_does_not_leave', async () => {
+    vi.useFakeTimers({ toFake: ['performance'] })
     await fullOnSam()
     clickStream({ moveBy: 20 })
     expect(callView.full).toEqual(SAM)
@@ -216,18 +218,19 @@ describe('full view', () => {
     flushSync()
     clickStream()
     expect(callView.full).toEqual(SAM)
-    await new Promise((r) => setTimeout(r, 350))
+    vi.advanceTimersByTime(350) // past the window-activation grace (performance.now is faked)
     clickStream()
     expect(callView.full).toBeNull()
   })
 
   it('the_activation_click_is_ignored_even_if_the_window_focus_event_comes_late', async () => {
+    vi.useFakeTimers({ toFake: ['performance'] })
     await fullOnSam()
     // the DOM's own focus event (in the page, before the press) is enough on its own
     window.dispatchEvent(new FocusEvent('focus'))
     clickStream()
     expect(callView.full).toEqual(SAM)
-    await new Promise((r) => setTimeout(r, 350))
+    vi.advanceTimersByTime(350) // past the window-activation grace (performance.now is faked)
     // and the click is checked again: activation noticed between the press and the click
     unfocus().dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: 100, clientY: 100, button: 0 }))
     window.dispatchEvent(new FocusEvent('focus'))
@@ -237,12 +240,13 @@ describe('full view', () => {
   })
 
   it('a_menu_left_open_in_a_hidden_panel_does_not_block_esc_or_the_click', async () => {
+    vi.useFakeTimers({ toFake: ['performance'] })
     await fullOnSam()
     const panel = document.createElement('aside')
     panel.hidden = true
     panel.innerHTML = '<div role="menu"></div>'
     document.body.append(panel)
-    await new Promise((r) => setTimeout(r, 350))
+    vi.advanceTimersByTime(350) // past the window-activation grace (performance.now is faked)
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
     flushSync()
     expect(callView.full).toBeNull()
@@ -675,6 +679,7 @@ describe('chat strip and full screen (#63)', () => {
   })
 
   it('in full screen the hidden side panels have no toggles, and a click on the stream stays', async () => {
+    vi.useFakeTimers({ toFake: ['performance'] })
     const panels = { left: false, right: false, leftName: 'Channels', hasRight: true, toggle: () => {} }
     cmp = mount(VoicePanel, { target: document.body, context: fullPanelsContext(panels),
       props: { channelId: 'V1', serverId: 'S1', onMessage: () => {}, onVoiceSettings: () => {} } })
@@ -685,7 +690,7 @@ describe('chat strip and full screen (#63)', () => {
     screenBtn()!.click()
     await settleTask()
     expect(document.querySelectorAll('.full-view .panel-toggle')).toHaveLength(0)
-    await new Promise((r) => setTimeout(r, 350))
+    vi.advanceTimersByTime(350) // past the window-activation grace (performance.now is faked)
     const u = q('.full-view .unfocus')!
     u.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: 100, clientY: 100, button: 0 }))
     u.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1, clientX: 100, clientY: 100 }))

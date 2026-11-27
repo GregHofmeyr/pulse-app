@@ -13,7 +13,7 @@ import type { ActionContext } from '../lib/quickActions'
 import { MESSAGE_DELAY_MS } from '../lib/quickMessages'
 import type { SearchHit } from '../lib/protocol/SearchHit'
 import type { Message } from '../lib/protocol/Message'
-import { nextTask } from '../lib/testSettle'
+import { nextTask, settleTimers } from '../lib/testSettle'
 
 type Messages = { label: string; serverId: string | null; search: (q: string) => Promise<SearchHit[]>; open: (hit: SearchHit) => void }
 const hit = (id: string, text: string, author = 'U2', channel = 'c1') =>
@@ -192,7 +192,10 @@ describe('QuickSwitcher', () => {
     expect(onGo).not.toHaveBeenCalled()
   })
   describe('Messages (#320)', () => {
-    const wait = (ms: number) => new Promise((r) => setTimeout(r, ms))
+    // The message search waits for typing to pause: fake timers skip the wait instead of sleeping through it.
+    beforeEach(() => { vi.useFakeTimers() })
+    afterEach(() => { vi.useRealTimers() })
+    const wait = (ms: number) => vi.advanceTimersByTimeAsync(ms)
     const heads = () => [...document.querySelectorAll('.head')].map((h) => h.textContent)
     const note = () => document.querySelector('.note')?.textContent ?? null
     const messages = (search: Messages['search']): Messages => ({ label: 'Messages in Game Night', serverId: 's1', search: vi.fn(search), open: vi.fn() })
@@ -220,7 +223,7 @@ describe('QuickSwitcher', () => {
       press('ArrowDown')
       expect(activeOption()).toBe(options()[2])
       press('Enter')
-      await nextTask()
+      await settleTimers()
       expect(onClose).toHaveBeenCalled()
       expect(m.open).toHaveBeenCalledWith(expect.objectContaining({ message: expect.objectContaining({ id: 'm1' }) }))
       expect(onGo).not.toHaveBeenCalled()
@@ -266,7 +269,10 @@ describe('QuickSwitcher', () => {
     })
   })
   describe('Messages everywhere (#331)', () => {
-    const wait = (ms: number) => new Promise((r) => setTimeout(r, ms))
+    // The message search waits for typing to pause: fake timers skip the wait instead of sleeping through it.
+    beforeEach(() => { vi.useFakeTimers() })
+    afterEach(() => { vi.useRealTimers() })
+    const wait = (ms: number) => vi.advanceTimersByTimeAsync(ms)
     const heads = () => [...document.querySelectorAll('.head')].map((h) => h.textContent)
     const note = () => document.querySelector('.note')?.textContent ?? null
     const ctxOf = (name: string) => options().find((o) => o.querySelector('.name')!.textContent === name)?.querySelector('.ctx')?.textContent ?? null
@@ -318,7 +324,7 @@ describe('QuickSwitcher', () => {
       for (let i = 0; i < 4; i++) press('ArrowDown')
       expect(activeOption()).toBe(options()[4])
       press('Enter')
-      await nextTask()
+      await settleTimers()
       expect(onClose).toHaveBeenCalled()
       expect(e.open).toHaveBeenCalledWith(expect.objectContaining({ message: expect.objectContaining({ id: 'e1' }) }))
       expect(m.open).not.toHaveBeenCalled()
@@ -331,7 +337,7 @@ describe('QuickSwitcher', () => {
       await wait(MESSAGE_DELAY_MS + 30)
       flushSync()
       options().find((o) => o.textContent!.includes('setup in the club'))!.click()
-      await nextTask()
+      await settleTimers()
       expect(e.open).toHaveBeenCalledWith(expect.objectContaining({ message: expect.objectContaining({ id: 'e1' }) }))
     })
 
@@ -356,7 +362,7 @@ describe('QuickSwitcher', () => {
       expect(heads()).toEqual(['Jump to', 'Actions'])
       expect(note()).toBe('Searching messages…')
       answer([hit('m1', 'setup here')])
-      await nextTask()
+      await settleTimers()
       flushSync()
       expect(heads()).toEqual(['Jump to', 'Actions', 'Messages in Game Night', 'Messages everywhere'])
       expect(note()).toBeNull()
@@ -395,8 +401,11 @@ describe('QuickSwitcher', () => {
     })
   })
   describe('Builds (#619)', () => {
+    // The message search waits for typing to pause: fake timers skip the wait instead of sleeping through it.
+    beforeEach(() => { vi.useFakeTimers() })
+    afterEach(() => { vi.useRealTimers() })
     type Builds = { search: (q: string, game: string | null) => Promise<Message[]>; open: (m: Message) => void }
-    const wait = (ms: number) => new Promise((r) => setTimeout(r, ms))
+    const wait = (ms: number) => vi.advanceTimersByTimeAsync(ms)
     const heads = () => [...document.querySelectorAll('.head')].map((h) => h.textContent)
     const build = (id: string, title: string, archived = false): Message => ({
       id, channel_id: 'b1', author_id: 'U2', kind: 'normal', content: '', reply_to_id: null, created_at: '2026-10-01T10:00:00.000Z', edited_at: null,
@@ -486,7 +495,7 @@ describe('QuickSwitcher', () => {
       type('builds: raven')
       await answer()
       press('Enter')
-      await nextTask()
+      await settleTimers()
       expect(onClose).toHaveBeenCalled()
       expect(builds.open).toHaveBeenCalledWith(expect.objectContaining({ id: 'm1' }))
     })
@@ -515,7 +524,7 @@ describe('QuickSwitcher', () => {
       // its Open opens the page
       press(' ')
       ;[...document.querySelectorAll<HTMLButtonElement>('.build-peek button')].find((b) => b.textContent?.trim() === 'Open')!.click()
-      await nextTask()
+      await settleTimers()
       expect(onClose).toHaveBeenCalled()
       expect(builds.open).toHaveBeenCalledWith(expect.objectContaining({ id: 'm2' }))
     })

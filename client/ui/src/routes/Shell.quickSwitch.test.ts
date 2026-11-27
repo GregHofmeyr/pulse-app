@@ -52,6 +52,16 @@ const type = (text: string) => {
   field().dispatchEvent(new Event('input', { bubbles: true }))
   flushSync()
 }
+/** Types, then runs the search debounce on fake time (instead of sleeping through it), back on real timers after. */
+const typeThenSearch = async (text: string) => {
+  vi.useFakeTimers()
+  try {
+    type(text)
+    await vi.advanceTimersByTimeAsync(260)
+  } finally {
+    vi.useRealTimers()
+  }
+}
 const tab = (name: string) => [...document.querySelectorAll<HTMLButtonElement>('nav .tab')].find((b) => b.textContent?.includes(name))!
 
 describe('the quick switcher in the shell', () => {
@@ -129,14 +139,12 @@ describe('the quick switcher in the shell', () => {
     const searches = () => invoke.mock.calls.filter((c) => c[0] === 'search_messages').map((c) => c[1])
     const hit = (id: string, channel: string, text: string) => ({ message: { id, channel_id: channel, author_id: testMe.id }, text, highlights: [], root: null })
     const heads = () => [...switcher()!.querySelectorAll('.head')].map((h) => h.textContent)
-    const searchesSettled = () => new Promise((r) => setTimeout(r, 260))
 
     it('from Home: one search, everywhere, leaving nothing out', async () => {
       invoke.mockImplementation(async (cmd: string) =>
         cmd === 'search_messages' ? { hits: [hit('m1', 'T1', 'pizza tonight')], next_cursor: null, total: 1 } : cmd === 'list_messages' ? [] : undefined)
       keydown(document.body, 'k', { ctrlKey: true })
-      type('pizza')
-      await searchesSettled()
+      await typeThenSearch('pizza')
       flushSync()
       expect(searches()).toEqual([{ serverId: null, channelId: null, everywhere: true, query: expect.objectContaining({ q: 'pizza' }) }])
       expect(heads()).toEqual(['Messages everywhere'])
@@ -151,8 +159,7 @@ describe('the quick switcher in the shell', () => {
           ? { hits: a.everywhere ? [] : [hit('m1', 'T1', 'pizza tonight')], next_cursor: null, total: 1 }
           : cmd === 'list_messages' ? [] : undefined)
       keydown(document.body, 'k', { ctrlKey: true })
-      type('pizza')
-      await searchesSettled()
+      await typeThenSearch('pizza')
       flushSync()
       expect(searches()).toEqual([
         { serverId: 'S1', channelId: null, query: expect.objectContaining({ q: 'pizza' }) },
@@ -178,8 +185,7 @@ describe('builds from the switcher (#619)', () => {
     }
     invoke.mockImplementation(async (cmd: string) => (cmd === 'search_builds' ? [found] : cmd === 'list_messages' || cmd === 'list_builds' ? [] : undefined))
     keydown(document.body, 'k', { ctrlKey: true })
-    type('builds: raven')
-    await new Promise((r) => setTimeout(r, 260))
+    await typeThenSearch('builds: raven')
     flushSync()
     expect(invoke).toHaveBeenCalledWith('search_builds', { q: 'raven', game: null })
     keydown(field(), 'Enter')

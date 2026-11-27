@@ -87,6 +87,15 @@ afterEach(() => {
   vi.useRealTimers()
 })
 
+/** Types into the quote search and runs its debounce on fake timers (instead of sleeping through it), then settles. */
+async function typeSearch(input: HTMLInputElement) {
+  vi.useFakeTimers()
+  input.dispatchEvent(new Event('input', { bubbles: true }))
+  await vi.advanceTimersByTimeAsync(300)
+  vi.useRealTimers()
+  await settleTask(0)
+}
+
 describe('Quote of the Year banner', () => {
   it('banner appears and disappears with the event', () => {
     show(QotyBanner, { serverId: 'S1' })
@@ -190,9 +199,7 @@ describe('Quote of the Year voting', () => {
     flushSync()
     const input = document.querySelector<HTMLInputElement>('input[aria-label="Search quotes"]')!
     input.value = 'dec'
-    input.dispatchEvent(new Event('input', { bubbles: true }))
-    await new Promise((r) => setTimeout(r, 300))
-    await settleTask(0)
+    await typeSearch(input)
     expect(calls('search_quotes')).toEqual([{ serverId: 'S1', q: 'dec' }])
     // already an option, or won an earlier year: not offered
     const results = [...document.querySelectorAll<HTMLButtonElement>('.results button')]
@@ -411,9 +418,7 @@ describe('Quote of the Year voting window details', () => {
     flushSync()
     const input = document.querySelector<HTMLInputElement>('input[aria-label="Search quotes"]')!
     input.value = q
-    input.dispatchEvent(new Event('input', { bubbles: true }))
-    await new Promise((r) => setTimeout(r, 300))
-    await settleTask(0)
+    await typeSearch(input)
   }
 })
 

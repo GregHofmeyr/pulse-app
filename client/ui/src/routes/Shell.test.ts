@@ -50,7 +50,7 @@ import { editProfile, openCardSettings, profileUi } from '../lib/profileCard.sve
 import { reloadPatchNotesSeen } from '../lib/patchNotesSeen.svelte'
 import { patchNotes, previousPatchNotes } from '../patchNotes'
 import { startUpdateListening, updates, UPDATE_READY_TIP } from '../lib/updates.svelte'
-import { settleTask } from '../lib/testSettle'
+import { nextTask, settleTask } from '../lib/testSettle'
 
 let cmp: ReturnType<typeof mount> | undefined
 let offs: (() => void)[] = []
@@ -756,7 +756,7 @@ describe('watching from anywhere', () => {
     await streamApi.watch('V1', 'U2')
     openFull(SAM)
     await settleTask()
-    await new Promise((r) => setTimeout(r, 150)) // the column's chat fades out
+    await nextTask() // the column's chat goes: exitFade is instant here (jsdom has no element.animate)
     flushSync()
     // one chat on screen: the strip, inside the full view
     expect(document.querySelectorAll('.chan.panel')).toHaveLength(1)
@@ -1683,7 +1683,7 @@ describe('pin to side (#619)', () => {
     expect(q('.right-panel aside.voice-chat')).not.toBeNull()
     expect(q('.right-panel aside.pinned-build')).toBeNull()
     setVoiceChat(false)
-    await new Promise((r) => setTimeout(r, 150)) // the chat fades out
+    await nextTask() // the chat goes: exitFade is instant here (jsdom has no element.animate)
     await settleTask()
     expect(q('.right-panel aside.pinned-build')).not.toBeNull()
     await goTo('D1')
