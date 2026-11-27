@@ -14,9 +14,6 @@ use pulse_server::{emoji, media};
 use serde_json::json;
 use tokio_tungstenite::tungstenite::Message as Ws;
 
-type Socket =
-    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
-
 async fn hello(app: &TestApp, token: &str) -> (Socket, Ready) {
     let (mut ws, _) = tokio_tungstenite::connect_async(app.ws_url("/gateway"))
         .await

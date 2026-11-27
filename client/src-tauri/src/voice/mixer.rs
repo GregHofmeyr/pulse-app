@@ -663,8 +663,21 @@ impl MixerInput {
 
     /// (person, rms since the last call): how each person's *voice* sounded, after their volume.
     /// Stream meters are drained too but never reported: a loud game isn't talking.
+    /// Read-and-reset: the ring tick in `voice/mod.rs` is the only reader in production;
+    /// `VoiceManager::mixer_levels()` is a test hook that races it (#651).
     pub fn take_peer_levels(&self) -> Vec<(String, f32)> {
-        let mut out: Vec<(String, f32)> = Vec::new();
+        let mut out = Vec::new();
+        self.take_peer_levels_into(&mut out);
+        out
+    }
+
+    /// `take_peer_levels` into a caller-owned buffer: the entries of people still here are reused,
+    /// so a steady room allocates nothing; people who left are dropped.
+    pub fn take_peer_levels_into(&self, out: &mut Vec<(String, f32)>) {
+        // unseen until a voice source of theirs reports (a meter's rms is never negative)
+        for (_, v) in out.iter_mut() {
+            *v = f32::NEG_INFINITY;
+        }
         for s in self.sources.lock().unwrap().values_mut() {
             let rms = s.meter.take().0;
             if s.kind != SourceKind::Voice {
@@ -675,7 +688,7 @@ impl MixerInput {
                 None => out.push((s.owner.clone(), rms)),
             }
         }
-        out
+        out.retain(|(_, v)| *v != f32::NEG_INFINITY);
     }
 
     /// Underrun samples since the last call.
@@ -1865,6 +1878,48 @@ mod tests {
         assert!(
             input.take_peer_levels().iter().all(|(_, v)| *v == 0.0),
             "reset after take"
+        );
+    }
+
+    /// The ring tick reads levels ~14 times a second all call long: a steady room refills the same
+    /// buffer, entries and all, and drops whoever left (#651).
+    #[test]
+    fn peer_levels_refill_a_reused_buffer_without_reallocating() {
+        let (input, _m) = alex_mic_and_game();
+        input.add_source(input.generation(), "TR_sam", "sam", Voice);
+        input.add_source(input.generation(), "TR_mic2", "alex", Voice);
+        input.push("TR_mic", &[16384; 480]);
+        input.push("TR_mic2", &[0; 480]);
+        let mut levels = Vec::new();
+        input.take_peer_levels_into(&mut levels);
+        levels.sort_by(|a, b| a.0.cmp(&b.0));
+        assert_eq!(
+            levels.len(),
+            2,
+            "voice only, one entry per person: {levels:?}"
+        );
+        assert!((levels[0].1 - 0.5).abs() < 0.01, "the louder track wins");
+        let (buf, names) = (
+            levels.as_ptr(),
+            levels.iter().map(|l| l.0.as_ptr()).collect::<Vec<_>>(),
+        );
+        input.push("TR_sam", &[16384; 480]);
+        input.take_peer_levels_into(&mut levels);
+        assert_eq!(levels.as_ptr(), buf);
+        assert_eq!(
+            levels.iter().map(|l| l.0.as_ptr()).collect::<Vec<_>>(),
+            names
+        );
+        assert!(levels.iter().any(|(p, l)| p == "sam" && *l > 0.1));
+        assert!(
+            levels.iter().any(|(p, l)| p == "alex" && *l == 0.0),
+            "reset after take"
+        );
+        input.remove_owner(input.generation(), "alex");
+        input.take_peer_levels_into(&mut levels);
+        assert_eq!(
+            levels.iter().map(|l| l.0.as_str()).collect::<Vec<_>>(),
+            ["sam"]
         );
     }
 

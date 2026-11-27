@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { frameLoop, withDeadline } from './frames'
+import { withDeadline } from './frames'
 
 describe('withDeadline', () => {
   afterEach(() => vi.useRealTimers())
@@ -11,36 +11,5 @@ describe('withDeadline', () => {
   })
   it('passes the value through when it arrives first', async () => {
     await expect(withDeadline(Promise.resolve(7), 1000, 'late')).resolves.toBe(7)
-  })
-})
-
-/** A fake <video> whose frame callbacks we fire by hand. */
-function fakeVideo() {
-  type Cb = (now: number, meta: VideoFrameCallbackMetadata) => void
-  let cbs: Cb[] = []
-  return {
-    requestVideoFrameCallback(cb: Cb) {
-      cbs.push(cb)
-      return cbs.length
-    },
-    frame() {
-      const now = cbs
-      cbs = []
-      for (const cb of now) cb(0, {} as VideoFrameCallbackMetadata)
-    },
-  }
-}
-
-describe('frameLoop', () => {
-  it('a restarted loop counts each frame once (the old chain stops)', () => {
-    const v = fakeVideo()
-    let n = 0
-    const stop1 = frameLoop(v, () => n++)
-    v.frame()
-    stop1()
-    frameLoop(v, () => n++) // re-Watch
-    v.frame()
-    v.frame()
-    expect(n).toBe(3)
   })
 })

@@ -14,21 +14,6 @@ export type SoundName =
 export const SOUND_NAMES: readonly SoundName[] = [
   'join', 'leave', 'mute', 'unmute', 'deafen', 'undeafen', 'muted_talk', 'message', 'live', 'live_end', 'badge', 'wheel_tick', 'wheel_result',
 ]
-export const SOUND_LABELS: Record<SoundName, string> = {
-  join: 'Join a call',
-  leave: 'Leave a call',
-  mute: 'Mute',
-  unmute: 'Unmute',
-  deafen: 'Deafen',
-  undeafen: 'Undeafen',
-  muted_talk: 'Talking while muted',
-  message: 'New message',
-  live: 'Someone goes live',
-  live_end: 'A stream ends',
-  badge: 'Badge unlocked',
-  wheel_tick: 'Picker wheel tick',
-  wheel_result: 'Picker wheel result',
-}
 
 export type SoundSetId =
   | 'classic' | 'twostep-bright' | 'twostep-warm' | 'twostep-deep'
@@ -54,23 +39,18 @@ export const RINGTONES: readonly { id: RingtoneId; label: string; blurb: string 
   { id: 'phone', label: 'Classic phone', blurb: 'The two-tone ring-ring of an old desk phone.' },
 ]
 
-/** `volume_pct` and `off` are from before the volume mixer: read only to migrate them (lib/mixer.ts). `ringtone` is
- * the one incoming calls ring with (#174), on this device. */
-export type SoundPrefs = { set: SoundSetId; volume_pct: number; off: SoundName[]; ringtone: RingtoneId }
-export const defaultSoundPrefs: SoundPrefs = { set: 'classic', volume_pct: 100, off: [], ringtone: 'classic' }
+/** `ringtone` is the one incoming calls ring with (#174), on this device. Volumes live in the mixer (lib/mixer.ts). */
+export type SoundPrefs = { set: SoundSetId; ringtone: RingtoneId }
+export const defaultSoundPrefs: SoundPrefs = { set: 'classic', ringtone: 'classic' }
 
-/** Clean whatever is in storage: anything unexpected falls back to the default for that field. */
+/** Clean whatever is in storage: anything unexpected falls back to the default for that field, and any other key
+ * (such as `volume_pct`/`off` from before 0.2.17) is dropped. */
 export function normalizeSoundPrefs(raw: unknown): SoundPrefs {
-  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return { ...defaultSoundPrefs, off: [] }
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return { ...defaultSoundPrefs }
   const r = raw as Record<string, unknown>
   const set = SOUND_SETS.find((s) => s.id === r.set)?.id ?? defaultSoundPrefs.set
-  const volume_pct =
-    typeof r.volume_pct === 'number' && Number.isFinite(r.volume_pct)
-      ? Math.round(Math.min(100, Math.max(0, r.volume_pct)))
-      : defaultSoundPrefs.volume_pct
-  const off = Array.isArray(r.off) ? SOUND_NAMES.filter((n) => (r.off as unknown[]).includes(n)) : []
   const ringtone = RINGTONES.find((t) => t.id === r.ringtone)?.id ?? defaultSoundPrefs.ringtone
-  return { set, volume_pct, off, ringtone }
+  return { set, ringtone }
 }
 export function loadSoundPrefs(): SoundPrefs {
   try {
@@ -126,6 +106,9 @@ export type VoiceEvent =
   | { kind: 'stage'; stage: StageName; attempt: number | null }
   | ({ kind: 'link' } & LinkReport)
   | { kind: 'speaking'; user_ids: string[] }
+  /** Per-speaker loudness 0..1 for the reactive rings (#651), ~14 Hz: only people speaking, only while a ring watches;
+   * one `{}` when the last one stops. Emitted after the tick's `speaking`. */
+  | { kind: 'speaking_levels'; levels: Record<string, number> }
   | { kind: 'quality'; user_id: string; quality: string }
   | { kind: 'levels'; mic: number; speaker: number; gate_open: boolean }
   | { kind: 'noise_suppression'; active: NsLevel; note: string | null }
@@ -326,15 +309,12 @@ export const defaultAudioConfig: AudioConfig = {
   noise_suppression: 'strong', auto_sensitivity: true, auto_gain: false, even_out_voices: true,
   voice_clarity_eq: true, mic_test_as_others_hear: false,
 }
-/** Settings saved before levels existed carried `noise_suppress: boolean`; before #76, `echo_cancel: boolean` (off by
- *  hand stays Off, the old default on becomes Auto). */
+/** The stored config over the defaults. A key the core doesn't know (the pre-0.2.17 `noise_suppress`/`echo_cancel`
+ *  toggles, say) is carried along and ignored there (#703). */
 export function migrateAudioConfig(raw: Record<string, unknown>): AudioConfig {
-  const { noise_suppress, echo_cancel, ...rest } = raw
-  const c = { ...defaultAudioConfig, ...rest } as AudioConfig
-  if (raw.noise_suppression === undefined && noise_suppress === false) c.noise_suppression = 'off'
-  // a level this version doesn't know (a newer one's) would be refused by the core: the default instead
+  const c = { ...defaultAudioConfig, ...raw } as AudioConfig
+  // a level this version doesn't know (a newer one's, after a downgrade) would be refused by the core: the default instead
   if (!NS_LEVELS.includes(c.noise_suppression)) c.noise_suppression = defaultAudioConfig.noise_suppression
-  if (raw.echo_mode === undefined && echo_cancel === false) c.echo_mode = 'off'
   return c
 }
 /** An audio device as the core lists it. `processed_by` (inputs only, #588): a virtual mic that already runs its own

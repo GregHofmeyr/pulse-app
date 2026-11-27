@@ -66,16 +66,12 @@ pub struct Config {
     pub f1: F1Config,
     /// A path nobody legitimate ever asks for (#80, step 3; `PULSE_INVITE_DECOY`).
     pub invite_decoy: String,
-    /// Straggler rescue (`PULSE_UPDATE_RESCUE`, on unless switched off): the gateway turns away apps that send no
-    /// `X-Pulse-Version` (every app before 0.2.17) with 4005, so they reach their forced update screen.
-    pub update_rescue: bool,
 }
 
 pulse_protocol::redacting_debug!(Config {
     db_url, bind, livekit_url, livekit_api_url, livekit_key, hello_timeout, heartbeat_timeout,
     limits, stream_media_timeout, media_dir, media_min_free_bytes, updates_dir, totp_key, clips, embeds,
-    launch_date, calls, stage_share_ttl, part_size, giphy, quote_clock, steam, deadlock, plans, sports, f1,
-    update_rescue ;
+    launch_date, calls, stage_share_ttl, part_size, giphy, quote_clock, steam, deadlock, plans, sports, f1 ;
     livekit_secret, invite_decoy
 });
 
@@ -404,11 +400,6 @@ impl Config {
             sports: sports(|k| std::env::var(k).ok()),
             f1: F1Config::default(),
             invite_decoy: decoy(std::env::var("PULSE_INVITE_DECOY").ok().as_deref()),
-            update_rescue: switch(
-                "PULSE_UPDATE_RESCUE",
-                std::env::var("PULSE_UPDATE_RESCUE").ok().as_deref(),
-                true,
-            )?,
         })
     }
 }
@@ -593,17 +584,6 @@ fn decoy(raw: Option<&str>) -> String {
         Some(p) if p.starts_with('/') => p.to_string(),
         Some(p) => format!("/{p}"),
         None => "/i/staff-console".into(),
-    }
-}
-
-/// An on/off variable: unset or empty = `default`; `1`/`true`/`on`/`yes` or `0`/`false`/`off`/`no` (any case);
-/// anything else is an error naming the variable.
-fn switch(name: &str, raw: Option<&str>, default: bool) -> anyhow::Result<bool> {
-    match raw.map(|r| r.trim().to_ascii_lowercase()).as_deref() {
-        None | Some("") => Ok(default),
-        Some("1" | "true" | "on" | "yes") => Ok(true),
-        Some("0" | "false" | "off" | "no") => Ok(false),
-        Some(_) => anyhow::bail!("{name} must be on or off (1/0, true/false, on/off, yes/no)"),
     }
 }
 
@@ -803,7 +783,6 @@ mod tests {
             },
             f1: F1Config::default(),
             invite_decoy: "/SECRET-DECOY".into(),
-            update_rescue: true,
         };
         let d = format!("{cfg:?}");
         assert!(!d.contains("SECRET"), "{d}");
@@ -826,20 +805,6 @@ mod tests {
         assert_eq!(decoy(Some("/x")), "/x");
         assert!(decoy(Some("  ")).starts_with('/'));
         assert!(decoy(None).starts_with('/'));
-    }
-
-    #[test]
-    fn switches_default_and_parse() {
-        assert!(switch("X", None, true).unwrap());
-        assert!(!switch("X", Some(" "), false).unwrap());
-        for on in ["1", "true", "ON", " yes "] {
-            assert!(switch("X", Some(on), false).unwrap(), "{on}");
-        }
-        for off in ["0", "false", "Off", "no"] {
-            assert!(!switch("X", Some(off), true).unwrap(), "{off}");
-        }
-        let e = switch("PULSE_UPDATE_RESCUE", Some("maybe"), true).unwrap_err();
-        assert!(e.to_string().contains("PULSE_UPDATE_RESCUE"), "{e}");
     }
 
     #[test]

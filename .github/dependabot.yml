@@ -15,6 +15,8 @@ updates:
       # Must match the ndarray 0.15 that deep_filter and tract 0.21.4 use (#31).
       - dependency-name: ndarray
         versions: [">= 0.16"]
+      # tract-core =0.21.4 holds libDF's tract stack on ndarray 0.15 (0.21.7+ moved to ndarray 0.16); move with deep_filter.
+      - dependency-name: "tract-*"
 
   - package-ecosystem: npm
     directory: /client/ui

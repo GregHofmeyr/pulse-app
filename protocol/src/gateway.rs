@@ -789,15 +789,14 @@ pub enum Event {
         game: Game,
     },
     /// A bulk archive in a builds channel (#616): these builds were archived, at once, by one person (the channel's
-    /// audience; never to a version-4 client).
+    /// audience).
     BuildsArchived {
         channel_id: ChannelId,
         message_ids: Vec<MessageId>,
         archived_at: String,
         archived_by: UserId,
     },
-    /// Only to the user's own sessions (#617): they starred or unstarred these builds of a builds channel (never to a
-    /// version-4 client).
+    /// Only to the user's own sessions (#617): they starred or unstarred these builds of a builds channel.
     BuildFavouriteChanged {
         user_id: UserId,
         channel_id: ChannelId,
@@ -1269,6 +1268,8 @@ mod tests {
                 avatar_still: None,
                 style: Default::default(),
                 typing_text: None,
+                ring_style: None,
+                ring_color: None,
             },
             servers: vec![],
             channels: vec![],
@@ -1370,6 +1371,8 @@ mod tests {
                 avatar_still: None,
                 style: Default::default(),
                 typing_text: None,
+                ring_style: None,
+                ring_color: None,
             },
             servers: vec![],
             channels: vec![],
@@ -1540,6 +1543,8 @@ mod tests {
                 avatar_still: None,
                 style: Default::default(),
                 typing_text: None,
+                ring_style: None,
+                ring_color: None,
             },
             servers: vec![],
             channels: vec![],
@@ -1677,34 +1682,6 @@ mod tests {
         assert_eq!(old.effect, None);
     }
 
-    /// A v3 reader (without the profile fields) ignores them, so no protocol bump is needed.
-    #[test]
-    fn a_v3_reader_ignores_profile_fields() {
-        #[derive(Deserialize)]
-        #[allow(dead_code)]
-        struct OldUser {
-            id: UserId,
-            username: String,
-            avatar_hash: Option<String>,
-        }
-        let user = User {
-            id: UserId::new(),
-            username: "a".into(),
-            display_name: "a".into(),
-            avatar_hash: Some("h".into()),
-            avatar_still: Some("s".into()),
-            style: crate::rest::NameStyle {
-                font: Some("pacifico".into()),
-                colors: vec!["#ffc4a3".into(), "#ff7fae".into()],
-                effect: Some("neon".into()),
-            },
-            typing_text: None,
-        };
-        let old: OldUser = serde_json::from_value(serde_json::to_value(&user).unwrap()).unwrap();
-        assert_eq!(old.id, user.id);
-        assert_eq!(old.avatar_hash.as_deref(), Some("h"));
-    }
-
     #[test]
     fn profile_updated_is_routed_by_person_not_channel() {
         let e = Event::ProfileUpdated {
@@ -1716,6 +1693,8 @@ mod tests {
                 avatar_still: None,
                 style: Default::default(),
                 typing_text: None,
+                ring_style: None,
+                ring_color: None,
             },
             card: CardProfile {
                 banner_hash: None,
@@ -1788,6 +1767,8 @@ mod tests {
                     avatar_still: None,
                     style: Default::default(),
                     typing_text: None,
+                    ring_style: None,
+                    ring_color: None,
                 },
                 nickname: Some("n".into()),
                 join_sound: None,

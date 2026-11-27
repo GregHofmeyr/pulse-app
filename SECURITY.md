@@ -47,7 +47,7 @@ repository.
     WebP is refused; an animated PNG keeps only its still default image. An upload that can't be decoded within
     these limits is refused, and the previous preview stays.
   - The server keeps only the latest image, in memory, and drops it when the stream ends.
-  - Uploads are limited per user to a burst of 6, then one every 5 seconds.
+  - Uploads are rate-limited per user.
 
 **Process audio and process listing: Windows, only during Go Live with audio turned on.**
 - **Window share.** The client captures only the audio of the process that owns the shared window, using WASAPI process
@@ -419,13 +419,13 @@ WebRTC uses ephemeral UDP sockets for its own connection to the SFU.
   and 2FA on, the server returns no session, only a login ticket:
   - 256 random bits, valid for 5 minutes. Only its SHA-256 hash is stored; expired tickets are pruned whenever a
     new one is issued.
-  - Spent by one successful code. The ticket is deleted when it succeeds, and also when the 5th wrong code is entered
+  - Spent by one successful code. The ticket is deleted when it succeeds, and also after a few wrong codes are entered
     on it. Unknown, expired and used-up tickets all get the same "gone" answer.
   - Turning 2FA off, changing the password and the owner's `reset-2fa`, `reset-password` and `revoke-sessions` delete
     the account's tickets.
 - **Limits on guessing.** Every 2FA check (the sign-in code, the password or code asked for when turning it on or
   off or making new recovery codes, and the current password and code asked for when changing the password) is
-  counted against two limits at once: 5 per minute per IP address and 10 per hour per account. The count is taken
+  counted against two limits at once: one per IP address and one per account. The count is taken
   before the check, so parallel guesses cannot all slip past. A wrong password or code keeps its count, as does a guess
   at an unknown or dead ticket (that one counts against the address only); every other outcome is refunded, and a
   refused attempt costs nothing. A refused attempt gets 429. Like the other limits, these are in memory.
@@ -506,52 +506,20 @@ ties each of those tokens to the session that asked for it:
 - **No data messages.** Voice tokens can't send LiveKit data messages, like stream tokens. Calls carry the microphone
   only.
 
-**Rate limits.** These are in-memory token buckets. Per-IP limits count an IPv6 client by its /64 prefix (one client
-can hold a whole /64), and an IPv4-mapped IPv6 address as its IPv4 address. Each limiter tracks at most 10,000 keys;
-past that, the least recently used bucket is dropped.
+**Rate limits.** Every action that costs the server work or that other people see is rate-limited, using in-memory
+token buckets. Per-IP limits count an IPv6 client by its /64 prefix and an IPv4-mapped address as its IPv4 address,
+and each limiter tracks a bounded number of keys. In broad terms:
+- **Sign-in and sign-up.** Failed logins are limited per IP, per username from one IP, and per username across all
+  IPs; failed registrations and two-factor checks are limited per IP and per account (see section 7).
+- **Connections.** Real-time connection attempts are limited per IP, and each user can hold only a few connections at
+  once.
+- **Per-user actions.** Messages, edits and other changes people hear about, typing, uploads, downloads, searches,
+  voice and stream tokens, calls, link previews and the rest each have a per-user budget sized for normal use. Some
+  quietly drop or merge extras (typing, mute updates, "Listening to") instead of refusing them.
+- **Third-party APIs.** Calls to outside services (Steam, deadlock-api, API-Sports) are held under their providers'
+  limits, server-wide.
 
-| What | Limit |
-|---|---|
-| Failed logins | 5/minute per IP, 10/hour per username from one IP, and 100/hour per username from all IPs together. Once a username's 100/hour is used up, an IP that has failed for it recently is refused, but an IP with no recent failures for it can still try (see section 7) |
-| Failed registrations (wrong, used or expired invite) | 5/hour per IP |
-| Two-factor checks (sign-in code, the password or code for turning it on or off or making new recovery codes, and the current password and code for changing the password) | 5/minute per IP, and 10/hour per account; spent up front, kept only for a wrong password or code or a bad ticket |
-| Real-time connection attempts | 20/minute per IP (refunded once the connection authenticates) |
-| Concurrent real-time connections | 8 per user; further connections are refused, and the client tells the user why |
-| New messages, polls and quotes (together; replies in a quote or clip thread are messages) | burst of 20, then 5/second per user |
-| Changes other people hear about (together): message and quote edits and deletes, reaction adds and removes, pins and unpins, ending a poll, hiding a link preview, marking read (Mark all read, inbox items, quote reply seen points), a group's name and icon, notification levels, profile saves, badge updates, quote awards and speaker links, Quote of the Year (starting, voting, adding options, reopening), clip edits and clip view settings, adding a game, deleting, restoring and purging channels and servers, a voice channel's bitrate, Go Live and watching a stream | burst of 30, then 2/second per user (stopping a stream and unwatching are never limited) |
-| Typing notifications | 1/second per user (extras dropped) |
-| Mute and deafen updates sent to others | burst of 10, then 2/second per user. Every update is still stored; past the limit, others get one update with the latest state once the limit allows. An update that changes nothing is not sent on. |
-| New servers, server channels, DMs and groups, notes to self (made on first open), and members added to a group (together) | 20/hour per user (opening a DM that already exists is free) |
-| Invite codes | 10/hour per user |
-| Bug / crash reports | 5/hour per user |
-| Image and sound uploads (custom emoji, quote pictures, clip thumbnails, avatars, banners, sounds) | 30/hour per user |
-| Custom emoji creates, renames and deletes (together) | 30/hour per user |
-| Soundboard sound creates, edits, deletes and favourites, and setting or clearing a join sound (together) | 120/hour per user |
-| Soundboard plays | burst of 20, then 8/second per user |
-| Attachment uploads (together: starting one, asking for more upload URLs, checking which parts are stored, and finishing one) | burst of 60, then 1/second per user |
-| Clip play and attachment download links (each signs a storage URL) | burst of 60, then 1/second per user |
-| Go Live preview uploads | burst of 6, then one every 5 seconds per user |
-| Voice tokens and stream tickets (together, watching from elsewhere included) | burst of 60, then 1/second per user |
-| Calls started or joined in DMs and groups | burst of 6, then one every 20 seconds per user |
-| Message search in a server or conversation | burst of 20, then 2/second per user |
-| Search everywhere (`GET /search`, the quick switcher's) | its own bucket: burst of 20, then 2/second per user |
-| Messages whose links get previews fetched (sends and edits) | 20/minute per user; past it, the message still posts, without previews |
-| Link preview thumbnails stored (chat previews and stage share cards) | 60/hour per user; past it, previews come without one |
-| Server nicknames and private nicknames | 30/minute per user |
-| Status changes and Appear offline toggles | 30/minute per user |
-| "Notify me when they go live" toggles | 30/minute per user |
-| Category and channel layout changes | burst of 30, then 1/second per user |
-| Saved picker wheel creates, edits and deletes (together) | burst of 30, then 1/second per user |
-| Picker wheel spins | one every 3 seconds per user |
-| Poll votes | burst of 20, then 2/second per user |
-| Spotify shares to a voice stage | burst of 6, then one every 10 seconds per user |
-| "Listening to" updates | burst of 10, then one every 2 seconds per user; a held-back update is sent once the limit allows, so the latest one lands |
-| "Listening to" album art fetched | 60/hour per user, its own budget apart from link previews |
-| Starting a Steam link, unlinking, the Steam setting, an Achievements channel change | in the "changes other people hear about" bucket above |
-| Steam Web API calls (achievements) | 50,000/day, server-wide |
-| deadlock-api match-history reads | 8/hour without a key, 240/hour with one, server-wide; paused for `Retry-After` on a 429 |
-| API-Sports requests (sports score pings) | 90/day per sport (football, rugby), server-wide, counted in the database |
-| GIF settings reads and favourite adds and removes (together) | burst of 30, then one every 2 seconds per user |
+The exact numbers live in the server code and aren't documented here.
 
 Real-time frames from the client are capped at 64 KB, and messages at 4,000 characters.
 
@@ -608,7 +576,7 @@ below the configured minimum (2 GB by default). The check comes after sign-in an
   - animated WebP is refused; an animated PNG keeps only its still default image;
   - the output is a still WebP of at most 480×270;
   - processed in the same two slots as other image uploads;
-  - per user, a burst of 6, then one every 5 seconds.
+  - rate-limited per user.
 
   The Go Live video itself goes through LiveKit as video and is not re-encoded by the server.
 
@@ -802,12 +770,12 @@ and the app frames it, so the player gets an HTTPS parent with a real origin.
     deployed through an explicitly confirmed, loudly marked unverified path.
 - **Pinned build inputs.**
   - **Actions.** Every GitHub Action is pinned to a full commit SHA.
-  - **Base images.** The server image's base images are pinned to an exact version and digest (`rust:1.99.1-bookworm`,
-    `debian:bookworm-20261027-slim`). A pull request that changes the Dockerfile (a Dependabot bump included) gets a
+  - **Base images.** The server image's base images are pinned to an exact version and digest (`rust:1.100.0-bookworm`,
+    `debian:bookworm-20261104-slim`). A pull request that changes the Dockerfile (a Dependabot bump included) gets a
     CI build of the image (amd64, not published) on the pull request.
-  - **Rust.** The toolchain is pinned to 1.99.1 in `rust-toolchain.toml`. CI and the release builds install exactly
+  - **Rust.** The toolchain is pinned to 1.100.0 in `rust-toolchain.toml`. CI and the release builds install exactly
     that version.
-  - **Tauri CLI.** The Windows build uses the Tauri CLI at an exact version (2.12.4), installed from the UI's lockfile.
+  - **Tauri CLI.** The Windows build uses the Tauri CLI at an exact version (2.12.6), installed from the UI's lockfile.
   - **Node.js and pnpm.** CI and the Windows build use exact versions (Node.js 22.23.4, pnpm 11.28.8). Dependabot
     doesn't update these; `deploy/README.md` says how to bump them.
   - **LLVM (CI only).** LLVM comes from apt.llvm.org's signed package repository. Before adding it, CI checks the
@@ -871,10 +839,10 @@ and the app frames it, so the player gets an HTTPS parent with a real origin.
 - **Accounts.**
   - Any member can create invite codes.
   - Rate limits, including the two-factor limits, are held in memory, so they reset when the server restarts.
-  - Login limits trade guessing against lockout. Guesses at one username from many IPs can use up its 100/hour, but
-    that doesn't lock its owner out: an IP with no recent failed logins for that username can still sign in. The cost
-    is that past 100/hour, each further IP still gets a guess, about one every 6 minutes per IP. An owner who shares
-    an IP with the attacker (the same network or NAT) can be refused until either limit refills.
+  - Login limits trade guessing against lockout. Guesses at one username from many IPs can use up its all-IP limit,
+    but that doesn't lock its owner out: an IP with no recent failed logins for that username can still sign in. The
+    cost is that each further IP still gets an occasional guess. An owner who shares an IP with the attacker (the same
+    network or NAT) can be refused until the limits refill.
 - **Server design.**
   - Any member of a server can rename or delete any custom emoji in it, and delete any of its channels (the owner or
     whoever deleted it can restore it within 7 days; only the owner can delete it for good sooner).

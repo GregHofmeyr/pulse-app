@@ -19,7 +19,7 @@ import { startVoiceListening, voice, voiceApi } from '../lib/voice.svelte'
 import type { Ready } from '../lib/protocol/Ready'
 import { HOVER_DELAY_MS } from '../lib/hoverPrefetch'
 import { categoryUi, requestCreateCategory } from '../lib/categoryUi.svelte'
-import { drafts, REFUSED_HOLD_MS, resetSaves } from '../lib/layoutDraft.svelte'
+import { REFUSED_HOLD_MS, resetSaves } from '../lib/layoutDraft.svelte'
 import { isCollapsed, resetCollapsed, setCollapsed } from '../lib/sidebarSections.svelte'
 import { testReady } from '../lib/testReady'
 import type { Category } from '../lib/protocol/Category'
@@ -851,5 +851,30 @@ describe('ChannelList by categories', () => {
     expect(document.querySelector('[data-category]')).toBeNull()
     rightClick(headings()[0])
     expect(document.querySelector('[role=menu]')).toBeNull()
+  })
+})
+
+// #651: the 22px occupant avatars always show the static Classic ring, in the person's ring colour
+describe('speaking rings in the list', () => {
+  it('occupant_ring_is_static_classic_in_the_persons_colour', () => {
+    if (cmp) unmount(cmp)
+    document.body.innerHTML = ''
+    const gold = { ...sam, ring_style: 'bars', ring_color: 'gold' }
+    app.state = applyReady(emptyState(), { ...ready, members: [{ server_id: 'S1', members: [{ user: me, nickname: null }, { user: gold, nickname: null }] }] })
+    app.state = applyEvent(app.state, { t: 'VoiceJoined', d: { channel_id: 'V1', user_id: 'U2', flags: { muted: false, deafened: false } } } as never, Date.now())
+    cmp = mount(ChannelList, {
+      target: document.body,
+      props: { serverId: 'S1', activeChannelId: null, voiceChannelId: null, speaking: new Set<string>(['U2']), onSelect: () => {}, onJoinVoice: () => {}, onMessage: () => {}, onVoiceSettings: () => {} },
+    })
+    flushSync()
+    const ring = document.querySelector<HTMLElement>('.occupant[data-user="U2"] .ring')!
+    expect(ring.classList.contains('speaking')).toBe(true)
+    expect(ring.style.getPropertyValue('--speak')).toBe('var(--speak-gold)')
+    // no animated ring here, whatever their style
+    expect(ring.querySelector('.ring-box')).toBeNull()
+    const css = readFileSync(resolve(__dirname, 'ChannelList.svelte'), 'utf8').match(/<style>([\s\S]*)<\/style>/)![1]
+    const rule = css.match(/\.ring\.speaking \{([^}]*)\}/)![1]
+    expect(rule).toMatch(/box-shadow: 0 0 0 2px var\(--ring\), 0 0 0 4px var\(--speak\)/)
+    expect(rule).not.toMatch(/transition|animation/)
   })
 })

@@ -387,10 +387,6 @@ async fn migration_0082_refuses_to_run_with_foreign_keys_on() {
     assert_eq!(n, 1);
 }
 
-// ---- Clients older than protocol 5 never meet a builds channel (#616) ----
-
-const OLD: u32 = 4;
-
 /// Every event `ws` gets until a `MessageCreated` with `sentinel` as its content.
 async fn events_until(ws: &mut Socket, sentinel: &str) -> Vec<Event> {
     let mut out = vec![];
@@ -408,42 +404,8 @@ async fn events_until(ws: &mut Socket, sentinel: &str) -> Vec<Event> {
     }
 }
 
-fn channels_get(
-    app: &TestApp,
-    token: &str,
-    path: &str,
-    version: Option<u32>,
-) -> reqwest::RequestBuilder {
-    let r = app.http.get(app.url(path)).bearer_auth(token);
-    match version {
-        Some(v) => r.header(pulse_protocol::PROTOCOL_HEADER, v.to_string()),
-        None => r,
-    }
-}
-
-#[tokio::test]
-#[ignore = "protocol 4 is refused at the gateway since #634; goes with builds::compat in a later PR"]
-async fn a_version_4_ready_leaves_builds_channels_out() {
-    let app = spawn().await;
-    let (_, alex) = register(&app, "alex").await;
-    let s = create_server(&app, &alex, "Main").await;
-    let ch = create_builds(&app, &alex, s.id).await;
-
-    let (_, old) = hello_as(&app, &alex, OLD).await;
-    assert!(
-        old.channels.iter().all(|c| c.id != ch.id),
-        "no builds channel"
-    );
-    assert!(
-        old.read_states.iter().all(|r| r.channel_id != ch.id),
-        "nor its read point"
-    );
-    assert!(
-        old.channels.iter().any(|c| c.kind == ChannelKind::Text),
-        "the rest is there"
-    );
-    // what a version-4 client reads it as: no kind it can't parse
-    assert!(!serde_json::to_string(&old).unwrap().contains("\"builds\""));
+fn channels_get(app: &TestApp, token: &str, path: &str) -> reqwest::RequestBuilder {
+    app.http.get(app.url(path)).bearer_auth(token)
 }
 
 #[tokio::test]
@@ -461,33 +423,6 @@ async fn a_current_ready_has_the_builds_channel() {
             .any(|c| c.id == ch.id && c.kind == ChannelKind::Builds)
     );
     assert!(ready.read_states.iter().any(|r| r.channel_id == ch.id));
-}
-
-#[tokio::test]
-#[ignore = "protocol 4 is refused at the gateway since #634; goes with builds::compat in a later PR"]
-async fn a_version_4_client_hears_nothing_of_a_builds_channel() {
-    let app = spawn().await;
-    let (_, alex) = register(&app, "alex").await;
-    let (_, sam) = register(&app, "sam").await;
-    let s = create_server(&app, &alex, "Main").await;
-    assert_eq!(join_server(&app, &sam, s.id).await.status(), 200);
-    let text = general(&app, &alex, s.id).await;
-    let (mut old, _) = hello_as(&app, &sam, OLD).await;
-
-    create_builds(&app, &alex, s.id).await;
-    send(&app, &alex, text.id, "after").await;
-    let got_old = events_until(&mut old, "after").await;
-    assert!(
-        !got_old
-            .iter()
-            .any(|e| matches!(e, Event::ChannelCreated { .. })),
-        "{got_old:?}"
-    );
-    assert!(
-        !got_old
-            .iter()
-            .any(|e| serde_json::to_string(e).unwrap().contains("\"builds\""))
-    );
 }
 
 #[tokio::test]
@@ -512,61 +447,21 @@ async fn a_current_client_hears_of_a_new_builds_channel() {
 }
 
 #[tokio::test]
-#[ignore = "protocol 4 is refused at the gateway since #634; goes with builds::compat in a later PR"]
-async fn a_version_4_join_leaves_builds_channels_out() {
-    let app = spawn().await;
-    let (_, alex) = register(&app, "alex").await;
-    let (_, kim) = register(&app, "kim").await;
-    let s = create_server(&app, &alex, "Main").await;
-    let ch = create_builds(&app, &alex, s.id).await;
-    let (mut old, _) = hello_as(&app, &kim, OLD).await;
-    assert_eq!(join_server(&app, &kim, s.id).await.status(), 200);
-    let snapshot = wait_for(&mut old, "ServerJoined", |e| match e {
-        Event::ServerJoined { snapshot, .. } => Some(snapshot),
-        _ => None,
-    })
-    .await;
-    assert!(snapshot.channels.iter().all(|c| c.id != ch.id));
-    assert!(
-        snapshot
-            .layout
-            .channels
-            .iter()
-            .all(|p| p.channel_id != ch.id)
-    );
-    assert!(
-        snapshot
-            .channels
-            .iter()
-            .any(|c| c.kind == ChannelKind::Text)
-    );
-}
-
-#[tokio::test]
-async fn rest_channel_lists_leave_builds_out_for_older_clients() {
+async fn rest_channel_lists_have_the_builds_channel() {
     let app = spawn().await;
     let (_, alex) = register(&app, "alex").await;
     let s = create_server(&app, &alex, "Main").await;
     let ch = create_builds(&app, &alex, s.id).await;
     let path = format!("/servers/{}/channels", s.id);
 
-    let old: Vec<Channel> = channels_get(&app, &alex, &path, None)
+    let list: Vec<Channel> = channels_get(&app, &alex, &path)
         .send()
         .await
         .unwrap()
         .json()
         .await
         .unwrap();
-    assert!(old.iter().all(|c| c.id != ch.id));
-    let new: Vec<Channel> =
-        channels_get(&app, &alex, &path, Some(pulse_protocol::PROTOCOL_VERSION))
-            .send()
-            .await
-            .unwrap()
-            .json()
-            .await
-            .unwrap();
-    assert!(new.iter().any(|c| c.id == ch.id));
+    assert!(list.iter().any(|c| c.id == ch.id));
 
     // and in Recently deleted
     let r = app
@@ -578,33 +473,19 @@ async fn rest_channel_lists_leave_builds_out_for_older_clients() {
         .unwrap();
     assert!(r.status().is_success(), "{}", r.status());
     let deleted = format!("/servers/{}/deleted-channels", s.id);
-    let old: Vec<pulse_protocol::rest::DeletedChannel> = channels_get(&app, &alex, &deleted, None)
+    let list: Vec<pulse_protocol::rest::DeletedChannel> = channels_get(&app, &alex, &deleted)
         .send()
         .await
         .unwrap()
         .json()
         .await
         .unwrap();
-    assert!(old.is_empty(), "{old:?}");
-    let new: Vec<pulse_protocol::rest::DeletedChannel> = channels_get(
-        &app,
-        &alex,
-        &deleted,
-        Some(pulse_protocol::PROTOCOL_VERSION),
-    )
-    .send()
-    .await
-    .unwrap()
-    .json()
-    .await
-    .unwrap();
-    assert_eq!(new.len(), 1);
+    assert_eq!(list.len(), 1);
 }
 
-/// An older client saves its server's order without the builds channels it never sees: the save lands and the
-/// builds channel keeps its place. A current client's save must still name every channel.
+/// A layout save names every live channel, the builds channel too: one that leaves it out is stale (409).
 #[tokio::test]
-async fn an_older_clients_layout_save_needn_t_name_builds_channels() {
+async fn a_layout_save_must_name_the_builds_channel() {
     let app = spawn().await;
     let (_, alex) = register(&app, "alex").await;
     let s = create_server(&app, &alex, "Main").await;
@@ -621,36 +502,33 @@ async fn an_older_clients_layout_save_needn_t_name_builds_channels() {
         v.sort_by_key(|c| c.position);
         v.into_iter().map(|c| c.id).collect::<Vec<_>>()
     };
-    let body = json!({
-        "revision": layout.revision,
-        "uncategorised": in_cat(None),
-        "categories": layout.categories.iter().map(|k| json!({ "id": k.id, "channels": in_cat(Some(k.id)) })).collect::<Vec<_>>(),
-    });
-    let save = |version: Option<u32>| {
-        let r = app
-            .http
+    // `with` adds the builds channel at the end of its own category (or the uncategorised list)
+    let body = |with: bool| {
+        let list = |cat: Option<pulse_protocol::ids::CategoryId>| {
+            let mut v = in_cat(cat);
+            if with && ch.category_id == cat {
+                v.push(ch.id);
+            }
+            v
+        };
+        json!({
+            "revision": layout.revision,
+            "uncategorised": list(None),
+            "categories": layout.categories.iter().map(|k| json!({ "id": k.id, "channels": list(Some(k.id)) })).collect::<Vec<_>>(),
+        })
+    };
+    let save = |b: serde_json::Value| {
+        app.http
             .put(app.url(&format!("/servers/{}/layout", s.id)))
             .bearer_auth(&alex)
-            .json(&body);
-        match version {
-            Some(v) => r.header(pulse_protocol::PROTOCOL_HEADER, v.to_string()),
-            None => r,
-        }
+            .json(&b)
+            .send()
     };
-    let r = save(Some(pulse_protocol::PROTOCOL_VERSION))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(r.status(), 409, "a current client names every channel");
-    let r = save(None).send().await.unwrap();
-    assert_eq!(r.status(), 200, "{}", r.text().await.unwrap());
-    let still: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM channels WHERE id = ? AND deleted_at IS NULL")
-            .bind(ch.id.to_string())
-            .fetch_one(&app.db)
-            .await
-            .unwrap();
-    assert_eq!(still, 1);
+    let r = save(body(false)).await.unwrap();
+    assert_eq!(r.status(), 409, "a save names every channel");
+    // the control: the same save naming the builds channel goes through, so the 409 was for leaving it out
+    let r = save(body(true)).await.unwrap();
+    assert!(r.status().is_success(), "the full save {}", r.status());
 }
 
 // ---- Create, get and list (Task 2) ----
@@ -1042,24 +920,6 @@ async fn a_retried_create_gets_the_same_build() {
     let b = build_ok(&w.app, &w.alex.1, w.ch.id, body).await;
     assert_eq!(a.id, b.id);
     assert_eq!(list(&w.app, &w.alex.1, w.ch.id, "").await.len(), 1);
-}
-
-/// A version-4 client hears nothing of a build, nor its comments' channel (#616).
-#[tokio::test]
-#[ignore = "protocol 4 is refused at the gateway since #634; goes with builds::compat in a later PR"]
-async fn a_version_4_client_hears_no_build() {
-    let w = world().await;
-    let text = general(&w.app, &w.alex.1, w.server).await;
-    let (mut old, _) = hello_as(&w.app, &w.sam.1, OLD).await;
-    build_ok(&w.app, &w.alex.1, w.ch.id, json!({ "title": "Raven crit" })).await;
-    send(&w.app, &w.alex.1, text.id, "after").await;
-    let got = events_until(&mut old, "after").await;
-    let id = w.ch.id.to_string();
-    assert!(
-        !got.iter()
-            .any(|e| serde_json::to_string(e).unwrap().contains(&id)),
-        "{got:?}"
-    );
 }
 
 /// A forward names its original's kind of chat, which a version-4 client can't read: nothing leaves a builds channel
@@ -1874,28 +1734,7 @@ async fn a_current_client_gets_its_own_events_about_builds() {
 }
 
 #[tokio::test]
-#[ignore = "protocol 4 is refused at the gateway since #634; goes with builds::compat in a later PR"]
-async fn a_version_4_client_gets_none_of_its_own_events_about_builds() {
-    let w = world().await;
-    let text = general(&w.app, &w.alex.1, w.server).await;
-    let m = build_ok(&w.app, &w.alex.1, w.ch.id, json!({ "title": "Raven crit" })).await;
-    let (mut old, _) = hello_as(&w.app, &w.sam.1, OLD).await;
-    // a current connection only to know when the inbox item has gone out
-    let mut sync = hello(&w.app, &w.sam.1).await;
-
-    sam_uses_a_build(&w, &text, &m, &mut sync).await;
-    send(&w.app, &w.alex.1, text.id, "after").await;
-    let got_old = events_until(&mut old, "after").await;
-    let leaked: Vec<_> = got_old.iter().filter(|e| names(e, w.ch.id)).collect();
-    assert!(leaked.is_empty(), "{leaked:?}");
-    assert!(
-        got_old.iter().any(|e| matches!(e, Event::ChannelOrderChanged { order: Some(o), .. } if o.uncategorised.contains(&text.id))),
-        "its order still arrives, without the builds channel"
-    );
-}
-
-#[tokio::test]
-async fn rest_lists_leave_builds_out_for_older_clients() {
+async fn rest_lists_have_builds() {
     let w = world().await;
     let m = build_ok(&w.app, &w.alex.1, w.ch.id, json!({ "title": "Raven crit" })).await;
     post_json(
@@ -1937,31 +1776,12 @@ async fn rest_lists_leave_builds_out_for_older_clients() {
         "/reminders",
         &format!("/servers/{}/search?q=raven", w.server),
     ] {
-        let new = channels_get(
-            &w.app,
-            &w.sam.1,
-            path,
-            Some(pulse_protocol::PROTOCOL_VERSION),
-        )
-        .send()
-        .await
-        .unwrap()
-        .text()
-        .await
-        .unwrap();
+        let r = channels_get(&w.app, &w.sam.1, path).send().await.unwrap();
+        assert!(r.status().is_success(), "{path}");
+        let body = r.text().await.unwrap();
         assert!(
-            new.contains(&id) || new.contains(&m.id.to_string()),
-            "{path} has it for a current client: {new}"
-        );
-        let old = channels_get(&w.app, &w.sam.1, path, None)
-            .send()
-            .await
-            .unwrap();
-        assert!(old.status().is_success(), "{path}");
-        let old = old.text().await.unwrap();
-        assert!(
-            !old.contains(&id) && !old.contains(&m.id.to_string()),
-            "{path} for an older client: {old}"
+            body.contains(&id) || body.contains(&m.id.to_string()),
+            "{path} has it: {body}"
         );
     }
 }

@@ -200,7 +200,7 @@ describe('BuildQuickAdd', () => {
     await flush()
     expect(calls('update_build')[0][1]).toEqual({
       messageId: 'M100', channelId: 'B1',
-      body: { title: 'TFD Raven bunny build', game_id: null, link_url: LINK, notes: null, attachments: [], mark_sorted: false },
+      body: { title: 'TFD Raven bunny build', game_id: null, game: 'clear', link_url: LINK, notes: null, attachments: [], mark_sorted: false },
       order: [],
     })
   })

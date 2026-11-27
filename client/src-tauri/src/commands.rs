@@ -992,7 +992,7 @@ pub async fn restore_session(
         .and_then(|r| r.ok().map(|b| b.clone()));
     crate::startup::mark("restore_end");
     match decided {
-        Some(Boot::Ready(user)) => Ok(Restored::Ready(user)),
+        Some(Boot::Ready(user)) => Ok(Restored::Ready(*user)),
         Some(Boot::LoggedOut) => Ok(Restored::LoggedOut), // forward() already cleared the stored session
         // Turned away (too many devices / attempts) but signed in: leave the session and its
         // gateway running. The UI sees the refusal in `pulse://conn`, shows it, and opens the
@@ -1789,13 +1789,7 @@ pub async fn join_voice(
     // a switch leaves the last channel's stream room (and ends our stream audio there)
     stream_audio.leave().await;
     let r = voice
-        .join(
-            &api,
-            &token,
-            channel_id,
-            config.normalized(),
-            AudioMode::Real,
-        )
+        .join(&api, &token, channel_id, config, AudioMode::Real)
         .await;
     if let Err(VoiceError::Api(ApiError::Unauthorized)) = &r {
         let _ = core.check::<()>(&app, Err(ApiError::Unauthorized));
@@ -1938,7 +1932,7 @@ pub async fn set_audio_config(
     voice: State<'_, VoiceManager>,
     config: AudioConfig,
 ) -> Result<(), VoiceError> {
-    voice.set_audio_config(config.normalized()).await
+    voice.set_audio_config(config).await
 }
 
 #[derive(serde::Serialize)]
@@ -1986,7 +1980,7 @@ pub async fn start_mic_test(
     // work off this worker meanwhile
     tokio::task::block_in_place(|| {
         mic.start(
-            &config.normalized(),
+            &config,
             std::sync::Arc::new(move |e| {
                 let _ = handle.emit("voice://event", &e);
             }),
@@ -2085,6 +2079,12 @@ pub async fn record_mic_sample(
 #[tauri::command]
 pub fn watch_voice_meters(voice: State<'_, VoiceManager>, on: bool) {
     voice.watch_meters(on);
+}
+
+/// A reactive ring appeared (`on`) or the last one went: levels are sent only while one is shown (#651).
+#[tauri::command]
+pub fn watch_voice_rings(voice: State<'_, VoiceManager>, on: bool) {
+    voice.watch_rings(on);
 }
 
 /// The status panel opened (`on`) or closed: ping, jitter and loss are sent only while it is open.
@@ -4287,6 +4287,8 @@ mod tests {
             avatar_still: None,
             style: Default::default(),
             typing_text: None,
+            ring_style: None,
+            ring_color: None,
         };
         assert!(j(Restored::Ready(u)).starts_with(r#"{"status":"ready","user":{"#));
     }

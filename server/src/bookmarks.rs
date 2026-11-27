@@ -132,23 +132,8 @@ fn clean_note(note: Option<String>) -> AppResult<Option<String>> {
 async fn list(
     State(s): State<AppState>,
     AuthUser(me): AuthUser,
-    headers: axum::http::HeaderMap,
 ) -> AppResult<Json<Vec<MessageBookmark>>> {
-    let mut list = list_for(&s.db, me).await?;
-    if !crate::builds::compat::speaks_builds(crate::builds::compat::rest_version(&headers)) {
-        // an older client can't open a builds channel (#616)
-        let builds = crate::builds::compat::builds_among(
-            &s.db,
-            list.iter()
-                .filter_map(|b| b.message.as_ref().map(|m| m.channel_id)),
-        )
-        .await?;
-        list.retain(|b| {
-            b.message
-                .as_ref()
-                .is_none_or(|m| !builds.contains(&m.channel_id))
-        });
-    }
+    let list = list_for(&s.db, me).await?;
     Ok(Json(list))
 }
 

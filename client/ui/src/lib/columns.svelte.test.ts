@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it } from 'vitest'
-import { columns, reloadColumns, resetColumn, saveColumns, setColumn } from './columns.svelte'
+import { columns, reloadColumns, resetColumn, setColumn } from './columns.svelte'
 
 beforeEach(() => {
   localStorage.clear()
@@ -24,7 +24,7 @@ describe('saved column widths (#160)', () => {
     setColumn('left', 300, false)
     expect(columns.left).toBe(300)
     expect(localStorage.getItem('pulse.columns')).toBeNull()
-    saveColumns()
+    setColumn('left', 300)
     expect(JSON.parse(localStorage.getItem('pulse.columns')!).left).toBe(300)
   })
 

@@ -11,9 +11,6 @@ use pulse_protocol::ids::UserId;
 use pulse_protocol::rest::PresenceStatus;
 use tokio_tungstenite::tungstenite::Message as Ws;
 
-type Socket =
-    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
-
 async fn hello(app: &TestApp, token: &str) -> (Socket, Ready) {
     let mut ws = tokio_tungstenite::connect_async(app.ws_url("/gateway"))
         .await
@@ -42,20 +39,6 @@ async fn send(ws: &mut Socket, f: &ClientFrame) {
 
 async fn idle(ws: &mut Socket, idle: bool) {
     send(ws, &ClientFrame::Idle { idle }).await;
-}
-
-async fn next_frame(ws: &mut Socket) -> Option<ServerFrame> {
-    loop {
-        let m = tokio::time::timeout(Duration::from_secs(3), ws.next())
-            .await
-            .ok()??
-            .ok()?;
-        match m {
-            Ws::Text(t) => return Some(serde_json::from_str(&t).unwrap()),
-            Ws::Close(_) => return None,
-            _ => continue,
-        }
-    }
 }
 
 /// Every event that arrives within `ms` of quiet.

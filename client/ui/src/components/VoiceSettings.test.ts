@@ -706,3 +706,36 @@ describe('VoiceSettings record a mic sample (#583)', () => {
     }
   })
 })
+
+describe("VoiceSettings: show everyone's rings as Classic (#651)", () => {
+  beforeEach(() => {
+    invoke.mockClear()
+    localStorage.clear()
+  })
+
+  it('the_classic_rings_toggle_persists_and_turns_rings_classic', async () => {
+    const { ringPrefs, setClassicRings } = await import('../lib/speakingRing.svelte')
+    setClassicRings(false)
+    localStorage.clear()
+    const c = mount(VoiceSettings, { target: document.body })
+    flushSync()
+    invoke.mockClear()
+    const sw = () => document.querySelector<HTMLButtonElement>(`button.switch[aria-label="Show everyone's rings as Classic"]`)!
+    expect(sw().getAttribute('aria-pressed')).toBe('false')
+    // after the audio toggles, in the same list
+    const rows = [...document.querySelectorAll('.toggles .row')]
+    expect(rows.at(-1)!.contains(sw())).toBe(true)
+    expect(rows.at(-1)!.textContent).toContain('Shows every speaking ring as the plain ring. Lighter on slower PCs, and calmer if motion distracts you.')
+    sw().click()
+    flushSync()
+    await Promise.resolve()
+    expect(sw().getAttribute('aria-pressed')).toBe('true')
+    expect(ringPrefs.classic).toBe(true)
+    expect(localStorage.getItem('pulse.classicRings')).toBe('true')
+    // UI only: it never reaches the core
+    expect(invoke.mock.calls.filter(([cmd]) => cmd === 'set_audio_config')).toEqual([])
+    unmount(c)
+    document.body.innerHTML = ''
+    setClassicRings(false)
+  })
+})

@@ -15,11 +15,6 @@ export const MAX_SECONDS = 48 * 3600
 /** A YouTube video id: exactly 11 of `[A-Za-z0-9_-]` (the server checks the same). */
 export const validVideoId = (id: string | null | undefined): id is string => !!id && /^[A-Za-z0-9_-]{11}$/.test(id)
 
-/** A YouTube card's video id, when it has a valid one. */
-export function youtubeIdOf(e: LinkEmbed): string | null {
-  return e.provider === 'youtube' && validVideoId(e.provider_id) ? e.provider_id : null
-}
-
 /** What a party can play (#459): a source and its id there. */
 export type PartyMedia = { source: WatchSource; id: string }
 

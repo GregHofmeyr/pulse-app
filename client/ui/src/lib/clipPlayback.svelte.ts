@@ -1,7 +1,7 @@
 // Which clip is playing (one at a time), and the volume every player shares: the volume mixer's Clips notch, so a
 // player's own slider and Settings → Volume mixer move the same value (kept on this device in `pulse.mixer`).
 import { percentToGain } from './mixer'
-import { mixer, reloadMixer, setClipsMuted, setNotch } from './mixer.svelte'
+import { mixer, setClipsMuted, setNotch } from './mixer.svelte'
 
 const now = $state<{ id: string | null }>({ id: null })
 
@@ -46,11 +46,6 @@ export function release(token: symbol): void {
   owner = null
   now.id = null
   pauseCurrent = null
-}
-
-/** Re-reads the saved volume (startup and tests). */
-export function loadVolume(): void {
-  reloadMixer()
 }
 
 /** Percent, 0..100. */

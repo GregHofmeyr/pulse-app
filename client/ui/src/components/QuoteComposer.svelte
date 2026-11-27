@@ -9,7 +9,6 @@
   import { onMount, tick } from 'svelte'
   import { getCurrentWebview } from '@tauri-apps/api/webview'
   import { stillSrc } from '../lib/animate.svelte'
-  import { mediaUrl } from '../lib/emoji'
   import { suggest } from '../lib/mentions'
   import { nameKey, stripMarks } from '../lib/quotes'
   import { displayName, serverPeople } from '../lib/selectors'

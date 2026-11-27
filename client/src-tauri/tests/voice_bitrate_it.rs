@@ -148,7 +148,7 @@ impl Publisher {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-#[ignore]
+#[ignore = "needs dev LiveKit: just voice-it"]
 async fn the_mic_sends_at_its_channels_bitrate() {
     let _turn = livekit_turn().await;
     let mut cfg = testing::test_config();
@@ -243,7 +243,7 @@ async fn the_mic_sends_at_its_channels_bitrate() {
 /// #587: the mic (a 1-channel source) is negotiated as mono Opus, which libwebrtc encodes in its
 /// voice mode; stream audio (2 channels) in the same room stays stereo.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-#[ignore]
+#[ignore = "needs dev LiveKit: just voice-it"]
 async fn the_mic_is_mono_and_stream_audio_stereo() {
     let _turn = livekit_turn().await;
     let mut cfg = testing::test_config();

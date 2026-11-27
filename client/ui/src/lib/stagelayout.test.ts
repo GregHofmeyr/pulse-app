@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { flipInverse, stageLayout, tileScale, type Rect } from './stagelayout'
+import { flipInverse, stageLayout, TILE_ASPECT, TILE_MIN_W, tileScale, type Rect } from './stagelayout'
 
 const AR = 16 / 9
 const lay = (count: number, width: number, height: number) => stageLayout({ count, width, height })
@@ -136,6 +136,17 @@ describe('tileScale', () => {
     expect(tileScale(5000).avatar).toBeLessThanOrEqual(160)
     expect(tileScale(40).avatar).toBeGreaterThanOrEqual(48)
     expect(tileScale(40).font).toBe(14)
+  })
+
+  // Speaking rings (#651 §3.3): the 1.32 D ring box, the gap and the name row fit every real tile, Classic included,
+  // so switching style never moves anything; the avatar only ever shrinks for it.
+  it('the_ring_box_and_name_fit_every_tile_height', () => {
+    const minH = Math.floor(TILE_MIN_W / TILE_ASPECT)
+    for (let h = minH; h <= 810; h++) {
+      const s = tileScale(h)
+      expect(1.32 * s.avatar + 10 + Math.ceil(s.font * 1.4), `h ${h}`).toBeLessThanOrEqual(h - 8)
+      expect(s.avatar, `h ${h}`).toBeLessThanOrEqual(Math.min(160, Math.max(48, Math.round(h * 0.5))))
+    }
   })
 
   it('badge icons use the icon sizes (14 or 18)', () => {

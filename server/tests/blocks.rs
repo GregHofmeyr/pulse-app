@@ -6,8 +6,8 @@ mod common;
 use std::time::Duration;
 
 use common::*;
-use futures::{SinkExt, StreamExt};
-use pulse_protocol::gateway::{ClientFrame, Event, Ready, ServerFrame};
+use futures::SinkExt;
+use pulse_protocol::gateway::{ClientFrame, Event, ServerFrame};
 use pulse_protocol::ids::{ChannelId, UserId};
 use pulse_protocol::rest::{
     Block, BlockMode, Member, Message, NameStyle, PresenceStatus, Profile, ServerInvite,
@@ -15,41 +15,6 @@ use pulse_protocol::rest::{
 };
 use serde_json::json;
 use tokio_tungstenite::tungstenite::Message as Ws;
-
-type Socket =
-    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
-
-async fn hello(app: &TestApp, token: &str) -> (Socket, Ready) {
-    let mut ws = tokio_tungstenite::connect_async(app.ws_url("/gateway"))
-        .await
-        .unwrap()
-        .0;
-    let f = serde_json::to_string(&ClientFrame::Hello {
-        token: token.into(),
-        client_version: pulse_protocol::PROTOCOL_VERSION,
-    })
-    .unwrap();
-    ws.send(Ws::text(f)).await.unwrap();
-    loop {
-        if let Some(ServerFrame::Ready(r)) = next_frame(&mut ws).await {
-            return (ws, r);
-        }
-    }
-}
-
-async fn next_frame(ws: &mut Socket) -> Option<ServerFrame> {
-    loop {
-        let m = tokio::time::timeout(Duration::from_secs(3), ws.next())
-            .await
-            .ok()??
-            .ok()?;
-        match m {
-            Ws::Text(t) => return Some(serde_json::from_str(&t).unwrap()),
-            Ws::Close(_) => return None,
-            _ => continue,
-        }
-    }
-}
 
 async fn drain(ws: &mut Socket, ms: u64) -> Vec<Event> {
     let mut got = vec![];
@@ -344,6 +309,8 @@ async fn a_blocked_viewer_never_gets_your_typing_text() {
         display_name: None,
         glow: None,
         typing_text: Some(text.into()),
+        ring_style: None,
+        ring_color: None,
     };
     let put = |body: UpdateProfileRequest| {
         app.http
@@ -402,6 +369,95 @@ async fn a_blocked_viewer_never_gets_your_typing_text() {
     assert_eq!(to_sam.typing_text, None);
     let to_kim = updated(drain(&mut kim_ws, 500).await).expect("kim hears of the change");
     assert_eq!(to_kim.typing_text.as_deref(), Some("yapping"));
+}
+
+/// #651: a blocked viewer never gets the blocker's speaking ring (they see the plain green one): not in Ready's
+/// members or people, the members list, a ProfileUpdated, or the profile. Someone else does, everywhere.
+#[tokio::test]
+async fn a_blocked_viewer_never_gets_your_speaking_ring() {
+    let app = spawn().await;
+    let (alex_id, alex) = register(&app, "alex").await;
+    let (sam_id, sam) = register(&app, "sam").await;
+    let (_, kim) = register(&app, "kim").await;
+    let common = acquaint(&app, &alex, &[&sam, &kim]).await;
+    let save = |style: &str, color: &str| UpdateProfileRequest {
+        avatar_hash: None,
+        banner_hash: None,
+        theme_top: "#8a3cff".into(),
+        theme_bottom: "#ff8a2a".into(),
+        style: NameStyle::default(),
+        pronouns: None,
+        bio: None,
+        display_name: None,
+        glow: None,
+        typing_text: None,
+        ring_style: Some(style.into()),
+        ring_color: Some(color.into()),
+    };
+    let put = |body: UpdateProfileRequest| {
+        app.http
+            .put(app.url("/me/profile"))
+            .bearer_auth(&alex)
+            .json(&body)
+            .send()
+    };
+    assert_eq!(put(save("orbit", "gold")).await.unwrap().status(), 200);
+    assert_eq!(block(&app, &alex, sam_id, "line").await.status(), 200);
+    let ring = |u: &pulse_protocol::rest::User| (u.ring_style.clone(), u.ring_color.clone());
+    let none = (None, None);
+    let orbit_gold = (Some("orbit".to_owned()), Some("gold".to_owned()));
+
+    // Ready: members and people
+    let (mut sam_ws, ready) = hello(&app, &sam).await;
+    let m = &ready
+        .members
+        .iter()
+        .find(|m| m.server_id == common)
+        .unwrap()
+        .members;
+    assert_eq!(ring(member_user(m, alex_id)), none);
+    let p = ready.people.iter().find(|p| p.user.id == alex_id).unwrap();
+    assert_eq!(ring(&p.user), none);
+    let (mut kim_ws, ready) = hello(&app, &kim).await;
+    let m = &ready
+        .members
+        .iter()
+        .find(|m| m.server_id == common)
+        .unwrap()
+        .members;
+    assert_eq!(ring(member_user(m, alex_id)), orbit_gold);
+    let p = ready.people.iter().find(|p| p.user.id == alex_id).unwrap();
+    assert_eq!(ring(&p.user), orbit_gold);
+
+    // the members list
+    let list: Vec<Member> = get_json(&app, &sam, &format!("/servers/{common}/members")).await;
+    assert_eq!(ring(member_user(&list, alex_id)), none);
+    let list: Vec<Member> = get_json(&app, &kim, &format!("/servers/{common}/members")).await;
+    assert_eq!(ring(member_user(&list, alex_id)), orbit_gold);
+
+    // the profile
+    let p: Profile = get_json(&app, &sam, &format!("/users/{alex_id}/profile")).await;
+    assert_eq!(ring(&p.user), none);
+    let p: Profile = get_json(&app, &kim, &format!("/users/{alex_id}/profile")).await;
+    assert_eq!(ring(&p.user), orbit_gold);
+
+    // a ProfileUpdated as alex changes it
+    drain(&mut sam_ws, 200).await;
+    drain(&mut kim_ws, 200).await;
+    assert_eq!(put(save("bars", "purple")).await.unwrap().status(), 200);
+    let updated = |events: Vec<Event>| {
+        events.into_iter().find_map(|e| match e {
+            Event::ProfileUpdated { user, .. } if user.id == alex_id => Some(user),
+            _ => None,
+        })
+    };
+    let to_sam = updated(drain(&mut sam_ws, 500).await).expect("sam hears of the change");
+    assert_eq!(ring(&to_sam), none);
+    let to_kim = updated(drain(&mut kim_ws, 500).await).expect("kim hears of the change");
+    assert_eq!(
+        ring(&to_kim),
+        (Some("bars".to_owned()), Some("purple".to_owned()))
+    );
 }
 
 /// The `User` of `who` among `members`.

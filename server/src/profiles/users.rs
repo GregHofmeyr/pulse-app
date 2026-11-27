@@ -8,7 +8,7 @@ use crate::profiles::colors;
 
 /// What [`UserRow`] reads, for a query that selects from `users u` with [`USER_JOIN`].
 pub const USER_COLS: &str = "u.id, u.username, u.display_name, u.avatar_hash, av.still_hash, u.name_font, u.name_color, \
-     u.name_effect, u.typing_text";
+     u.name_effect, u.typing_text, u.ring_style, u.ring_color";
 /// Brings in the avatar's still (`av.still_hash`).
 pub const USER_JOIN: &str = "LEFT JOIN media av ON av.hash = u.avatar_hash";
 
@@ -23,6 +23,14 @@ pub struct UserRow {
     pub name_color: Option<String>,
     pub name_effect: Option<String>,
     pub typing_text: Option<String>,
+    pub ring_style: Option<String>,
+    pub ring_color: Option<String>,
+}
+
+/// A stored ring key, if this server knows it and it isn't the default (#651): a newer server's
+/// key reads as the default, and the default goes out as absent.
+fn ring_key(key: Option<String>, keys: &[&str], default: &str) -> Option<String> {
+    key.filter(|k| k != default && keys.contains(&k.as_str()))
 }
 
 impl UserRow {
@@ -54,6 +62,8 @@ impl UserRow {
             typing_text: self
                 .typing_text
                 .and_then(|t| super::names::clean_typing_text(&t).ok().flatten()),
+            ring_style: ring_key(self.ring_style, &super::RING_STYLES, "classic"),
+            ring_color: ring_key(self.ring_color, &super::RING_COLORS, "green"),
         })
     }
 }
@@ -73,6 +83,8 @@ mod tests {
             name_color: name_color.map(str::to_owned),
             name_effect: None,
             typing_text: None,
+            ring_style: None,
+            ring_color: None,
         }
     }
 
@@ -109,5 +121,27 @@ mod tests {
         assert_eq!(text(Some("cooking")).as_deref(), Some("cooking"));
         assert_eq!(text(Some("")), None);
         assert_eq!(text(Some("go to pulse.app")), None);
+    }
+
+    #[test]
+    fn ring_fields_are_read_back_and_unknown_or_default_keys_are_none() {
+        let style = |k: Option<&str>| {
+            let mut r = row(None);
+            r.ring_style = k.map(str::to_owned);
+            r.into_user().unwrap().ring_style
+        };
+        assert_eq!(style(None), None);
+        assert_eq!(style(Some("bars")).as_deref(), Some("bars"));
+        assert_eq!(style(Some("sparkle")), None);
+        assert_eq!(style(Some("classic")), None);
+        let color = |k: Option<&str>| {
+            let mut r = row(None);
+            r.ring_color = k.map(str::to_owned);
+            r.into_user().unwrap().ring_color
+        };
+        assert_eq!(color(None), None);
+        assert_eq!(color(Some("purple")).as_deref(), Some("purple"));
+        assert_eq!(color(Some("red")), None);
+        assert_eq!(color(Some("green")), None);
     }
 }

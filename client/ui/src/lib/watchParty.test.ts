@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { clockText, correction, DRIFT_S, mayControl, partyPlayerSrc, partySeconds, validVideoId, watching, youtubeIdOf, YT } from './watchParty'
+import { clockText, correction, DRIFT_S, mayControl, partyPlayerSrc, partySeconds, validVideoId, watching, YT } from './watchParty'
 import type { WatchParty } from './protocol/WatchParty'
 import type { LinkEmbed } from './protocol/LinkEmbed'
 
@@ -14,10 +14,6 @@ describe('watch party sync (#384)', () => {
     expect(validVideoId('dQw4w9WgXcQ')).toBe(true)
     expect(validVideoId('a-b_c-d_e-f')).toBe(true)
     for (const bad of ['', 'short', 'dQw4w9WgXcQQ', 'dQw4w9WgXc!', '../../admin', null, undefined]) expect(validVideoId(bad)).toBe(false)
-    const e = { provider: 'youtube', provider_id: 'dQw4w9WgXcQ' } as LinkEmbed
-    expect(youtubeIdOf(e)).toBe('dQw4w9WgXcQ')
-    expect(youtubeIdOf({ ...e, provider_id: 'x' })).toBeNull()
-    expect(youtubeIdOf({ ...e, provider: 'twitch' })).toBeNull()
   })
 
   it('the position runs on by the server clock while playing, not while paused', () => {
@@ -110,6 +106,9 @@ describe('Twitch in the party (#459)', () => {
     expect(partyMediaOf(card('channel:alex'))).toEqual({ source: 'twitch_channel', id: 'alex' })
     expect(partyMediaOf(card('Clip1'))).toEqual({ source: 'twitch_clip', id: 'Clip1' })
     expect(partyMediaOf(card('video:x'))).toBeNull()
+    const yt = (provider_id: string) => ({ provider: 'youtube', provider_id }) as LinkEmbed
+    expect(partyMediaOf(yt('dQw4w9WgXcQ'))).toEqual({ source: 'youtube', id: 'dQw4w9WgXcQ' })
+    expect(partyMediaOf(yt('x'))).toBeNull()
     const o = 'https://pulsechat.co.za'
     expect(partyPlayerSrc(o, { source: 'twitch_video', id: '123' }, 90)).toBe(`${o}/embed/twitch/video%3A123?party=1&start=90`)
     expect(partyPlayerSrc(o, { source: 'twitch_channel', id: 'alex' }, 90)).toBe(`${o}/embed/twitch/channel%3Aalex?party=1`)

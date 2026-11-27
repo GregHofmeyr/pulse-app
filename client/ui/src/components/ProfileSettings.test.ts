@@ -17,6 +17,11 @@ import type { Profile } from '../lib/protocol/Profile'
 import type { UpdateProfileRequest } from '../lib/protocol/UpdateProfileRequest'
 import type { MediaInfo } from '../lib/protocol/MediaInfo'
 import type { Badge } from '../lib/protocol/Badge'
+import { motion } from '../lib/animate.svelte'
+import { windowFocus } from '../lib/windowFocus.svelte'
+import { RING_COLORS, speakCss } from '../lib/speakingRing'
+import { previewUser, draftFrom } from '../lib/profileDraft'
+import { nameBg } from '../lib/theme.svelte'
 
 const alex: User = { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
 const saved = (over: Partial<Profile> = {}): Profile => ({
@@ -125,12 +130,12 @@ describe('the redesigned editor (#467)', () => {
   const tabs = () => [...document.querySelectorAll<HTMLButtonElement>('[role=tablist][aria-label="Profile"] [role=tab]')]
   const panel = (label: string) => document.getElementById(tabs().find((t) => t.textContent!.trim() === label)!.getAttribute('aria-controls')!)!
 
-  it('four tabs, About you first; only the picked one shows, the preview always does', async () => {
+  it('five tabs, About you first; only the picked one shows, the preview always does', async () => {
     await open()
-    expect(tabs().map((t) => t.textContent!.trim())).toEqual(['About you', 'Card', 'Name style', 'Badges'])
+    expect(tabs().map((t) => t.textContent!.trim())).toEqual(['About you', 'Card', 'Name style', 'Speaking ring', 'Badges'])
     expect(tabs()[0].getAttribute('aria-selected')).toBe('true')
     expect(panel('About you').hidden).toBe(false)
-    for (const l of ['Card', 'Name style', 'Badges']) expect(panel(l).hidden).toBe(true)
+    for (const l of ['Card', 'Name style', 'Speaking ring', 'Badges']) expect(panel(l).hidden).toBe(true)
     // what each holds
     expect(panel('About you').querySelector('input[aria-label="Display name"]')).not.toBeNull()
     expect(panel('About you').querySelector('input[aria-label="Pronouns"]')).not.toBeNull()
@@ -156,8 +161,8 @@ describe('the redesigned editor (#467)', () => {
     expect(tabs()[1].getAttribute('aria-selected')).toBe('true')
     tabs()[1].dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true, cancelable: true }))
     flushSync()
-    expect(tabs()[3].getAttribute('aria-selected')).toBe('true')
-    tabs()[3].dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }))
+    expect(tabs()[4].getAttribute('aria-selected')).toBe('true')
+    tabs()[4].dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }))
     flushSync()
     expect(tabs()[0].getAttribute('aria-selected')).toBe('true')
   })
@@ -284,6 +289,228 @@ describe('the redesigned editor (#467)', () => {
       click(button('Save'))
       await vi.waitFor(() => expect(calls('set_badge_showcase')).toHaveLength(2))
       expect(calls('set_badge_showcase')[1][1]).toEqual({ keys: [] })
+    })
+  })
+})
+
+describe('speaking ring (#651)', () => {
+  const tabs = () => [...document.querySelectorAll<HTMLButtonElement>('[role=tablist][aria-label="Profile"] [role=tab]')]
+  const ringPanel = () => document.getElementById(tabs().find((t) => t.textContent!.trim() === 'Speaking ring')!.getAttribute('aria-controls')!)!
+  const styles = () => [...group('Ring style').querySelectorAll<HTMLButtonElement>('[role=radio]')]
+  const swatches = () => [...group('Ring colour').querySelectorAll<HTMLButtonElement>('[role=radio]')]
+  const stage = () => document.querySelector<HTMLElement>('.ring-stage')!
+  const ring = () => stage().querySelector<HTMLElement>('.ring-box')!
+  const caption = () => document.querySelector<HTMLElement>('.ring-caption')!.textContent!.trim()
+  afterEach(() => {
+    Object.assign(motion, { reducedMotion: false, streaming: false })
+    windowFocus.focused = true
+  })
+
+  it('the_speaking_ring_tab_follows_name_style', async () => {
+    await open()
+    expect(tabs().map((t) => t.textContent!.trim())).toEqual(['About you', 'Card', 'Name style', 'Speaking ring', 'Badges'])
+    // the tab keys step through it like the others
+    const name = tabs()[2]
+    showTab('Name style')
+    name.focus()
+    name.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }))
+    flushSync()
+    expect(document.activeElement).toBe(tabs()[3])
+    expect(ringPanel().hidden).toBe(false)
+    expect(ringPanel().querySelector('h3')!.textContent!.trim()).toBe('Speaking ring')
+    expect(ringPanel().textContent).toContain('How your avatar lights up when you talk. Everyone in the call sees it.')
+    expect(ringPanel().textContent).toContain('With reduced motion on, everyone sees the still version of each ring. In big calls some rings show still to keep things smooth.')
+    tabs()[3].dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }))
+    flushSync()
+    expect(document.activeElement!.textContent!.trim()).toBe('Badges')
+  })
+
+  it('style_and_colour_are_radiogroups_with_roving_tabindex', async () => {
+    await open()
+    showTab('Speaking ring')
+    expect(styles()).toHaveLength(11)
+    const groups = [...group('Ring style').querySelectorAll<HTMLElement>('[role=group]')]
+    expect(groups.map((g) => document.getElementById(g.getAttribute('aria-labelledby')!)!.textContent!.trim())).toEqual(['Still or looping', 'Follows your voice'])
+    expect(groups.map((g) => g.querySelectorAll('[role=radio]').length)).toEqual([8, 3])
+    expect(styles().filter((r) => r.tabIndex === 0)).toEqual([option('Ring style', 'Classic')])
+    expect(option('Ring style', 'Classic').getAttribute('aria-checked')).toBe('true')
+    // the arrows cross from one group into the next, and pick
+    click(option('Ring style', 'Viewfinder'))
+    const vf = option('Ring style', 'Viewfinder')
+    vf.focus()
+    vf.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }))
+    flushSync()
+    const liquid = option('Ring style', 'Liquid')
+    expect(document.activeElement).toBe(liquid)
+    expect(liquid.getAttribute('aria-checked')).toBe('true')
+    expect(styles().filter((r) => r.tabIndex === 0)).toEqual([liquid])
+    // the preview draws the draft
+    expect(ring().dataset.style).toBe('liquid')
+    // colours: the nine, by name, one tab stop
+    expect(swatches().map((b) => b.getAttribute('aria-label'))).toEqual(RING_COLORS.map((c) => c.label))
+    expect(swatches().filter((r) => r.tabIndex === 0)).toEqual([option('Ring colour', 'Green')])
+    expect(option('Ring colour', 'Pulse blue').style.getPropertyValue('--swatch')).toBe('var(--speak-blue)')
+    click(option('Ring colour', 'Cyan'))
+    expect(ring().style.getPropertyValue('--speak')).toBe('var(--speak-cyan)')
+  })
+
+  it('the_profile_swatch_tip_says_where_the_colour_comes_from', async () => {
+    const coloured = { ...alex, style: { font: null, colors: ['#ffbe7a'] } }
+    await open(saved({ user: coloured }))
+    showTab('Speaking ring')
+    const prof = option('Ring colour', 'Profile colour')
+    expect(prof.dataset.tip).toBe('Your name colour, from Name style')
+    const want = speakCss(previewUser(alex, draftFrom(saved({ user: coloured }))), 'profile', nameBg('side'))
+    expect(prof.style.getPropertyValue('--swatch')).toBe(want)
+    if (cmp) unmount(cmp)
+    cmp = undefined
+    document.body.innerHTML = ''
+    await open()
+    showTab('Speaking ring')
+    expect(option('Ring colour', 'Profile colour').dataset.tip).toMatch(/ You haven't set one, so it's green\.$/)
+    expect(option('Ring colour', 'Profile colour').style.getPropertyValue('--swatch')).toBe('var(--speak-green)')
+  })
+
+  it('picking_a_ring_saves_it', async () => {
+    const state = await open()
+    showTab('Speaking ring')
+    click(option('Ring style', 'Bars round the ring'))
+    click(option('Ring colour', 'Purple'))
+    expect(state.dirty).toBe(true)
+    click(button('Save'))
+    expect(calls('update_profile')).toHaveLength(1)
+    const req = (calls('update_profile')[0][1] as { request: UpdateProfileRequest }).request
+    expect(req.ring_style).toBe('bars')
+    expect(req.ring_color).toBe('purple')
+  })
+
+  it('a_saved_ring_is_what_the_tab_shows', async () => {
+    await open(saved({ user: { ...alex, ring_style: 'dots', ring_color: 'gold' } }))
+    showTab('Speaking ring')
+    expect(option('Ring style', 'Wave of dots').getAttribute('aria-checked')).toBe('true')
+    expect(option('Ring colour', 'Gold').getAttribute('aria-checked')).toBe('true')
+    expect(ring().dataset.style).toBe('dots')
+  })
+
+  it('the_preview_animates_only_while_the_tab_is_shown', async () => {
+    await open(saved({ user: { ...alex, ring_style: 'bars' } }))
+    vi.useFakeTimers()
+    const baseline = vi.getTimerCount()
+    showTab('Speaking ring')
+    FakeIntersectionObserver.set(stage(), true)
+    flushSync()
+    expect(ring().dataset.ring).toBe('on')
+    expect(caption()).toBe('Preview · talking')
+    vi.advanceTimersByTime(70)
+    expect(stage().style.getPropertyValue('--lvl')).not.toBe('')
+    expect(vi.getTimerCount()).toBeGreaterThan(baseline)
+    showTab('Badges')
+    // one-shot timeouts (a tab switch may start one) run out; a repeating interval would not
+    vi.advanceTimersByTime(1000)
+    expect(vi.getTimerCount()).toBe(baseline)
+    expect(stage().style.getPropertyValue('--lvl')).toBe('')
+    // reduced motion: the still version, said so, and no envelope at all
+    motion.reducedMotion = true
+    showTab('Speaking ring')
+    expect(ring().dataset.ring).toBe('still')
+    expect(caption()).toBe('Preview · still (reduced motion is on)')
+    vi.advanceTimersByTime(1000)
+    expect(vi.getTimerCount()).toBe(baseline)
+    expect(stage().style.getPropertyValue('--lvl')).toBe('')
+  })
+
+  it('the_preview_is_still_while_you_are_live', async () => {
+    await open(saved({ user: { ...alex, ring_style: 'bars' } }))
+    vi.useFakeTimers()
+    const baseline = vi.getTimerCount()
+    motion.streaming = true
+    showTab('Speaking ring')
+    FakeIntersectionObserver.set(stage(), true)
+    flushSync()
+    // drawn still, so the caption says still, and no envelope runs
+    expect(ring().dataset.ring).toBe('still')
+    expect(caption()).toBe("Preview · still (you're live)")
+    vi.advanceTimersByTime(1000)
+    expect(vi.getTimerCount()).toBe(baseline)
+    expect(stage().style.getPropertyValue('--lvl')).toBe('')
+    // going off air: it talks again
+    motion.streaming = false
+    flushSync()
+    expect(caption()).toBe('Preview · talking')
+    vi.advanceTimersByTime(70)
+    expect(vi.getTimerCount()).toBeGreaterThan(baseline)
+  })
+
+  it('the_envelope_stops_while_the_window_is_unfocused_or_the_preview_off_screen', async () => {
+    await open(saved({ user: { ...alex, ring_style: 'dots' } }))
+    vi.useFakeTimers()
+    const baseline = vi.getTimerCount()
+    showTab('Speaking ring')
+    FakeIntersectionObserver.set(stage(), true)
+    flushSync()
+    vi.advanceTimersByTime(70)
+    expect(vi.getTimerCount()).toBeGreaterThan(baseline)
+    // the window loses focus (minimised, another app on top): the same signal animated emoji follow
+    windowFocus.focused = false
+    flushSync()
+    vi.advanceTimersByTime(1000)
+    expect(vi.getTimerCount()).toBe(baseline)
+    windowFocus.focused = true
+    flushSync()
+    expect(vi.getTimerCount()).toBeGreaterThan(baseline)
+    // scrolled out of view
+    FakeIntersectionObserver.set(stage(), false)
+    flushSync()
+    vi.advanceTimersByTime(1000)
+    expect(vi.getTimerCount()).toBe(baseline)
+  })
+
+  describe('style chip tooltips', () => {
+    // jsdom lays nothing out: a chip "overflows" when its label is longer than 12 characters
+    const wide = (b: Element) => (b.textContent!.trim().length > 12 ? 160 : 60)
+    beforeEach(() => {
+      Object.defineProperty(HTMLButtonElement.prototype, 'scrollWidth', { configurable: true, get() { return wide(this) } })
+      Object.defineProperty(HTMLButtonElement.prototype, 'clientWidth', { configurable: true, get() { return 100 } })
+    })
+    afterEach(() => {
+      delete (HTMLButtonElement.prototype as { scrollWidth?: number }).scrollWidth
+      delete (HTMLButtonElement.prototype as { clientWidth?: number }).clientWidth
+      vi.unstubAllGlobals()
+      vi.stubGlobal('IntersectionObserver', FakeIntersectionObserver)
+      vi.stubGlobal('matchMedia', fakeMatchMedia(false).matchMedia)
+    })
+
+    it('a_chip_tip_shows_only_when_its_label_is_cut_off', async () => {
+      await open()
+      showTab('Speaking ring')
+      expect(option('Ring style', 'Bars round the ring').dataset.tip).toBe('Bars round the ring')
+      expect(option('Ring style', 'Classic').dataset.tip).toBeUndefined()
+      expect(option('Ring style', 'Wave of dots').dataset.tip).toBeUndefined()
+    })
+
+    it('a_resize_rechecks_the_chips', async () => {
+      const observers: { cb: () => void; observed: Element[] }[] = []
+      vi.stubGlobal('ResizeObserver', class {
+        observed: Element[] = []
+        constructor(public cb: () => void) { observers.push(this) }
+        observe(el: Element) { this.observed.push(el) }
+        unobserve() {}
+        disconnect() { this.observed = [] }
+      })
+      await open()
+      showTab('Speaking ring')
+      const grids = [...document.querySelectorAll('.ring-grid')]
+      // one observer per grid
+      expect(observers.filter((o) => o.observed.some((e) => grids.includes(e)))).toHaveLength(2)
+      expect(option('Ring style', 'Bars round the ring').dataset.tip).toBe('Bars round the ring')
+      // the pane gets wider: everything fits, no tips
+      Object.defineProperty(HTMLButtonElement.prototype, 'clientWidth', { configurable: true, get() { return 200 } })
+      for (const o of observers) o.cb()
+      expect(option('Ring style', 'Bars round the ring').dataset.tip).toBeUndefined()
+      // narrower again: Classic is cut off too
+      Object.defineProperty(HTMLButtonElement.prototype, 'clientWidth', { configurable: true, get() { return 40 } })
+      for (const o of observers) o.cb()
+      expect(option('Ring style', 'Classic').dataset.tip).toBe('Classic')
     })
   })
 })
@@ -451,6 +678,7 @@ describe('ProfileSettings', () => {
     expect(req).toEqual({
       avatar_hash: null, banner_hash: null, theme_top: '#1f7a5a', theme_bottom: '#0f2b3a',
       style: { font: 'fredoka', colors: ['#000000'], effect: null }, pronouns: null, bio: 'hello', display_name: 'alex', glow: true, typing_text: '',
+      ring_style: 'classic', ring_color: 'green',
     })
     const stored = saved({
       user: { ...alex, style: { font: 'fredoka', colors: ['#a8a8a8'] } },

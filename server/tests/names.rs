@@ -119,6 +119,8 @@ fn profile_request(display_name: Option<&str>) -> UpdateProfileRequest {
         display_name: display_name.map(str::to_owned),
         glow: None,
         typing_text: None,
+        ring_style: None,
+        ring_color: None,
     }
 }
 

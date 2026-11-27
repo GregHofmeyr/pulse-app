@@ -17,4 +17,14 @@ glow?: boolean,
  * The new typing text (#652): blank clears it back to "is typing"; absent keeps the current
  * one (older clients don't send it).
  */
-typing_text?: string, };
+typing_text?: string, 
+/**
+ * The new speaking ring style (#651): `"classic"` is the default; absent keeps the current
+ * one (older clients don't send it).
+ */
+ring_style?: string, 
+/**
+ * The new speaking ring colour (#651): `"green"` is the default; absent keeps the current
+ * one (older clients don't send it).
+ */
+ring_color?: string, };

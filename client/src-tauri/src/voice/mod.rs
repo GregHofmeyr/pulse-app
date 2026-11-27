@@ -24,6 +24,7 @@ pub mod playout;
 pub mod processor;
 pub mod rejoin;
 pub mod resampler;
+pub mod ringlevels;
 pub mod rings;
 pub mod rtprio;
 pub mod rx;
@@ -33,7 +34,7 @@ pub mod tokens;
 pub mod tone;
 pub mod virtualmic;
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -928,6 +929,11 @@ pub enum VoiceEvent {
     },
     Speaking {
         user_ids: Vec<String>,
+    },
+    /// Per-speaker loudness 0..1 for the reactive rings (#651): only for people speaking, only while
+    /// a ring watches; one `{}` when the last one stops.
+    SpeakingLevels {
+        levels: BTreeMap<String, f32>,
     },
     Quality {
         user_id: String,
@@ -2193,8 +2199,7 @@ impl VoiceManager {
             }));
         }
 
-        // levels for the UI meter + speaking ring (FINDINGS rule 2); the device watchdog is the
-        // pipeline's
+        // levels for the UI meter (FINDINGS rule 2); the device watchdog is the pipeline's
         let me_id = room.local_participant().identity().to_string();
         // a new call judges the mic afresh ("heard" in the last call says nothing about this one)
         shared.mic_silence.lock().unwrap().restart();
@@ -2203,7 +2208,6 @@ impl VoiceManager {
             tasks.push(tokio::spawn(async move {
                 let mut tick = tokio::time::interval(Duration::from_millis(100));
                 tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-                let mut speaking = speaking::SpeakingTracker::default();
                 let mut clip = miclevels::ClipHint::default();
                 loop {
                     tick.tick().await;
@@ -2240,11 +2244,40 @@ impl VoiceManager {
                     if devices::relock(&shared.muted_cue).take_fired() {
                         events(VoiceEvent::MutedCue);
                     }
+                }
+            }));
+        }
+        // speaking ring + its levels, ~14 Hz (#651); the only reader in production of the
+        // read-and-reset voice meters; `mixer_levels()` is a test hook that races it. A steady tick
+        // allocates nothing: one reused peer buffer, your own level beside it.
+        {
+            let (shared, events, alive) = (shared.clone(), self.events.clone(), alive.clone());
+            tasks.push(tokio::spawn(async move {
+                let mut tick = tokio::time::interval(Duration::from_millis(70));
+                tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                let mut speaking = speaking::SpeakingTracker::default();
+                let mut ring = ringlevels::RingLevels::default();
+                let mut peers: Vec<(String, f32)> = Vec::new();
+                loop {
+                    tick.tick().await;
+                    if !alive.load(Ordering::SeqCst) {
+                        break;
+                    }
                     // Ring = actually audible: received levels per peer + what we really send.
-                    let mut levels = shared.mix_in.take_peer_levels();
-                    levels.push((me_id.clone(), shared.take_sent_level()));
-                    if let Some(user_ids) = speaking.update(&levels, Instant::now()) {
+                    shared.mix_in.take_peer_levels_into(&mut peers);
+                    let me = shared.take_sent_level();
+                    let levels = || {
+                        peers
+                            .iter()
+                            .map(|(id, rms)| (id.as_str(), *rms))
+                            .chain(std::iter::once((me_id.as_str(), me)))
+                    };
+                    if let Some(user_ids) = speaking.observe(levels(), Instant::now()) {
                         events(VoiceEvent::Speaking { user_ids });
+                    }
+                    let watched = devices::relock(&shared.controls).rings_shown();
+                    if let Some(levels) = ring.frame_from(levels(), speaking.current(), watched) {
+                        events(VoiceEvent::SpeakingLevels { levels });
                     }
                 }
             }));
@@ -2433,13 +2466,18 @@ impl VoiceManager {
         self.controls.lock().unwrap().watch_meters(on);
     }
 
+    /// A reactive speaking ring appeared in (`true`) or the last one left the UI (#651).
+    pub fn watch_rings(&self, on: bool) {
+        self.controls.lock().unwrap().watch_rings(on);
+    }
+
     /// The status panel opened (`true`) or closed: link figures are sent only while it is open.
     pub fn watch_link(&self, on: bool) {
         self.link.set_watching(on);
     }
 
-    /// A fresh page (first load or a webview reload): the meters and status panel the previous
-    /// page showed are gone, and their close calls will never come.
+    /// A fresh page (first load or a webview reload): the meters, rings and status panel the
+    /// previous page showed are gone, and their close calls will never come.
     pub fn reset_page_views(&self) {
         self.controls.lock().unwrap().reset_meters();
         self.link.set_watching(false);
@@ -2559,7 +2597,9 @@ impl VoiceManager {
         }
     }
 
-    /// Loudest voice level per person since the last call (tests: sound, not just frames).
+    /// Loudest voice level per person since the last call (tests: sound, not just frames). A test
+    /// hook: the session's ring tick drains the same meters every 70 ms, so a read covers at most
+    /// that long. Poll it and take the max (`tests/common::loudest`).
     pub async fn mixer_levels(&self) -> Vec<(String, f32)> {
         match self.session.lock().await.as_ref() {
             Some(s) => s.pipeline.shared.mix_in.take_peer_levels(),
@@ -2657,7 +2697,7 @@ pub fn mic_bps(kbps: u32) -> u64 {
 /// How the mic is sent, at its channel's bitrate (`kbps`, 0 = Default, #75).
 /// DTX makes silence ~free and RED (redundant audio) hides packet loss. Mono comes from the
 /// track's 1-channel source (vendor/livekit offers no `stereo=1` for it, #587), not from here.
-/// Also used by tests/neteq_probe.rs, so the probe sends exactly like the app.
+/// Also used by tests/voice_bitrate_it.rs, so that test sends exactly like the app.
 pub fn mic_publish_options(kbps: u32) -> TrackPublishOptions {
     TrackPublishOptions {
         source: TrackSource::Microphone,
@@ -4167,6 +4207,17 @@ mod tests {
         assert!(!vm.controls.lock().unwrap().meters_shown());
     }
 
+    /// A webview reload with reactive rings on screen: the old page's unwatch never comes, so
+    /// ring levels stop until the new page watches again (#651).
+    #[test]
+    fn a_reloaded_page_stops_ring_levels() {
+        let (vm, _) = collecting_manager();
+        vm.watch_rings(true);
+        assert!(vm.controls.lock().unwrap().rings_shown());
+        vm.reset_page_views();
+        assert!(!vm.controls.lock().unwrap().rings_shown());
+    }
+
     /// A join that never got a session (failed or cancelled) must not leave the last call's
     /// server and ping history behind.
     #[tokio::test]
@@ -4313,6 +4364,15 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&e).unwrap(),
             r#"{"kind":"stage","stage":"reconnecting","attempt":2}"#
+        );
+    }
+
+    #[test]
+    fn speaking_levels_event_serialises_for_the_ui() {
+        let levels = [("U1".to_string(), 0.45f32), ("U2".to_string(), 1.0)].into();
+        assert_eq!(
+            serde_json::to_string(&VoiceEvent::SpeakingLevels { levels }).unwrap(),
+            r#"{"kind":"speaking_levels","levels":{"U1":0.45,"U2":1.0}}"#
         );
     }
 

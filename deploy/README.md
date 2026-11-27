@@ -245,13 +245,16 @@ town's weather (#451). Change it and `just deploy`; places already looked up kee
 - Releases run one at a time (the workflow's concurrency group). When pushes to `main` land back to back, GitHub keeps
   only the newest waiting run, so a middle commit can end up with no image at all: deploy the newer one.
 - Build inputs are pinned too. When bumping the Rust version, change it in three places together: `rust-toolchain.toml`
-  (CI, the Windows release and local builds), the `rust:<version>-bookworm@sha256:…` line in `server.Dockerfile`, and, if
-  the `tauri` crate's minor changed, `@tauri-apps/cli@<version>` in `release-windows.yml`. Dependabot opens PRs for
-  each of these (rust-toolchain, docker, github-actions); the digest is the multi-arch index digest. GitHub Actions are
+  (CI, the Windows release and local builds), the `rust:<version>-bookworm@sha256:…` line in `server.Dockerfile`, and
+  the version quoted under "Pinned build inputs" in `SECURITY.md`.
+  Dependabot opens PRs for each (rust-toolchain, docker); the digest is the multi-arch index digest. The Tauri CLI is
+  an exact devDependency of `client/ui` (`@tauri-apps/cli` in its `package.json`, on the `tauri` crate's minor version):
+  the Windows release runs that one, so bump the two together. GitHub Actions are
   pinned to commit SHAs with a `# vX.Y.Z` comment, and `ci.yml` checks the LLVM apt key against its published fingerprint.
 - Node and pnpm are pinned to exact versions (`node-version` / `version` of the setup actions) in `ci.yml` and
-  `release-windows.yml`. Dependabot doesn't bump those inputs: to bump, take the newest release of the same major
-  (`https://nodejs.org/dist/index.json`, `npm view pnpm@<major> version`), change it in both workflows, and let CI run.
+  `release-windows.yml`; pnpm's is also the `packageManager` field of `client/ui/package.json`. Dependabot doesn't bump
+  those: to bump, take the newest release of the same major (`https://nodejs.org/dist/index.json`,
+  `npm view pnpm@<major> version`), change it in both workflows (and `packageManager` for pnpm), and let CI run.
 - Bumping LiveKit or Caddy: Dependabot opens a PR for new tags (`.github/dependabot.yml`). To do it by hand,
   take the digest of the multi-arch **index**, not of one platform: `docker manifest inspect <image>:<tag> -v`, or
   `HEAD /v2/<repo>/manifests/<tag>` on the registry with the OCI index and manifest-list `Accept` headers and read
@@ -314,14 +317,17 @@ town's weather (#451). Change it and `just deploy`; places already looked up kee
 Pulse updates itself (#82): on launch it asks the signed-in server for `/updates/latest.json` (with the session token;
 the route answers 401 without one) and, when that names a newer version, shows "Updating Pulse…", installs the signed
 installer quietly and reopens. While it runs it checks again after each login and every 30 minutes and offers
-"Restart to update" in the title bar (never during a call). The files live in `/srv/pulse/data/updates` (the
+"Restart to update" in the title bar, or installs by itself once Pulse is left alone (never during a call, a game or
+anything full screen). `/updates/version` answers without a session (the version only), so a signed-out app can say an
+update is waiting. The files live in `/srv/pulse/data/updates` (the
 container's `/data/updates`, outside the media backups).
 
 1. In `client/ui/src/patchNotes.ts`, move the current notes to `previousPatchNotes` (they stay in the dialog, collapsed,
    #235). Then `just bump-version 0.2.N` (the one version, `[workspace.package]` in `Cargo.toml`, plus `patchNotes`'s),
    give `patchNotes` a new `id`, date and notes; merge to `main`.
 2. `just deploy` (the server first: the route has to exist before any app asks). Raise `MIN_CLIENT_VERSION`
-   (`server/src/gateway/socket.rs`) only when the release truly needs it, and then publish (step 4) right away:
+   (`server/src/gateway/socket.rs`: the oldest client protocol the gateway accepts, 5 since 0.2.20) only when the
+   release truly needs it, and then publish (step 4) right away:
    forced clients sit on the "plz update :)" screen re-checking every minute until the update is there.
 3. Build Windows: push the tag `v0.2.N` (or `gh workflow run release-windows.yml` on `main`) and wait for green. CI
    signs the installer with the updater key (`TAURI_SIGNING_PRIVATE_KEY` and `_PASSWORD` repo secrets); the
@@ -514,7 +520,7 @@ from the backups in R2 and the password manager. Have NordPass open: the backup 
    | `R2_ACCOUNT_ID`, `R2_BUCKET`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` | NordPass (or a new backups token, section 8 step 2) |
    | `BACKUP_PING_URL` | NordPass / healthchecks.io (optional) |
    | `CLIPS_R2_BUCKET`, `CLIPS_R2_ACCESS_KEY_ID`, `CLIPS_R2_SECRET_ACCESS_KEY` | NordPass (or a new clips token, section 9 step 2) |
-   | `PULSE_LAUNCH_DATE`, `PULSE_INVITE_DECOY`, `PULSE_UPDATE_RESCUE`, `PULSE_PLANS_COUNTRY` | NordPass copy of the old `.env` (empty is the default) |
+   | `PULSE_LAUNCH_DATE`, `PULSE_INVITE_DECOY`, `PULSE_PLANS_COUNTRY` | NordPass copy of the old `.env` (empty is the default) |
    | `GIPHY_API_KEY`, `PULSE_STEAM_API_KEY`, `PULSE_DEADLOCK_API_KEY`, `PULSE_API_SPORTS_KEY` | NordPass (optional; or new keys from each site, section 6) |
 
    The R2 values have to be in before step 5: the restore fetches the backups through the server.

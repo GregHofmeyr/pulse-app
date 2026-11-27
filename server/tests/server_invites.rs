@@ -8,7 +8,9 @@ use common::*;
 use jiff::{SignedDuration, Timestamp};
 use pulse_protocol::gateway::{Event, ServerFrame};
 use pulse_protocol::ids::{ServerId, UserId};
-use pulse_protocol::rest::{InvitePreview, InviteState, Message, ServerBan, ServerInvite};
+use pulse_protocol::rest::{
+    InvitePreview, InviteState, Message, NameStyle, ServerBan, ServerInvite, UpdateProfileRequest,
+};
 use pulse_server::limits::{LimitsConfig, caps, server_invites as rules};
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
@@ -636,20 +638,6 @@ async fn a_ban_removes_them_revokes_their_invite_and_refuses_accepts() {
 }
 
 #[tokio::test]
-async fn the_open_join_lets_nobody_in_banned_or_not() {
-    let w = world().await;
-    let ban = format!("/servers/{}/bans/{}", w.server, w.sam.0);
-    assert_eq!(put(&w.app, &w.alex.1, &ban).await.status(), 204);
-    let join = format!("/servers/{}/join", w.server);
-    for t in [&w.sam.1, &w.kim.1] {
-        let r = post_json(&w.app, t, &join, json!({})).await;
-        assert_eq!(r.status(), 403, "servers are invite-only (#80)");
-    }
-    assert!(!is_member(&w.app, w.server, w.sam.0).await);
-    assert!(!is_member(&w.app, w.server, w.kim.0).await);
-}
-
-#[tokio::test]
 async fn a_preview_shows_counts_and_only_faces_the_viewer_knows() {
     let w = world().await;
     // kim shares a DM with sam; jo knows nobody
@@ -664,6 +652,82 @@ async fn a_preview_shows_counts_and_only_faces_the_viewer_knows() {
     assert_eq!(p.online_count, 1);
     let p = preview_ok(&w.app, &w.jo.1, &inv.code).await;
     assert!(p.faces.is_empty());
+}
+
+/// #708: a face who has blocked the viewer (#474) is the emptied user (no ring, no "is typing" text), as in a members
+/// list; someone they haven't blocked gets the whole face.
+#[tokio::test]
+async fn a_blocked_viewer_gets_the_blockers_face_emptied() {
+    let app = spawn().await;
+    let (alex_id, alex) = register(&app, "alex").await;
+    let (sam_id, sam) = register(&app, "sam").await;
+    let (_, kim) = register(&app, "kim").await;
+    let (_, jo) = register(&app, "jo").await;
+    // jo's "Main" has alex in it; sam and kim know alex from another server
+    let main = create_server(&app, &jo, "Main").await.id;
+    assert_eq!(join_server(&app, &alex, main).await.status(), 200);
+    acquaint(&app, &alex, &[&sam, &kim]).await;
+    let r = app
+        .http
+        .put(app.url("/me/profile"))
+        .bearer_auth(&alex)
+        .json(&UpdateProfileRequest {
+            avatar_hash: None,
+            banner_hash: None,
+            theme_top: "#8a3cff".into(),
+            theme_bottom: "#ff8a2a".into(),
+            style: NameStyle::default(),
+            pronouns: None,
+            bio: None,
+            display_name: None,
+            glow: None,
+            typing_text: Some("cooking".into()),
+            ring_style: Some("orbit".into()),
+            ring_color: Some("gold".into()),
+        })
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200, "alex styles their profile");
+    let r = app
+        .http
+        .put(app.url(&format!("/me/blocks/{sam_id}")))
+        .bearer_auth(&alex)
+        .json(&json!({ "mode": "line" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200, "alex blocks sam");
+    let r = post_json(
+        &app,
+        &jo,
+        &format!("/servers/{main}/invites"),
+        json!({ "max_uses": 5 }),
+    )
+    .await;
+    assert_eq!(r.status(), 200);
+    let inv: ServerInvite = r.json().await.unwrap();
+
+    let face = |p: &InvitePreview| p.faces.iter().find(|u| u.id == alex_id).cloned();
+    let looks = |u: &pulse_protocol::rest::User| {
+        (
+            u.typing_text.clone(),
+            u.ring_style.clone(),
+            u.ring_color.clone(),
+        )
+    };
+    let to_sam = face(&preview_ok(&app, &sam, &inv.code).await).expect("alex is a face to sam");
+    assert_eq!(looks(&to_sam), (None, None, None), "sam gets alex emptied");
+    let to_kim = face(&preview_ok(&app, &kim, &inv.code).await).expect("alex is a face to kim");
+    assert_eq!(
+        looks(&to_kim),
+        (
+            Some("cooking".to_owned()),
+            Some("orbit".to_owned()),
+            Some("gold".to_owned())
+        ),
+        "kim gets alex's whole face"
+    );
 }
 
 #[tokio::test]

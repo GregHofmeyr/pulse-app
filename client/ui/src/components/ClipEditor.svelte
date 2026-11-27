@@ -7,7 +7,7 @@
   import { convertFileSrc } from '@tauri-apps/api/core'
   import { listen } from '@tauri-apps/api/event'
   import { modal } from '../lib/actions'
-  import { cutAt, dragEdge, dropSelected, endDrag, kept, keptMs, keptTimeAt, MAX_KEPT_MS, newCut, nextPlayable, pieceCount, select, sendBlock, undo } from '../lib/clipCut'
+  import { cutAt, dragEdge, dropSelected, endDrag, kept, keptMs, keptTimeAt, newCut, nextPlayable, pieceCount, select, sendBlock, undo } from '../lib/clipCut'
   import { DEFAULT_PRESET, estimateBytes, PRESETS, type PresetId } from '../lib/clipPresets'
   import { formatBytes, formatDuration } from '../lib/clips'
   import { api, errorText, type ClipSource } from '../lib/tauri'

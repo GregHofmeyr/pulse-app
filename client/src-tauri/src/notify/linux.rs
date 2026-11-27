@@ -335,7 +335,7 @@ mod tests {
     /// Sends one real notification to the running notification daemon. By hand only:
     /// `cargo test -p pulse-client --lib linux_desktop_notification_shows -- --ignored`
     #[test]
-    #[ignore]
+    #[ignore = "shows a real desktop notification: run by hand"]
     fn linux_desktop_notification_shows() {
         let mut b = Backend::new(String::new(), std::sync::Arc::new(|_| {}));
         b.show(&Notice {
@@ -354,7 +354,7 @@ mod tests {
     /// #176 by hand: a ring's notification shows, then closes 3 s later (if the daemon closes on
     /// request). `cargo test -p pulse-client --lib linux_ring_notification_is_taken_back -- --ignored`
     #[test]
-    #[ignore]
+    #[ignore = "shows a real desktop notification: run by hand"]
     fn linux_ring_notification_is_taken_back() {
         let mut b = Backend::new(String::new(), std::sync::Arc::new(|_| {}));
         b.show(&Notice {

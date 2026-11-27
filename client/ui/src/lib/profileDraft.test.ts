@@ -43,11 +43,13 @@ describe('profileDraft', () => {
       avatarHash: 'a1', avatarStill: 'a1s', bannerHash: 'b1', bannerStill: null,
       themeTop: '#c2457a', themeBottom: '#3a1f5e', font: 'fredoka', colors: ['#ffbe7a', '#ff7fae'], effect: null,
       pronouns: 'they/them', bio: 'hi\nthere', displayName: profile.user.display_name, glow: true, typingText: '',
+      ringStyle: 'classic', ringColor: 'green',
     })
     expect(toRequest(d)).toEqual({
       avatar_hash: 'a1', banner_hash: 'b1', theme_top: '#c2457a', theme_bottom: '#3a1f5e',
       style: { font: 'fredoka', colors: ['#ffbe7a', '#ff7fae'], effect: null }, pronouns: 'they/them', bio: 'hi\nthere',
       display_name: profile.user.display_name, glow: true, typing_text: '',
+      ring_style: 'classic', ring_color: 'green',
     })
     // the draft holds its own colours: editing it never touches the profile
     d.colors.push('#000000')
@@ -105,6 +107,7 @@ describe('profileDraft', () => {
       { avatarHash: null }, { avatarStill: null }, { bannerHash: 'b2' }, { bannerStill: 'b2s' },
       { themeTop: '#000000' }, { themeBottom: '#000000' }, { font: null }, { colors: ['#ffbe7a'] },
       { colors: ['#ffbe7a', '#ff7faf'] }, { pronouns: 'she/her' }, { bio: 'hi' }, { glow: false }, { typingText: 'cooking' },
+      { ringStyle: 'dots' }, { ringColor: 'cyan' },
     ]
     for (const c of changes) expect(isDirty({ ...saved, ...c }, saved), JSON.stringify(c)).toBe(true)
   })
@@ -132,6 +135,46 @@ describe('profileDraft', () => {
     // the card: the theme as picked (a custom pair is accepted as is), empty text shows nothing
     const c = previewCard({ ...d, themeTop: '#FFFFFF', themeBottom: '#ffff00' })
     expect(c).toEqual({ banner_hash: 'b1', banner_still: null, theme_top: '#ffffff', theme_bottom: '#ffff00', pronouns: null, bio: null, glow: true })
+  })
+})
+
+describe('the speaking ring in the draft (#651)', () => {
+  const ringed: Profile = { ...profile, user: { ...alex, ring_style: 'dots', ring_color: 'cyan' } }
+
+  it('ring_fields_round_trip', () => {
+    const d = draftFrom(ringed)
+    expect(d.ringStyle).toBe('dots')
+    expect(d.ringColor).toBe('cyan')
+    expect(toRequest(d)).toMatchObject({ ring_style: 'dots', ring_color: 'cyan' })
+    // none on the user (the default, or an older server): Classic green, and still sent, so Save is explicit
+    const plain = draftFrom(profile)
+    expect(plain.ringStyle).toBe('classic')
+    expect(plain.ringColor).toBe('green')
+    expect(toRequest(plain)).toMatchObject({ ring_style: 'classic', ring_color: 'green' })
+  })
+
+  it('an_unknown_ring_key_drafts_as_the_default', () => {
+    const d = draftFrom({ ...profile, user: { ...alex, ring_style: 'sparkle', ring_color: 'mauve' } })
+    expect(d.ringStyle).toBe('classic')
+    expect(d.ringColor).toBe('green')
+  })
+
+  it('changing_the_ring_makes_the_draft_dirty', () => {
+    const saved = draftFrom(profile)
+    const d: Draft = { ...saved, ringStyle: 'bars' }
+    expect(isDirty(d, saved)).toBe(true)
+    expect(editsSince(saved, d)).toEqual({ ringStyle: 'bars' })
+    expect(editsSince(saved, { ...saved, ringColor: 'purple' })).toEqual({ ringColor: 'purple' })
+  })
+
+  it('preview_user_carries_the_draft_ring_and_drops_defaults', () => {
+    const u = previewUser(alex, { ...draftFrom(profile), ringStyle: 'bars', ringColor: 'purple' })
+    expect(u.ring_style).toBe('bars')
+    expect(u.ring_color).toBe('purple')
+    // back to Classic green: absent, as the server sends it, even when the saved user had a ring
+    const back = previewUser(ringed.user, { ...draftFrom(ringed), ringStyle: 'classic', ringColor: 'green' })
+    expect('ring_style' in back).toBe(false)
+    expect('ring_color' in back).toBe(false)
   })
 })
 
