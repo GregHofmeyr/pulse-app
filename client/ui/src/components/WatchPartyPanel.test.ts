@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { flushSync, mount, tick, unmount } from 'svelte'
+import { flushSync, mount, unmount } from 'svelte'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const ORIGIN = 'https://pulsechat.co.za'
@@ -22,6 +22,7 @@ import { resetServerClock } from '../lib/serverClock'
 import { setWatchParties, watchPrefs } from '../lib/watchParty.svelte'
 import type { Ready } from '../lib/protocol/Ready'
 import type { WatchParty } from '../lib/protocol/WatchParty'
+import { flushMicrotasks } from '../lib/testSettle'
 
 const user = (id: string, name: string) => ({ id, username: name, display_name: name, avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } })
 const alex = user('U1', 'alex')
@@ -44,7 +45,6 @@ function show(p: WatchParty, inCall = true) {
   flushSync()
   return host
 }
-async function settle() { for (let i = 0; i < 5; i++) await Promise.resolve(); await tick(); flushSync() }
 const btn = (host: HTMLElement, label: string) => [...host.querySelectorAll('button')].find((b) => b.textContent?.trim() === label || b.getAttribute('aria-label') === label)
 const actions = () => invoke.mock.calls.filter(([c]) => c === 'watch_party_action').map(([, a]) => (a as { action: unknown }).action)
 
@@ -60,6 +60,7 @@ beforeEach(() => {
 afterEach(() => {
   while (mounted.length) unmount(mounted.pop()!)
   document.body.innerHTML = ''
+  vi.useRealTimers()
 })
 
 describe('the watch party panel (#384)', () => {
@@ -69,7 +70,7 @@ describe('the watch party panel (#384)', () => {
     expect(host.textContent).toContain('sam is hosting')
     expect(host.querySelector('iframe')).toBeNull()
     btn(host, 'Join watch party')!.click()
-    await settle()
+    await flushMicrotasks(6)
     expect(actions()).toEqual([{ action: 'join' }])
   })
 
@@ -81,7 +82,7 @@ describe('the watch party panel (#384)', () => {
 
   it("watching: the party page's player, from where the party is, and Leave", async () => {
     const host = show(party({ viewers: ['U2', 'U1'], position_ms: 30_000, playing: false }))
-    await settle()
+    await flushMicrotasks(6)
     const f = host.querySelector('iframe')!
     expect(f.getAttribute('src')).toBe(`${ORIGIN}/embed/youtube/dQw4w9WgXcQ?party=1&start=30`)
     expect(f.getAttribute('sandbox')).toBe('allow-scripts allow-same-origin allow-presentation')
@@ -92,27 +93,28 @@ describe('the watch party panel (#384)', () => {
     play.click()
     expect((host.querySelector('input.seek') as HTMLInputElement).disabled).toBe(true)
     btn(host, 'Leave watch party')!.click()
-    await settle()
+    await flushMicrotasks(6)
     expect(actions()).toEqual([{ action: 'leave' }])
   })
 
   it('the host plays and pauses for everyone, lets everyone control and ends it', async () => {
     const host = show(party({ host_id: 'U1', viewers: ['U1', 'U2'], playing: false, position_ms: 5_000 }))
-    await settle()
+    await flushMicrotasks(6)
     expect(host.textContent).toContain('you’re hosting')
     btn(host, 'Play')!.click()
-    await settle()
+    await flushMicrotasks(6)
     btn(host, 'Let everyone control')!.click()
-    await settle()
+    await flushMicrotasks(6)
     btn(host, 'End')!.click()
-    await settle()
+    await flushMicrotasks(6)
     expect(actions()).toEqual([{ action: 'play', position_ms: 5_000 }, { action: 'everyone_controls', on: true }])
     expect(invoke).toHaveBeenCalledWith('end_watch_party', { channelId: 'V1' })
   })
 
   it('drives the player to the party, only from its own frame and our origin', async () => {
+    vi.useFakeTimers()
     const host = show(party({ viewers: ['U2', 'U1'], position_ms: 60_000, playing: true, set_at_ms: Date.now() }))
-    await settle()
+    await flushMicrotasks(6)
     const f = host.querySelector('iframe')!
     const posted: [unknown, string][] = []
     Object.defineProperty(f, 'contentWindow', { value: { postMessage: (m: unknown, o: string) => posted.push([m, o]) } })
@@ -124,7 +126,7 @@ describe('the watch party panel (#384)', () => {
     expect(posted).toEqual([])
     // the player is paused at 0 while the party plays at a minute: play and seek
     say({ pulse: 'party', state: 'info', player: 2, time: 0, duration: 300 })
-    await new Promise((r) => setTimeout(r, 1100))
+    await vi.advanceTimersByTimeAsync(1100)
     const cmds = posted.map(([m]) => m as { func: string; to?: number })
     expect(cmds[0]).toEqual({ pulse: 'party-cmd', func: 'volume', to: 100 })
     expect(cmds.some((c) => c.func === 'play')).toBe(true)
@@ -155,8 +157,9 @@ describe('the watch party panel (#384)', () => {
   }
 
   it('a pause keeps the same player (no reload, which autoplays from the top of the page) and it stays paused', async () => {
+    vi.useFakeTimers()
     const host = showLive(party({ host_id: 'U1', viewers: ['U1', 'U2'], position_ms: 0, playing: true, set_at_ms: Date.now() - 5_000 }))
-    await settle()
+    await flushMicrotasks(6)
     const f = host.querySelector('iframe')!
     const src = f.getAttribute('src')
     expect(src).toContain('start=5')
@@ -165,67 +168,68 @@ describe('the watch party panel (#384)', () => {
     say({ player: 1, time: 9.3, duration: 300 })
     // the pause comes back from the server (to the pauser too)
     change({ playing: false, position_ms: 9_400, set_at_ms: Date.now() })
-    await settle()
+    await flushMicrotasks(6)
     expect(host.querySelector('iframe')).toBe(f)
     expect(f.getAttribute('src')).toBe(src)
     expect(posted.filter((c) => c.func !== 'volume').map((c) => c.func)).toEqual(['pause'])
     // the player says it paused: nothing more is sent, ever (no play to fight it)
     say({ player: 2, time: 9.4 })
     posted.length = 0
-    await new Promise((r) => setTimeout(r, 1100))
+    await vi.advanceTimersByTimeAsync(1100)
     expect(posted).toEqual([])
     // resumed: the same player plays on from where it paused
     change({ playing: true, position_ms: 9_400, set_at_ms: Date.now() })
-    await settle()
+    await flushMicrotasks(6)
     expect(host.querySelector('iframe')).toBe(f)
     expect(posted.map((c) => c.func)).toEqual(['play'])
   })
 
   it('a late joiner to a paused party gets a paused player at the paused moment', async () => {
+    vi.useFakeTimers()
     const host = showLive(party({ viewers: ['U2', 'U1'], position_ms: 95_000, playing: false, set_at_ms: Date.now() - 600_000 }))
-    await settle()
+    await flushMicrotasks(6)
     const f = host.querySelector('iframe')!
     expect(f.getAttribute('src')).toBe(`${ORIGIN}/embed/youtube/dQw4w9WgXcQ?party=1&start=95`)
     const { posted, say } = wire(f)
     // the page autoplays: the party says paused, so it's paused there, and seeked to the moment
     say({ player: 1, time: 95.2, duration: 300 })
-    await new Promise((r) => setTimeout(r, 1100))
+    await vi.advanceTimersByTimeAsync(1100)
     expect(posted.filter((c) => c.func !== 'volume').map((c) => c.func)).toEqual(['pause'])
     expect(host.querySelector('[aria-label="Play"]')).not.toBeNull()
   })
 
   it('a click on the video is the panel’s, not YouTube’s: the host’s click pauses for everyone', async () => {
     const host = showLive(party({ host_id: 'U1', viewers: ['U1', 'U2'], playing: true, set_at_ms: Date.now() - 10_000 }))
-    await settle()
+    await flushMicrotasks(6)
     const shield = host.querySelector<HTMLElement>('.player .shield')!
     expect(shield).not.toBeNull()
     shield.click()
-    await settle()
+    await flushMicrotasks(6)
     expect(actions()).toEqual([{ action: 'pause', position_ms: expect.any(Number) }])
   })
 
   it('a click on the video by someone without control does nothing', async () => {
     const host = showLive(party({ viewers: ['U2', 'U1'], playing: true }))
-    await settle()
+    await flushMicrotasks(6)
     host.querySelector<HTMLElement>('.player .shield')!.click()
-    await settle()
+    await flushMicrotasks(6)
     expect(actions()).toEqual([])
   })
 
   it('the host’s player pausing on its own (a media key, the system’s media controls) pauses the party instead of being fought', async () => {
     const host = showLive(party({ host_id: 'U1', viewers: ['U1', 'U2'], playing: true, position_ms: 0, set_at_ms: Date.now() - 20_000 }))
-    await settle()
+    await flushMicrotasks(6)
     const { posted, say } = wire(host.querySelector('iframe')!)
     say({ player: 1, time: 20, duration: 300 })
     say({ player: 2, time: 20.1 })
-    await settle()
+    await flushMicrotasks(6)
     expect(actions()).toEqual([{ action: 'pause', position_ms: 20_100 }])
     expect(posted.some((c) => c.func === 'play')).toBe(false)
   })
 
   it('YouTube refusing to play framed offers the window instead', async () => {
     const host = show(party({ viewers: ['U2', 'U1'] }))
-    await settle()
+    await flushMicrotasks(6)
     const f = host.querySelector('iframe')!
     window.dispatchEvent(new MessageEvent('message', { data: { pulse: 'party', state: 'error', code: 153 }, origin: ORIGIN, source: f.contentWindow }))
     flushSync()
@@ -240,27 +244,27 @@ describe('the watch party panel (#384)', () => {
     const host = document.createElement('div')
     document.body.append(host)
     mounted.push(mount(WatchPartyPanel, { target: host, props }))
-    await settle()
+    await flushMicrotasks(6)
     const f = host.querySelector('iframe')!
     window.dispatchEvent(new MessageEvent('message', { data: { pulse: 'party', state: 'error', code: 153 }, origin: ORIGIN, source: f.contentWindow }))
     flushSync()
     btn(host, 'Open in a window')!.click()
-    await settle()
+    await flushMicrotasks(6)
     expect(invoke).toHaveBeenCalledWith('open_embed_window', { provider: 'youtube', id: 'dQw4w9WgXcQ', start: null, owner: 'party:V1' })
     // play, pause and seeks don't touch it
     props.party = { ...props.party, playing: false, position_ms: 30_000, set_at_ms: Date.now() }
-    await settle()
+    await flushMicrotasks(6)
     expect(invoke.mock.calls.filter(([c]) => c === 'close_embed_window')).toHaveLength(0)
     // the next video: closed and opened on that one
     props.party = { ...props.party, video_id: 'aaaaaaaaaaa', position_ms: 0, playing: true, set_at_ms: Date.now() }
-    await settle()
-    await settle()
+    await flushMicrotasks(6)
+    await flushMicrotasks(6)
     expect(invoke).toHaveBeenCalledWith('close_embed_window', { owner: 'party:V1' })
     expect(invoke).toHaveBeenLastCalledWith('open_embed_window', { provider: 'youtube', id: 'aaaaaaaaaaa', start: null, owner: 'party:V1' })
     // leaving the party closes it
     invoke.mockClear()
     props.party = { ...props.party, viewers: ['U2'] }
-    await settle()
+    await flushMicrotasks(6)
     expect(invoke).toHaveBeenCalledWith('close_embed_window', { owner: 'party:V1' })
   })
 
@@ -270,16 +274,16 @@ describe('the watch party panel (#384)', () => {
     const host = document.createElement('div')
     document.body.append(host)
     mounted.push(mount(WatchPartyPanel, { target: host, props }))
-    await settle()
+    await flushMicrotasks(6)
     const f = host.querySelector('iframe')!
     window.dispatchEvent(new MessageEvent('message', { data: { pulse: 'party', state: 'error', code: 153 }, origin: ORIGIN, source: f.contentWindow }))
     flushSync()
     btn(host, 'Open in a window')!.click()
-    await settle()
+    await flushMicrotasks(6)
     invoke.mockClear()
     props.party = { ...props.party, video_id: 'aaaaaaaaaaa', position_ms: 0, set_at_ms: Date.now() }
-    await settle()
-    await settle()
+    await flushMicrotasks(6)
+    await flushMicrotasks(6)
     expect(invoke).toHaveBeenCalledWith('close_embed_window', { owner: 'party:V1' })
     expect(invoke.mock.calls.some(([c]) => c === 'open_embed_window')).toBe(false)
   })
@@ -287,7 +291,7 @@ describe('the watch party panel (#384)', () => {
   it('the queue pill opens every queued video, not just the first few (#409, #464)', async () => {
     const queue = Array.from({ length: 8 }, (_, i) => ({ source: 'youtube' as const, video_id: `video${i}abcd`, title: `Video ${i}`, added_by: 'U2' }))
     const host = show(party({ host_id: 'U1', viewers: ['U1'], queue }))
-    await settle()
+    await flushMicrotasks(6)
     const pill = btn(host, 'Queue · 8')!
     expect(pill.getAttribute('aria-expanded')).toBe('false')
     pill.click()
@@ -298,18 +302,18 @@ describe('the watch party panel (#384)', () => {
     expect(rows[7].textContent).toContain('added by sam')
     // right-click a row: the host may play it now, move it or remove it
     rows[7].dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 10, clientY: 10 }))
-    await settle()
+    await flushMicrotasks(6)
     const items = [...document.querySelectorAll<HTMLButtonElement>('[role="menu"] [role="menuitem"]')].map((b) => b.textContent?.trim())
     expect(items).toEqual(['Play now', 'Move to the top', 'Move up', 'Remove from queue'])
     ;[...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find((b) => b.textContent?.trim() === 'Remove from queue')!.click()
-    await settle()
+    await flushMicrotasks(6)
     expect(actions()).toEqual([{ action: 'unqueue', index: 7 }])
   })
 
   it('someone in the call who isn’t the host adds by pasting a link, and changes only their own', async () => {
     const queue = [{ source: 'youtube' as const, video_id: 'aaaaaaaaaaa', added_by: 'U2' }, { source: 'youtube' as const, video_id: 'bbbbbbbbbbb', added_by: 'U1' }]
     const host = show(party({ viewers: ['U2', 'U1'], queue }))
-    await settle()
+    await flushMicrotasks(6)
     btn(host, 'Queue · 2')!.click()
     flushSync()
     const input = host.querySelector<HTMLInputElement>('input[type="url"]')!
@@ -317,36 +321,36 @@ describe('the watch party panel (#384)', () => {
     input.dispatchEvent(new Event('input', { bubbles: true }))
     flushSync()
     host.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
-    await settle()
+    await flushMicrotasks(6)
     expect(actions()).toEqual([{ action: 'enqueue', source: 'youtube', video_id: '9bZkp7q19f0', title: null }])
     const rows = host.querySelectorAll('.rows li')
     // sam's: nothing to do
     rows[0].dispatchEvent(new MouseEvent('contextmenu', { bubbles: true }))
-    await settle()
+    await flushMicrotasks(6)
     expect(document.querySelectorAll('[role="menuitem"]').length).toBe(0)
     document.body.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }))
     document.body.click()
-    await settle()
+    await flushMicrotasks(6)
     // alex's own: move and remove, no play now
     rows[1].dispatchEvent(new MouseEvent('contextmenu', { bubbles: true }))
-    await settle()
+    await flushMicrotasks(6)
     const items = [...document.querySelectorAll('[role="menuitem"]')].map((b) => b.textContent?.trim())
     expect(items).toEqual(['Move to the top', 'Move up', 'Remove from queue'])
   })
 
   it('a link dropped on the party is queued', async () => {
     const host = show(party({ viewers: ['U2'] }))
-    await settle()
+    await flushMicrotasks(6)
     const e = new Event('drop', { bubbles: true, cancelable: true }) as DragEvent
     Object.defineProperty(e, 'dataTransfer', { value: { types: ['text/uri-list'], getData: (t: string) => (t === 'text/uri-list' ? '# c\nhttps://www.youtube.com/watch?v=9bZkp7q19f0' : '') } })
     host.querySelector('section')!.dispatchEvent(e)
-    await settle()
+    await flushMicrotasks(6)
     expect(actions()).toEqual([{ action: 'enqueue', source: 'youtube', video_id: '9bZkp7q19f0', title: null }])
   })
 
   it('near the end: an Up next card with a countdown and Skip; at the end the party moves on, once', async () => {
     const host = show(party({ host_id: 'U1', viewers: ['U1'], position_ms: 290_000, set_at_ms: Date.now(), queue: [{ source: 'youtube' as const, video_id: 'aaaaaaaaaaa', title: 'Next one', added_by: 'U2' }] }))
-    await settle()
+    await flushMicrotasks(6)
     const f = host.querySelector('iframe')!
     const say = (data: object) => window.dispatchEvent(new MessageEvent('message', { data: { pulse: 'party', state: 'info', ...data }, origin: ORIGIN, source: f.contentWindow }))
     say({ player: 1, time: 290, duration: 300 })
@@ -357,15 +361,15 @@ describe('the watch party panel (#384)', () => {
     expect(card.textContent).toContain('added by sam')
     say({ player: 0 })
     say({ player: 0 })
-    await settle()
+    await flushMicrotasks(6)
     expect(actions()).toEqual([{ action: 'next', from: 'dQw4w9WgXcQ' }])
   })
 
   it('whoever queued the current video may skip it, though they don’t control the party', async () => {
     const host = show(party({ viewers: ['U2', 'U1'], added_by: 'U1', queue: [{ source: 'youtube' as const, video_id: 'aaaaaaaaaaa', added_by: 'U2' }] }))
-    await settle()
+    await flushMicrotasks(6)
     btn(host, 'Skip')!.click()
-    await settle()
+    await flushMicrotasks(6)
     expect(actions()).toEqual([{ action: 'next', from: 'dQw4w9WgXcQ' }])
   })
 })
@@ -373,14 +377,14 @@ describe('the watch party panel (#384)', () => {
 describe('Twitch in the watch party (#459)', () => {
   it('a VOD plays its Twitch party page and seeks like YouTube', async () => {
     const host = show(party({ source: 'twitch_video', video_id: '123', viewers: ['U2', 'U1'], position_ms: 30_000, playing: false }))
-    await settle()
+    await flushMicrotasks(6)
     expect(host.querySelector('iframe')!.getAttribute('src')).toBe(`${ORIGIN}/embed/twitch/video%3A123?party=1&start=30`)
     expect(host.querySelector('input.seek')).not.toBeNull()
   })
 
   it('a live channel: play and pause, no seek bar, and what is next shows until skipped', async () => {
     const host = show(party({ source: 'twitch_channel', video_id: 'alex', host_id: 'U1', viewers: ['U1'], queue: [{ source: 'youtube', video_id: 'aaaaaaaaaaa', title: 'Next one', added_by: 'U2' }] }))
-    await settle()
+    await flushMicrotasks(6)
     expect(host.querySelector('iframe')!.getAttribute('src')).toBe(`${ORIGIN}/embed/twitch/channel%3Aalex?party=1`)
     expect(host.querySelector('input.seek')).toBeNull()
     expect(host.textContent).toContain('Plays until skipped')
@@ -392,7 +396,7 @@ describe('Twitch in the watch party (#459)', () => {
 
   it('a clip: its own page and controls, labelled, and the party moves on a minute after it started', async () => {
     const host = show(party({ source: 'twitch_clip', video_id: 'Clip1', host_id: 'U1', viewers: ['U1'], set_at_ms: Date.now() - 61_000, queue: [{ source: 'youtube', video_id: 'aaaaaaaaaaa', added_by: 'U2' }] }))
-    await settle()
+    await flushMicrotasks(6)
     expect(host.querySelector('iframe')!.getAttribute('src')).toBe(`${ORIGIN}/embed/twitch/Clip1`)
     expect(host.querySelector('.player .shield')).toBeNull()
     expect(host.textContent).toContain('pausing is just for you')
@@ -406,12 +410,12 @@ describe('the Watch parties setting (#384)', () => {
     app.state = { ...app.state, watchParties: { V1: party({ viewers: ['U2', 'U1'] }) } }
     setWatchParties(false)
     expect(localStorage.getItem('pulse.watchParties')).toBe('off')
-    await settle()
+    await flushMicrotasks(6)
     expect(actions()).toEqual([{ action: 'leave' }])
     invoke.mockClear()
     await startListening()
     handlers['pulse://event']({ payload: { t: 'WatchPartyChanged', d: { party: party({ host_id: 'U1', viewers: ['U2', 'U1'] }), server_now_ms: Date.now() } } })
-    await settle()
+    await flushMicrotasks(6)
     expect(actions()).toEqual([{ action: 'leave' }])
     setWatchParties(true)
   })

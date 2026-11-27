@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { flushSync, mount, unmount } from 'svelte'
+import { mount, unmount } from 'svelte'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 type Applied = { binds: unknown; enabled: boolean; problems: string[]; chosen: boolean }
@@ -16,11 +16,8 @@ const invoke = vi.fn(async (cmd: string, args?: unknown): Promise<unknown> => {
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (cmd: string, args?: unknown) => invoke(cmd, args) }))
 
 import KeybindSettings from './KeybindSettings.svelte'
+import { flushMicrotasks } from '../lib/testSettle'
 
-const settle = async () => {
-  for (let i = 0; i < 5; i++) await Promise.resolve()
-  flushSync()
-}
 const master = () => document.querySelector<HTMLButtonElement>('button.switch[aria-label="Global keybinds"]')!
 const editors = () => [...document.querySelectorAll<HTMLButtonElement>('button.key, button.clear')]
 const calls = (name: string) => invoke.mock.calls.filter(([cmd]) => cmd === name).map(([, a]) => a)
@@ -39,7 +36,7 @@ describe('KeybindSettings master switch', () => {
 
   it('shows the switch on by default, with editors usable, and says what the hooks are for', async () => {
     c = mount(KeybindSettings, { target: document.body })
-    await settle()
+    await flushMicrotasks()
     expect(master().getAttribute('aria-pressed')).toBe('true')
     expect(editors().find((b) => b.classList.contains('key'))!.disabled).toBe(false)
     const text = document.body.textContent ?? ''
@@ -49,16 +46,16 @@ describe('KeybindSettings master switch', () => {
 
   it('turning it off calls the command, reflects the new state and disables the bind editors', async () => {
     c = mount(KeybindSettings, { target: document.body })
-    await settle()
+    await flushMicrotasks()
     master().click()
-    await settle()
+    await flushMicrotasks()
     expect(calls('set_keybinds_enabled')).toEqual([{ enabled: false }])
     expect(master().getAttribute('aria-pressed')).toBe('false')
     expect(editors().length).toBeGreaterThan(0)
     expect(editors().every((b) => b.disabled)).toBe(true)
     // and back on
     master().click()
-    await settle()
+    await flushMicrotasks()
     expect(calls('set_keybinds_enabled')).toEqual([{ enabled: false }, { enabled: true }])
     expect(master().getAttribute('aria-pressed')).toBe('true')
     expect(editors().find((b) => b.classList.contains('key'))!.disabled).toBe(false)
@@ -67,21 +64,21 @@ describe('KeybindSettings master switch', () => {
   it('saved off: starts off, and the editors can’t start a recording', async () => {
     state.enabled = false
     c = mount(KeybindSettings, { target: document.body })
-    await settle()
+    await flushMicrotasks()
     expect(master().getAttribute('aria-pressed')).toBe('false')
     editors()[0].click()
-    await settle()
+    await flushMicrotasks()
     expect(calls('pause_keybinds')).toEqual([])
   })
 
   it('a failed switch keeps showing what is actually in use', async () => {
     c = mount(KeybindSettings, { target: document.body })
-    await settle()
+    await flushMicrotasks()
     invoke.mockImplementationOnce(async () => {
       throw "couldn't save keybinds: disk full"
     })
     master().click()
-    await settle()
+    await flushMicrotasks()
     expect(master().getAttribute('aria-pressed')).toBe('true')
     expect(document.querySelector('[role=alert]')?.textContent).toContain('disk full')
   })
@@ -101,7 +98,7 @@ describe('KeybindSettings: the quick switcher (#319)', () => {
 
   it('is one more bindable action, unbound until you choose', async () => {
     c = mount(KeybindSettings, { target: document.body })
-    await settle()
+    await flushMicrotasks()
     const row = document.querySelector<HTMLButtonElement>('button.key[aria-label="Change Open quick switcher"]')!
     expect(row.textContent!.trim()).toBe('Not set')
   })
@@ -109,7 +106,7 @@ describe('KeybindSettings: the quick switcher (#319)', () => {
   // #72
   it('lists Leave call and Go Live too, unbound until you choose', async () => {
     c = mount(KeybindSettings, { target: document.body })
-    await settle()
+    await flushMicrotasks()
     for (const label of ['Leave call', 'Go Live']) {
       expect(document.querySelector<HTMLButtonElement>(`button.key[aria-label="Change ${label}"]`)!.textContent!.trim()).toBe('Not set')
     }
@@ -118,7 +115,7 @@ describe('KeybindSettings: the quick switcher (#319)', () => {
   it('on Linux, names the command for the desktop to bind', async () => {
     vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue('Mozilla/5.0 (X11; Linux x86_64)')
     c = mount(KeybindSettings, { target: document.body })
-    await settle()
+    await flushMicrotasks()
     const cmds = [...document.querySelectorAll('.list code')].map((x) => x.textContent)
     expect(cmds).toEqual(['pulse-app --toggle-mute', 'pulse-app --toggle-deafen', 'pulse-app --quick-switch', 'pulse-app --leave-call', 'pulse-app --go-live'])
   })

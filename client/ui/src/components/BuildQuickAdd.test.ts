@@ -17,6 +17,7 @@ import BuildsChannel from './BuildsChannel.svelte'
 import { app, handleReady, resetState } from '../lib/store.svelte'
 import { applyEvent } from '../lib/state'
 import { testMe, testReady } from '../lib/testReady'
+import { nextTask } from '../lib/testSettle'
 
 const sam = { id: 'U2', username: 'sam', display_name: 'sam', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
 const ready = () =>
@@ -41,7 +42,6 @@ const build = (id: string, b: Partial<Build> = {}, m: Partial<Message> = {}): Me
 const staged = { id: 'st1', name: 'image.webp', size: 500, content_type: 'image/webp', kind: 'image', width: 40, height: 20, preview: null }
 
 let cmp: ReturnType<typeof mount> | undefined
-const settle = () => new Promise((r) => setTimeout(r, 0))
 const calls = (cmd: string) => invoke.mock.calls.filter((c) => c[0] === cmd)
 let created: Message = build('M100')
 /** Holds create_build's answer until released (the build page's "pending" moment). */
@@ -50,7 +50,7 @@ let release: () => void = () => {}
 async function flush() {
   for (let i = 0; i < 3; i++) {
     flushSync()
-    await settle()
+    await nextTask()
   }
   flushSync()
 }

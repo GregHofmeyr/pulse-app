@@ -6,13 +6,13 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: (cmd: string, args?: unknown) =
 
 import { mixer, pushCallMix, reloadMixer, resetMixerSection, setClipsMuted, setNotch } from './mixer.svelte'
 import { MIXER_KEY, defaultMixer } from './mixer'
+import { nextTask } from './testSettle'
 
 const stored = () => JSON.parse(localStorage.getItem(MIXER_KEY)!)
-const settle = () => new Promise((r) => setTimeout(r, 0))
 const callMixes = () => invoke.mock.calls.filter(([c]) => c === 'set_call_mix').map(([, a]) => a)
 
 beforeEach(async () => {
-  await settle() // the last test's push has landed
+  await nextTask() // the last test's push has landed
   localStorage.clear()
   reloadMixer()
   invoke.mockClear()
@@ -39,13 +39,13 @@ describe('mixer state', () => {
 
   it('Calls changes go to the core; the soundboard and join sounds notches and other sections do not', async () => {
     setNotch('calls', 'master', 50)
-    await settle()
+    await nextTask()
     setNotch('calls', 'streams', 150)
-    await settle()
+    await nextTask()
     setNotch('calls', 'soundboard', 20)
     setNotch('calls', 'join_sounds', 30)
     setNotch('callSounds', 'master', 20)
-    await settle()
+    await nextTask()
     expect(callMixes()).toEqual([
       { callsPercent: 50, voicesPercent: 100, streamsPercent: 100 },
       { callsPercent: 50, voicesPercent: 100, streamsPercent: 150 },
@@ -61,7 +61,7 @@ describe('mixer state', () => {
   it('reset puts one section back and tells the core when it is Calls', async () => {
     setNotch('calls', 'voices', 10)
     setNotch('callSounds', 'leave', 0)
-    await settle()
+    await nextTask()
     invoke.mockClear()
     resetMixerSection('callSounds')
     expect(mixer.callSounds.leave).toBe(100)
@@ -69,7 +69,7 @@ describe('mixer state', () => {
     expect(callMixes()).toEqual([])
     resetMixerSection('calls')
     expect(stored().calls).toEqual(defaultMixer().calls)
-    await settle()
+    await nextTask()
     expect(callMixes()).toEqual([{ callsPercent: 100, voicesPercent: 100, streamsPercent: 100 }])
   })
 

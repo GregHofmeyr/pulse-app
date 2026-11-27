@@ -13,6 +13,7 @@ import { app } from '../lib/store.svelte'
 import { emptyState } from '../lib/state'
 import { setPlanSomething } from '../lib/planPrefs.svelte'
 import { plusButton, plusItem, plusRows } from './plusMenuHarness'
+import { flushMicrotasks } from '../lib/testSettle'
 
 let cmp: ReturnType<typeof mount> | undefined
 const me = { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
@@ -29,7 +30,6 @@ function show(extra: Record<string, unknown> = {}, gaming = false) {
   flushSync()
 }
 const menu = () => document.querySelector<HTMLElement>('[role=menu][aria-label="Add to your message"]')
-const settle = async () => { for (let i = 0; i < 4; i++) await Promise.resolve(); flushSync() }
 
 beforeEach(() => setPlanSomething(true))
 afterEach(() => {
@@ -78,7 +78,7 @@ describe('Composer + menu (#461)', () => {
     show(everything, true)
     plusButton()!.click()
     flushSync()
-    await settle()
+    await flushMicrotasks(4)
     const rows = [...menu()!.querySelectorAll<HTMLButtonElement>('[role=menuitem]')]
     expect(document.activeElement).toBe(rows[0])
     menu()!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
@@ -96,7 +96,7 @@ describe('Composer + menu (#461)', () => {
     show(everything, true)
     plusItem('invite')!.click()
     flushSync()
-    await settle()
+    await flushMicrotasks(4)
     expect(menu()).toBeNull()
     expect(invoke.mock.calls.some(([cmd]) => cmd === 'send_game_invite')).toBe(true)
   })

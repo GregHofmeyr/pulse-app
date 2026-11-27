@@ -31,6 +31,7 @@ import { clipDrop, PENDING_MS } from '../lib/clipDrop.svelte'
 import { applyEvent, applyReady, emptyState, setClipJob } from '../lib/state'
 import { testMe, testReady } from '../lib/testReady'
 import { positionAt } from '../lib/composerDom'
+import { nextTask } from '../lib/testSettle'
 
 const ready = (over = {}) =>
   testReady([{ id: 'C1', server_id: 'S1', kind: 'clips', name: 'highlights', position: 0 }], {
@@ -57,7 +58,6 @@ let support = { can_send: true, reason: null as string | null }
 let picked: string | null = null
 let opens: (() => Promise<ClipSource>) = async () => source
 let cmp: ReturnType<typeof mount> | undefined
-const settle = () => new Promise((r) => setTimeout(r, 0))
 const calls = (cmd: string) => invoke.mock.calls.filter((c) => c[0] === cmd)
 const button = (text: string) => [...document.querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent?.trim() === text)!
 const editor = () => document.querySelector('[role="dialog"][aria-label="Share a clip"]')
@@ -68,7 +68,7 @@ const realScrollTo = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollT
 async function show() {
   cmp = mount(ClipsChannel, { target: document.body, props: { channelId: 'C1', serverId: 'S1' } })
   flushSync()
-  await settle()
+  await nextTask()
   flushSync()
 }
 // What is under the pointer (jsdom lays nothing out; the channel unless a test says otherwise), and the points asked.
@@ -78,8 +78,8 @@ Object.defineProperty(document, 'elementFromPoint', { configurable: true, value:
 async function dragEvent(e: DragDrop, position = { x: 10, y: 10 }) {
   drag.handler!({ payload: { ...e, position } })
   flushSync()
-  await settle()
-  await settle()
+  await nextTask()
+  await nextTask()
   flushSync()
 }
 
@@ -133,14 +133,14 @@ describe('ClipsSend', () => {
 
     // the editor's Close puts it away
     editor()!.querySelector<HTMLButtonElement>('button[aria-label="Close"]')!.click()
-    await settle()
+    await nextTask()
     flushSync()
     expect(editor()).toBeNull()
 
     // leaving the channel stops listening
     unmount(cmp!)
     cmp = undefined
-    await settle()
+    await nextTask()
     expect(drag.handler).toBeNull()
   })
 
@@ -228,8 +228,8 @@ describe('ClipsSend', () => {
     picked = '/v/picked.mp4'
     await show()
     button('Share a clip').click()
-    await settle()
-    await settle()
+    await nextTask()
+    await nextTask()
     flushSync()
     expect(calls('pick_clip_file')).toHaveLength(1)
     expect(calls('open_clip')).toEqual([['open_clip', { path: '/v/picked.mp4' }]])
@@ -242,12 +242,12 @@ describe('ClipsSend', () => {
     await show()
     ui.shareClip = { channelId: 'C9', path: '/v/elsewhere.mp4', at: Date.now() } // another channel's: not ours
     flushSync()
-    await settle()
+    await nextTask()
     expect(calls('open_clip')).toEqual([])
     ui.shareClip = { channelId: 'C1', path: '/v/Apex/new.mp4', at: Date.now() }
     flushSync()
-    await settle()
-    await settle()
+    await nextTask()
+    await nextTask()
     flushSync()
     expect(ui.shareClip).toBeNull()
     expect(calls('open_clip')).toEqual([['open_clip', { path: '/v/Apex/new.mp4' }]])
@@ -261,8 +261,8 @@ describe('ClipsSend', () => {
     await show()
     ui.shareClip = { channelId: 'C1', path: '/v/Apex/old.mp4', at: Date.now() - PENDING_MS - 1000 }
     flushSync()
-    await settle()
-    await settle()
+    await nextTask()
+    await nextTask()
     flushSync()
     expect(ui.shareClip).toBeNull()
     expect(calls('open_clip')).toEqual([])
@@ -273,8 +273,8 @@ describe('ClipsSend', () => {
     picked = null
     await show()
     button('Share a clip').click()
-    await settle()
-    await settle()
+    await nextTask()
+    await nextTask()
     flushSync()
     expect(calls('open_clip')).toHaveLength(0)
     expect(editor()).toBeNull()
@@ -284,8 +284,8 @@ describe('ClipsSend', () => {
     support = { can_send: false, reason: 'Sharing clips is Windows-only for now.' }
     await show()
     button('Share a clip').click()
-    await settle()
-    await settle()
+    await nextTask()
+    await nextTask()
     flushSync()
     expect(document.body.textContent).toContain('Sharing clips is Windows-only for now.')
     expect(calls('pick_clip_file')).toHaveLength(0)
@@ -356,7 +356,7 @@ describe('ClipsSend', () => {
     expect(editor()).not.toBeNull()
     unmount(cmp!)
     cmp = undefined
-    await settle()
+    await nextTask()
     expect(calls('close_clip_source')).toEqual([['close_clip_source', { source: 'SRC1' }]])
   })
 
@@ -378,7 +378,7 @@ describe('ClipsSend', () => {
     expect(card.querySelector('.replies')).toBeNull()
     card.querySelector<HTMLButtonElement>('button[aria-label="Reply"]')!.click()
     flushSync()
-    await settle()
+    await nextTask()
     flushSync()
     const panel = document.querySelector<HTMLElement>('.replies-panel')!
     expect(panel.querySelector('.pinned [data-clip-id="M1"]')).not.toBeNull()

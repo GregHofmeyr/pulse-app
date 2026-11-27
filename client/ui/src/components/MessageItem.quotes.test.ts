@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 // "Add to quotes…" in the message menu (#316): the message becomes a quote (its author speaking it) in a quotes
 // channel of its server, the only one or one picked from a flyout; never in a DM or group.
-import { flushSync, mount, tick, unmount } from 'svelte'
+import { flushSync, mount, unmount } from 'svelte'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Message } from '../lib/protocol/Message'
 import type { Channel } from '../lib/protocol/Channel'
@@ -12,6 +12,7 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: (cmd: string, args?: never) => 
 import MessageItem from './MessageItem.svelte'
 import { app, ui } from '../lib/store.svelte'
 import { emptyState } from '../lib/state'
+import { flushMicrotasks } from '../lib/testSettle'
 
 const user = (id: string, name: string) => ({ id, username: name, display_name: name, avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } })
 const msg = (over: Partial<Message> = {}): Message => ({
@@ -42,7 +43,6 @@ const menu = () => document.querySelector<HTMLElement>('[role=menu][aria-label="
 const items = () => [...(menu()?.querySelectorAll<HTMLButtonElement>(':scope > [role=menuitem]') ?? [])].map((b) => b.textContent?.trim())
 const item = (label: string) => [...(menu()?.querySelectorAll<HTMLButtonElement>(':scope > [role=menuitem]') ?? [])].find((b) => b.textContent?.trim() === label)
 const hover = (el: Element) => { el.dispatchEvent(new Event('pointerover', { bubbles: true })); el.dispatchEvent(new Event('pointerenter')); flushSync() }
-async function settle() { for (let i = 0; i < 5; i++) await Promise.resolve(); await tick() }
 
 beforeEach(() => {
   invoke.mockReset(); invoke.mockResolvedValue(undefined)
@@ -60,7 +60,7 @@ describe('Add to quotes (#316)', () => {
     more()
     expect(items()).toEqual(['Pin message', 'Remind me', 'Save message', 'Forward…', 'Add to quotes'])
     item('Add to quotes')!.click()
-    await settle()
+    await flushMicrotasks(6)
     const call = invoke.mock.calls.find(([c]) => c === 'post_quote')!
     expect(call[1]).toMatchObject({
       channelId: 'Q1',
@@ -78,7 +78,7 @@ describe('Add to quotes (#316)', () => {
     const choices = [...flyout.querySelectorAll<HTMLButtonElement>('[role=menuitem]')]
     expect(choices.map((b) => b.textContent?.trim())).toEqual(['#quotes', '#old-quotes'])
     choices[1].click()
-    await settle()
+    await flushMicrotasks(6)
     expect(invoke.mock.calls.find(([c]) => c === 'post_quote')![1]).toMatchObject({ channelId: 'Q2' })
   })
 
@@ -87,7 +87,7 @@ describe('Add to quotes (#316)', () => {
     show(msg(), { extra: [quotes('Q1', 'quotes', 1)] })
     more()
     item('Add to quotes')!.click()
-    await settle()
+    await flushMicrotasks(6)
     expect(document.body.textContent).toContain('a line must be 1-4000 characters')
   })
 

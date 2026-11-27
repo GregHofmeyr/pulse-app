@@ -2,7 +2,7 @@
 // F1 race weekends (#386) in the chat: the weekend card (the race, sessions in your own time, the countdown, podium
 // predictions with the dice, live picks from others, closed at lights out), the lights-out line, the results card,
 // the scores card, and the cards folded to one line with "F1 race weekends" off.
-import { flushSync, mount, tick, unmount } from 'svelte'
+import { flushSync, mount, unmount } from 'svelte'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { F1Card as Card } from '../lib/protocol/F1Card'
 import type { F1Prediction } from '../lib/protocol/F1Prediction'
@@ -16,6 +16,7 @@ import { chooseOption, selectOptions, selectValue } from './selectHarness'
 import { app } from '../lib/store.svelte'
 import { applyEvent, emptyState } from '../lib/state'
 import { f1Prefs } from '../lib/f1Prefs.svelte'
+import { flushMicrotasks } from '../lib/testSettle'
 
 const NOW = Date.parse('2030-03-14T07:00:00.000Z')
 const RACE = '2030-03-15T07:00:00.000Z'
@@ -60,7 +61,6 @@ function reshow() {
   document.body.innerHTML = ''
   mountShown(app.state.messages.C1[0])
 }
-async function settle() { for (let i = 0; i < 5; i++) await Promise.resolve(); await tick(); flushSync() }
 const selects = () => [...document.querySelectorAll<HTMLButtonElement>('.predict .select .trigger')]
 const button = (text: string) => [...document.querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent!.trim() === text || b.getAttribute('aria-label') === text)
 function choose(i: number, value: string) {
@@ -106,7 +106,7 @@ describe('the race weekend card', () => {
     choose(2, 'speed_c')
     expect(button('Save picks')!.disabled).toBe(false)
     button('Save picks')!.click()
-    await settle()
+    await flushMicrotasks(6)
     expect(invoke).toHaveBeenCalledWith('f1_predict', { messageId: 'M1', picks: ['racer_a', 'rider_b', 'speed_c'] })
     reshow()
     expect(document.querySelector('.who li.me .name')!.textContent).toBe('alex')
@@ -122,7 +122,7 @@ describe('the race weekend card', () => {
     // and Clear mine takes it back
     invoke.mockResolvedValue([])
     button('Clear mine')!.click()
-    await settle()
+    await flushMicrotasks(6)
     expect(invoke).toHaveBeenLastCalledWith('f1_predict', { messageId: 'M1', picks: null })
   })
 

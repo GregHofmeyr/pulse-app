@@ -16,6 +16,7 @@ import { downloads } from '../lib/downloads.svelte'
 import { app } from '../lib/store.svelte'
 import { emptyState } from '../lib/state'
 import { motion, setAnimateMode } from '../lib/animate.svelte'
+import { nextTask } from '../lib/testSettle'
 
 const A = 'a'.repeat(64)
 const S = 'b'.repeat(64)
@@ -54,7 +55,6 @@ function show(m: Message, props: Record<string, unknown> = {}, meId = 'U1') {
   cmp = mount(QuoteItem, { target: document.body, props: { message: app.state.messages['C1'][0], serverId: 'S1', meId, nameOf, onReply, onEdit, onDelete, onOpenReplies, ...props } })
   flushSync()
 }
-const settle = () => new Promise((r) => setTimeout(r, 0))
 const calls = (cmd: string) => invoke.mock.calls.filter((c) => c[0] === cmd)
 const items = () => [...document.querySelectorAll<HTMLElement>('[role=menuitem]')].map((e) => e.textContent?.trim())
 const item = (t: string) => [...document.querySelectorAll<HTMLElement>('[role=menuitem]')].find((e) => e.textContent?.trim() === t)!
@@ -92,7 +92,7 @@ describe('QuoteItem', () => {
     const edited = document.querySelector<HTMLButtonElement>('button.edited')!
     expect(edited.textContent).toBe('(edited)')
     edited.click(); flushSync()
-    await settle(); flushSync()
+    await nextTask(); flushSync()
     expect(calls('message_edits')).toEqual([['message_edits', { messageId: 'M1' }]])
     const dialog = document.querySelector<HTMLElement>('[role=dialog][aria-label="Edit history"]')!
     expect(dialog.textContent).toContain('“hi” — sam')
@@ -148,7 +148,7 @@ describe('QuoteItem', () => {
     openMenu(0)
     expect(items()).toContain('Give quote award')
     item('Give quote award').click()
-    await settle()
+    await nextTask()
     expect(calls('give_award')).toEqual([['give_award', { lineId: 'L1' }]])
     expect(document.querySelector('[role=menu]')).toBeNull()
     openMenu(1)
@@ -169,7 +169,7 @@ describe('QuoteItem', () => {
       // not on my own line
       expect(awardBtn(1)).toBeNull()
       b.click()
-      await settle()
+      await nextTask()
       expect(calls('give_award')).toEqual([['give_award', { lineId: 'L1' }]])
       expect(document.querySelector('[role=menu]')).toBeNull()
     })
@@ -181,7 +181,7 @@ describe('QuoteItem', () => {
       expect(b.dataset.tip).toBe('Take back award')
       expect(b.getAttribute('aria-pressed')).toBe('true')
       b.click()
-      await settle()
+      await nextTask()
       expect(calls('take_award')).toEqual([['take_award', { lineId: 'L1' }]])
     })
 
@@ -201,7 +201,7 @@ describe('QuoteItem', () => {
       expect(b.dataset.tip).toBe('Copy quote')
       expect(b.querySelector('svg')?.getAttribute('width')).toBe('16')
       b.click()
-      await settle(); flushSync()
+      await nextTask(); flushSync()
       expect(navigator.clipboard.writeText).toHaveBeenCalledWith(whole)
       // the tooltip says it worked
       expect(b.dataset.tip).toBe('Copied')
@@ -211,7 +211,7 @@ describe('QuoteItem', () => {
       show(two())
       openMenu(1)
       item('Copy quote').click()
-      await settle()
+      await nextTask()
       expect(navigator.clipboard.writeText).toHaveBeenCalledWith(whole)
     })
 
@@ -226,10 +226,9 @@ describe('QuoteItem', () => {
     openMenu(0)
     expect(items()).not.toContain('Give quote award')
     item('Take back award').click()
-    await settle()
+    await nextTask()
     expect(calls('take_award')).toEqual([['take_award', { lineId: 'L1' }]])
   })
-
 
   it('the menu opens from the keyboard and right-click', () => {
     show(quote([line()]))
@@ -269,12 +268,12 @@ describe('QuoteItem', () => {
     show(quote([line()]))
     expect(document.querySelector('button[aria-label="Edit"]')).toBeTruthy()
     document.querySelector<HTMLButtonElement>('button[aria-label="Delete"]')!.click()
-    await settle()
+    await nextTask()
     // asked first: a quote takes its replies with it
     expect(onDelete).not.toHaveBeenCalled()
     expect(document.querySelector('[role="alertdialog"]')?.textContent).toContain('Delete this quote? Its replies go too.')
     document.querySelector<HTMLButtonElement>('[role="alertdialog"] button.go')!.click()
-    await settle()
+    await nextTask()
     expect(onDelete).toHaveBeenCalled()
     document.querySelector<HTMLButtonElement>('button[aria-label="Edit"]')!.click()
     expect(onEdit).toHaveBeenCalled()
@@ -311,7 +310,7 @@ describe('QuoteItem', () => {
     show(quote([line()]))
     // Shift+click: no question
     document.querySelector<HTMLButtonElement>('button[aria-label="Delete"]')!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, shiftKey: true }))
-    await settle(); flushSync()
+    await nextTask(); flushSync()
     expect(document.querySelector('[role=alert]')).toBeTruthy()
   })
 
@@ -329,7 +328,7 @@ describe('QuoteItem', () => {
     const opts = [...document.querySelectorAll<HTMLElement>('[role=menuitem]')]
     expect(opts.map((o) => o.textContent?.trim())).toEqual(['sam'])
     opts[0].click()
-    await settle()
+    await nextTask()
     expect(calls('link_speaker')).toEqual([['link_speaker', { serverId: 'S1', body: { name: 'Grandpa', user_id: 'U2' } }]])
   })
 
@@ -341,7 +340,7 @@ describe('QuoteItem', () => {
     expect(items()).toContain('Unlink')
     expect(items()).not.toContain('Link to a member…')
     item('Unlink').click()
-    await settle()
+    await nextTask()
     expect(calls('unlink_speaker')).toEqual([['unlink_speaker', { serverId: 'S1', nameKey: 'grandpa x' }]])
     openMenu(1)
     expect(items()).not.toContain('Unlink')
@@ -434,7 +433,7 @@ describe('QuoteItem', () => {
       openMenu(0)
       expect(items()).toContain('Save image')
       item('Save image').click()
-      await settle()
+      await nextTask()
       // the full file, never its still frame
       expect(saves()).toEqual([{ hash: A, caption: 'a cat' }])
       expect(document.querySelector('[role=menu]')).toBeNull()
@@ -456,7 +455,7 @@ describe('QuoteItem', () => {
       expect(b.classList.contains('clip-dl')).toBe(true)
       expect(b.dataset.tip).toBe('Save image')
       b.click()
-      await settle()
+      await nextTask()
       expect(saves()).toEqual([{ hash: A, caption: '' }])
       // it isn't the open-full-size button's click
       flushSync()
@@ -467,10 +466,10 @@ describe('QuoteItem', () => {
       invoke.mockImplementation(async (cmd: string) => (cmd === 'save_image' ? '/home/kim/Pictures/a cat.webp' : undefined))
       show(quote([pic()]))
       overlay()!.click()
-      await settle(); flushSync()
+      await nextTask(); flushSync()
       const folder = document.querySelector<HTMLButtonElement>('.line button.clip-dl-folder')!
       folder.click()
-      await settle()
+      await nextTask()
       expect(calls('reveal_path').map((c) => c[1])).toEqual([{ path: '/home/kim/Pictures/a cat.webp' }])
       // it isn't the open-full-size button's click
       flushSync()
@@ -482,7 +481,7 @@ describe('QuoteItem', () => {
       document.querySelector<HTMLElement>('.line .picbtn')!.click(); flushSync()
       const b = document.querySelector<HTMLButtonElement>('[role=dialog] button[aria-label="Save image"]')!
       b.click()
-      await settle()
+      await nextTask()
       expect(saves()).toEqual([{ hash: A, caption: 'a cat' }])
       // saving doesn't close the view
       flushSync()
@@ -494,18 +493,18 @@ describe('QuoteItem', () => {
       invoke.mockImplementation(async (cmd: string) => (cmd === 'save_image' ? answer() : undefined))
       show(quote([pic()]))
       overlay()!.click()
-      await settle(); flushSync()
+      await nextTask(); flushSync()
       expect(document.querySelector('[role=alert]')).toBeNull()
       answer = async () => Promise.reject("couldn't save the file: denied")
       overlay()!.click()
-      await settle(); flushSync()
+      await nextTask(); flushSync()
       expect(document.querySelector('[role=alert]')?.textContent).toBe("couldn't save the file: denied")
       let finish: (v: string | null) => void = () => {}
       answer = () => new Promise((r) => (finish = r))
       const before = saves().length
       overlay()!.click()
       overlay()!.click()
-      await settle()
+      await nextTask()
       expect(saves().length).toBe(before + 1)
       finish('/home/kim/Pictures/a cat.webp')
     })
@@ -520,7 +519,7 @@ describe('QuoteItem', () => {
     show(quote([line({ text: null, media: { hash: P, still_hash: null, width: 10, height: 10 }, caption: 'a cat' })]))
     openMenu(0)
     item('Copy quote').click()
-    await settle()
+    await nextTask()
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith('[image] a cat — sam')
   })
 
@@ -650,7 +649,7 @@ describe('pins on a quote (#257)', () => {
     flushSync()
     expect(lengths().map((b) => b.textContent?.trim())).toEqual(['1 hour', '1 day', '1 week', 'Forever'])
     lengths()[1].click()
-    await settle()
+    await nextTask()
     expect(calls('pin_message')).toEqual([['pin_message', { messageId: 'M1', duration: 'day' }]])
     expect(document.querySelector('[role=menu]')).toBeNull()
   })
@@ -663,7 +662,7 @@ describe('pins on a quote (#257)', () => {
     openMenu(0)
     expect(items()).not.toContain('Pin quote')
     item('Unpin quote').click()
-    await settle()
+    await nextTask()
     expect(calls('unpin_message')).toEqual([['unpin_message', { messageId: 'M1' }]])
   })
 
@@ -687,7 +686,7 @@ describe('pins on a quote (#257)', () => {
     item('Pin quote').dispatchEvent(new Event('pointerenter'))
     flushSync()
     lengths()[0].click()
-    await settle()
+    await nextTask()
     flushSync()
     expect(document.querySelector('[role=alert]')?.textContent).toBe('This chat already has 50 pins. Unpin something first.')
     expect(calls('list_pins')).toEqual([['list_pins', { channelId: 'C1' }]])

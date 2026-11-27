@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 // Remind me (#300) in a message's menu: a flyout of times (and Custom…, a day and a time) that sets a reminder. Also
 // (#412) in a quote's line menu, a clip's menu, and the menu of a reply in a quote's or clip's thread.
-import { flushSync, mount, tick, unmount } from 'svelte'
+import { flushSync, mount, unmount } from 'svelte'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Message } from '../lib/protocol/Message'
 import type { MessageReminder } from '../lib/protocol/MessageReminder'
@@ -15,6 +15,7 @@ import ClipActions from './ClipActions.svelte'
 import { app, ui } from '../lib/store.svelte'
 import { emptyState } from '../lib/state'
 import { reminders } from '../lib/reminders.svelte'
+import { flushMicrotasks } from '../lib/testSettle'
 
 const NOW = new Date(2026, 10, 16, 10, 0).getTime()
 const msg = (over: Partial<Message> = {}): Message => ({
@@ -47,7 +48,6 @@ const item = (label: string) => items().find((b) => b.textContent?.trim() === la
 const flyout = () => document.querySelector<HTMLElement>('[role=menu][aria-label="Remind me about this"]')
 const choices = () => [...(flyout()?.querySelectorAll<HTMLButtonElement>('[role=menuitem]') ?? [])]
 const hover = (el: Element) => { el.dispatchEvent(new Event('pointerover', { bubbles: true })); el.dispatchEvent(new Event('pointerenter')); flushSync() }
-async function settle() { for (let i = 0; i < 5; i++) await Promise.resolve(); await tick() }
 
 beforeEach(() => {
   vi.useFakeTimers()
@@ -71,7 +71,7 @@ describe('Remind me (#300)', () => {
     hover(item('Remind me')!)
     expect(choices().map((b) => b.textContent?.trim())).toEqual(['In 20 minutes', 'In 1 hour', 'In 3 hours', 'Tomorrow at 09:00', 'Custom…'])
     choices()[0].click()
-    await settle()
+    await flushMicrotasks(6)
     expect(invoke).toHaveBeenCalledWith('create_reminder', { messageId: 'M1', remindAt: new Date(NOW + 20 * 60_000).toISOString() })
     expect(reminders.list.map((r) => r.id)).toEqual(['R1'])
     expect(ui.notice).toBe("I'll remind you today at 10:20")
@@ -95,7 +95,7 @@ describe('Remind me (#300)', () => {
     const set = [...picker.querySelectorAll('button')].find((b) => b.textContent === 'Set reminder')!
     expect(set.disabled).toBe(false)
     set.click()
-    await settle()
+    await flushMicrotasks(6)
     expect(invoke).toHaveBeenCalledWith('create_reminder', { messageId: 'M1', remindAt: new Date(2026, 10, 20, 18, 30).toISOString() })
     flushSync()
     expect(document.querySelector('[aria-label="Remind me about this"][role=dialog]')).toBeNull()
@@ -138,7 +138,7 @@ describe('Remind me in quotes and clips (#412)', () => {
     expect(items().map((b) => b.textContent?.trim())).toEqual(['Remind me'])
     hover(item('Remind me')!)
     choices()[1].click()
-    await settle()
+    await flushMicrotasks(6)
     expect(invoke).toHaveBeenCalledWith('create_reminder', { messageId: 'M1', remindAt: new Date(NOW + 60 * 60_000).toISOString() })
   })
 
@@ -158,7 +158,7 @@ describe('Remind me in quotes and clips (#412)', () => {
     const remind = [...document.querySelectorAll<HTMLButtonElement>('[role=menu][aria-label="Line actions"] > [role=menuitem]')].find((b) => b.textContent?.trim() === 'Remind me')!
     hover(remind)
     choices()[0].click()
-    await settle()
+    await flushMicrotasks(6)
     expect(invoke).toHaveBeenCalledWith('create_reminder', { messageId: 'M1', remindAt: new Date(NOW + 20 * 60_000).toISOString() })
     expect(ui.notice).toBe("I'll remind you today at 10:20")
   })

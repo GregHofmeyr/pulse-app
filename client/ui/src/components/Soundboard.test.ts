@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { flushSync, mount, tick, unmount } from 'svelte'
+import { flushSync, mount, unmount } from 'svelte'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Server } from '../lib/protocol/Server'
 import type { Sound } from '../lib/protocol/Sound'
@@ -16,6 +16,7 @@ import { emptyState } from '../lib/state'
 import { soundboard } from '../lib/soundboard.svelte'
 import { voice } from '../lib/voice.svelte'
 import type { User } from '../lib/protocol/User'
+import { settle } from '../lib/testSettle'
 
 const servers: Server[] = [
   { id: 'S1', name: 'Main', icon_hash: null },
@@ -35,10 +36,6 @@ const onTidy = vi.fn()
 
 function open(memberOf = new Set(['S1'])) {
   cmp = mount(Soundboard, { target: document.body, props: { onClose, onAdd, onEdit, onTidy, servers, memberOf } })
-  flushSync()
-}
-const settle = async () => {
-  for (let i = 0; i < 4; i++) await tick()
   flushSync()
 }
 const tiles = () => [...document.querySelectorAll<HTMLElement>('.tile')]
@@ -106,7 +103,7 @@ describe('Soundboard', () => {
   it('rail_click_scrolls_to_the_section', async () => {
     open(new Set(['S1', 'S2']))
     ;(document.querySelector('[data-rail="server:S2"]') as HTMLElement).click()
-    await settle()
+    await settle(4)
     expect(scrollIntoView).toHaveBeenCalled()
     expect(scrollIntoView.mock.contexts.at(-1)).toBe(document.querySelector('[data-section="server:S2"]'))
   })
@@ -114,7 +111,7 @@ describe('Soundboard', () => {
   it('tile_click_plays_to_the_call_and_not_locally', async () => {
     open()
     tile('Bruh').click()
-    await settle()
+    await settle(4)
     expect(calls('play_sound_to_call')).toEqual([['play_sound_to_call', { id: 'b' }]])
     expect(calls('soundboard_play')).toHaveLength(0)
   })
@@ -146,11 +143,11 @@ describe('Soundboard', () => {
     open()
     invoke.mockRejectedValueOnce('slow down a little, then try again')
     tile('Bruh').click()
-    await settle()
+    await settle(4)
     expect(document.querySelector('[role=alert]')).toBeNull()
     invoke.mockRejectedValueOnce("You're not in a call")
     tile('Bruh').click()
-    await settle()
+    await settle(4)
     expect(document.querySelector('[role=alert]')?.textContent).toBe("You're not in a call")
   })
 
@@ -159,11 +156,11 @@ describe('Soundboard', () => {
     open()
     invoke.mockRejectedValueOnce({ message: 'slow down a little, then try again', code: 'rate_limited' })
     tile('Bruh').click()
-    await settle()
+    await settle(4)
     expect(document.querySelector('[role=alert]')).toBeNull()
     invoke.mockRejectedValueOnce({ message: "You're not in a call", code: null })
     tile('Bruh').click()
-    await settle()
+    await settle(4)
     expect(document.querySelector('[role=alert]')?.textContent).toBe("You're not in a call")
   })
 
@@ -176,14 +173,14 @@ describe('Soundboard', () => {
     try {
       open()
       tile('Bruh').click()
-      await settle()
+      await settle(4)
       expect(calls('play_sound_to_call')).toEqual([
         ['play_sound_to_call', { id: 'b', hearNow: { hash: 'hb', callsPercent: 80, soundboardPercent: 150, soundPercent: 120, player: 'U9' } }],
       ])
       // the soundboard turned off: nothing heard here, as its echo wouldn't be
       soundboard.volume_pct = 0
       tile('Bruh').click()
-      await settle()
+      await settle(4)
       expect(calls('play_sound_to_call').at(-1)).toEqual(['play_sound_to_call', { id: 'b' }])
     } finally {
       voice.channelId = null
@@ -194,7 +191,7 @@ describe('Soundboard', () => {
     open()
     invoke.mockRejectedValueOnce('not found')
     tile('Bruh').click()
-    await settle()
+    await settle(4)
     expect(document.querySelector('[role=alert]')).toBeNull()
   })
 
@@ -205,7 +202,7 @@ describe('Soundboard', () => {
     flushSync()
     invoke.mockRejectedValueOnce('not found')
     ;[...document.querySelectorAll<HTMLElement>('[role=alertdialog] button')].find((b) => b.textContent === 'Delete')!.click()
-    await settle()
+    await settle(4)
     expect(calls('delete_sound')).toHaveLength(1)
     expect(document.querySelector('[role=alert]')).toBeNull()
   })
@@ -214,7 +211,7 @@ describe('Soundboard', () => {
     soundboard.volume_pct = 0
     open()
     tile('Bruh').querySelector<HTMLElement>('.preview')!.click()
-    await settle()
+    await settle(4)
     expect(calls('soundboard_play')).toEqual([['soundboard_play', { hash: 'hb', callsPercent: 100, soundboardPercent: 100, soundPercent: 120, output: null, soundId: null, player: null }]])
   })
 
@@ -223,7 +220,7 @@ describe('Soundboard', () => {
     soundboard.volume_pct = 150
     open()
     tile('Bruh').querySelector<HTMLElement>('.preview')!.click()
-    await settle()
+    await settle(4)
     expect(calls('soundboard_play')).toEqual([['soundboard_play', { hash: 'hb', callsPercent: 60, soundboardPercent: 150, soundPercent: 120, output: null, soundId: null, player: null }]])
   })
 
@@ -231,7 +228,7 @@ describe('Soundboard', () => {
     open()
     expect(btn('Preview Bruh')).not.toBeNull()
     tile('Bruh').querySelector<HTMLElement>('.preview')!.click()
-    await settle()
+    await settle(4)
     expect(calls('soundboard_play')).toEqual([['soundboard_play', { hash: 'hb', callsPercent: 100, soundboardPercent: 100, soundPercent: 120, output: null, soundId: null, player: null }]])
     expect(calls('play_sound_to_call')).toHaveLength(0)
   })
@@ -240,7 +237,7 @@ describe('Soundboard', () => {
     open()
     rightClick(tile('Bruh'))
     menuItem('Favourite')!.click()
-    await settle()
+    await settle(4)
     expect(calls('set_sound_favourite')).toEqual([['set_sound_favourite', { id: 'b', on: true }]])
   })
 
@@ -249,7 +246,7 @@ describe('Soundboard', () => {
     open()
     rightClick(document.querySelector('[data-section="server:S1"]')!.querySelectorAll('.tile')[1])
     menuItem('Unfavourite')!.click()
-    await settle()
+    await settle(4)
     expect(calls('set_sound_favourite')).toEqual([['set_sound_favourite', { id: 'b', on: false }]])
   })
 
@@ -265,7 +262,7 @@ describe('Soundboard', () => {
       rightClick(tile('Drumroll'))
       expect(menuItem('Clear my join sound')).toBeUndefined()
       menuItem('Set as my join sound')!.click()
-      await settle()
+      await settle(4)
       expect(calls('set_join_sound')).toEqual([['set_join_sound', { serverId: 'S2', soundId: 'd' }]])
     })
 
@@ -276,7 +273,7 @@ describe('Soundboard', () => {
       rightClick(tile('Bruh'))
       expect(menuItem('Set as my join sound')).toBeUndefined()
       menuItem('Clear my join sound')!.click()
-      await settle()
+      await settle(4)
       expect(calls('set_join_sound')).toEqual([['set_join_sound', { serverId: 'S1', soundId: null }]])
       // another sound of that server still offers Set (it replaces the current one)
       rightClick(tile('Airhorn'))
@@ -309,7 +306,7 @@ describe('Soundboard', () => {
     const ask = document.querySelector('[role=alertdialog]')!
     expect(ask.textContent).toContain('Delete Bruh?')
     ;[...ask.querySelectorAll('button')].find((b) => b.textContent === 'Delete')!.click()
-    await settle()
+    await settle(4)
     expect(calls('delete_sound')).toEqual([['delete_sound', { id: 'b' }]])
   })
 
@@ -319,7 +316,7 @@ describe('Soundboard', () => {
     menuItem('Delete')!.click()
     flushSync()
     ;[...document.querySelectorAll<HTMLElement>('[role=alertdialog] button')].find((b) => b.textContent === 'Cancel')!.click()
-    await settle()
+    await settle(4)
     expect(calls('delete_sound')).toHaveLength(0)
     expect(document.querySelector('[role=alertdialog]')).toBeNull()
   })

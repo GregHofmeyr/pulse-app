@@ -14,6 +14,7 @@ vi.mock('./lib/store.svelte', () => {
 })
 
 import BuildPopout from './BuildPopout.svelte'
+import { settleTimers } from './lib/testSettle'
 
 const snap = (s: Partial<BuildSnapshot> = {}): BuildSnapshot => ({
   message_id: 'M1', title: 'Bunny crit', game_name: 'The First Descendant', game_guessed: false, author_name: 'sam',
@@ -24,14 +25,9 @@ const snap = (s: Partial<BuildSnapshot> = {}): BuildSnapshot => ({
 let current: BuildSnapshot | null = snap()
 
 let cmp: ReturnType<typeof mount> | undefined
-async function flush() {
-  flushSync()
-  await vi.advanceTimersByTimeAsync(0)
-  flushSync()
-}
 const show = async () => {
   cmp = mount(BuildPopout, { target: document.body, props: {} })
-  await flush()
+  await settleTimers()
 }
 const calls = (cmd: string) => invoke.mock.calls.filter(([c]) => c === cmd).map(([, a]) => a)
 const text = () => document.body.textContent ?? ''
@@ -105,7 +101,7 @@ describe('BuildPopout', () => {
     await show()
     current = snap({ message_id: 'M2', title: 'Bleed rogue' })
     window.dispatchEvent(new Event('focus'))
-    await flush()
+    await settleTimers()
     expect(document.querySelector('.build-popout .bar .title')?.textContent).toBe('Bleed rogue')
     expect(document.querySelector('.build-view h1')?.textContent).toBe('Bleed rogue')
     expect(calls('build_window_image_urls')).toEqual([{ messageId: 'M1' }, { messageId: 'M2' }])
@@ -120,11 +116,11 @@ describe('BuildPopout', () => {
     expect(toggle.textContent?.trim()).toBe('On top')
     expect(toggle.getAttribute('aria-pressed')).toBe('true')
     toggle.click()
-    await flush()
+    await settleTimers()
     expect(calls('set_build_window_on_top')).toEqual([{ on: true }, { on: false }])
     expect(toggle.getAttribute('aria-pressed')).toBe('false')
     toggle.click()
-    await flush()
+    await settleTimers()
     expect(calls('set_build_window_on_top')).toEqual([{ on: true }, { on: false }, { on: true }])
     expect(toggle.getAttribute('aria-pressed')).toBe('true')
   })
@@ -147,7 +143,7 @@ describe('BuildPopout', () => {
     })
     const toggle = document.querySelector<HTMLButtonElement>('button.on-top')!
     toggle.click()
-    await flush()
+    await settleTimers()
     expect(toggle.getAttribute('aria-pressed')).toBe('true')
     expect(document.querySelector('.build-popout [role=alert]')?.textContent).toContain("Couldn't change that")
   })

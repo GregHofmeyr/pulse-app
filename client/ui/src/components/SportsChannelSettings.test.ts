@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 // Server settings › Sports (#385): the owner picks one of the server's text channels or none (the default); everyone
 // else reads the choice.
-import { flushSync, mount, tick, unmount } from 'svelte'
+import { flushSync, mount, unmount } from 'svelte'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const invoke = vi.fn(async (_cmd: string, _args?: unknown): Promise<unknown> => undefined)
@@ -12,13 +12,10 @@ import { chooseOption, selectLabels, selectTrigger, selectValue } from './select
 import { app } from '../lib/store.svelte'
 import { emptyState } from '../lib/state'
 import type { Channel } from '../lib/protocol/Channel'
+import { settle } from '../lib/testSettle'
 
 let cmp: ReturnType<typeof mount> | undefined
 const ch = (id: string, kind: Channel['kind'], position: number, server_id = 'S1') => ({ id, server_id, kind, name: id.toLowerCase(), position }) as unknown as Channel
-const settle = async () => {
-  for (let i = 0; i < 4; i++) await tick()
-  flushSync()
-}
 
 beforeEach(() => {
   invoke.mockReset()
@@ -43,22 +40,22 @@ function open(owner: string) {
 describe('SportsChannelSettings', () => {
   it("the owner picks among this server's text channels; none by default", async () => {
     open('U1')
-    await settle()
+    await settle(4)
     const select = selectTrigger()!
     expect(selectLabels(select)).toEqual(['None (no cards)', '#general', '#sport'])
     expect(selectValue(select)).toBe('')
     chooseOption(select, 'SPORT')
-    await settle()
+    await settle(4)
     expect(invoke).toHaveBeenCalledWith('set_sports_channel', { serverId: 'S1', channelId: 'SPORT', leagues: null })
     chooseOption(select, '')
-    await settle()
+    await settle(4)
     expect(invoke).toHaveBeenLastCalledWith('set_sports_channel', { serverId: 'S1', channelId: null, leagues: null })
   })
 
   it('anyone else reads the choice', async () => {
     invoke.mockImplementation(async (cmd: string) => (cmd === 'sports_channel' ? { channel_id: 'GENERAL', leagues: null } : undefined))
     open('U9')
-    await settle()
+    await settle(4)
     expect(selectTrigger()).toBeNull()
     expect(document.body.textContent).toContain('Cards go to #general.')
     expect(document.querySelector('[data-league]')).toBeNull()
@@ -76,27 +73,27 @@ describe('SportsChannelSettings', () => {
       return undefined
     })
     open('U1')
-    await settle()
+    await settle(4)
     const box = (l: string) => document.querySelector<HTMLInputElement>(`[data-league="${l}"]`)!
     expect(['psl', 'urc', 'epl'].map((l) => box(l).checked)).toEqual([true, true, true])
     box('psl').click()
-    await settle()
+    await settle(4)
     expect(invoke).toHaveBeenLastCalledWith('set_sports_channel', { serverId: 'S1', channelId: 'GENERAL', leagues: ['urc', 'epl'] })
     expect(box('psl').checked).toBe(false)
     box('epl').click()
-    await settle()
+    await settle(4)
     expect(invoke).toHaveBeenLastCalledWith('set_sports_channel', { serverId: 'S1', channelId: 'GENERAL', leagues: ['urc'] })
     // the last one on stays on
     expect(box('urc').disabled).toBe(true)
     box('psl').click()
-    await settle()
+    await settle(4)
     expect(invoke).toHaveBeenLastCalledWith('set_sports_channel', { serverId: 'S1', channelId: 'GENERAL', leagues: ['psl', 'urc'] })
   })
 
   it('anyone else reads a league limit', async () => {
     invoke.mockImplementation(async (cmd: string) => (cmd === 'sports_channel' ? { channel_id: 'GENERAL', leagues: ['urc'] } : undefined))
     open('U9')
-    await settle()
+    await settle(4)
     expect(document.body.textContent).toContain('Cards go to #general. Only United Rugby Championship.')
   })
 })

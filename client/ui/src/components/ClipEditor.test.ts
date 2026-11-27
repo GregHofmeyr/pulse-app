@@ -14,6 +14,7 @@ vi.mock('@tauri-apps/api/event', () => ({
 import ClipEditor from './ClipEditor.svelte'
 import { app } from '../lib/store.svelte'
 import { emptyState } from '../lib/state'
+import { nextTask } from '../lib/testSettle'
 
 type Fake = HTMLVideoElement & { _t: number; _d: number; _paused: boolean }
 
@@ -53,13 +54,12 @@ const source = (over: Partial<ClipSource> = {}): ClipSource => ({
 })
 
 let cmps: ReturnType<typeof mount>[] = []
-const settle = () => new Promise((r) => setTimeout(r, 0))
 async function show(src: ClipSource = source(), onClose = vi.fn()) {
   const target = document.createElement('div')
   document.body.append(target)
   cmps.push(mount(ClipEditor, { target, props: { source: src, channelId: 'C1', serverId: 'S1', onClose } }))
   flushSync()
-  await settle(); flushSync()
+  await nextTask(); flushSync()
   return { target, onClose }
 }
 const video = () => document.querySelector('video') as Fake
@@ -104,7 +104,7 @@ describe('ClipEditor', () => {
     flushSync()
     expect(text()).toContain('40%')
     finish('/tmp/preview.mp4')
-    await settle(); flushSync()
+    await nextTask(); flushSync()
     expect(invoke).toHaveBeenCalledWith('prepare_preview', { source: 'S-1' })
     expect(video().getAttribute('src')).toBe('asset:///tmp/preview.mp4')
   })
@@ -112,7 +112,7 @@ describe('ClipEditor', () => {
   it('a direct file the player rejects falls back to a prepared preview', async () => {
     await show()
     video().dispatchEvent(new Event('error'))
-    await settle(); flushSync()
+    await nextTask(); flushSync()
     expect(invoke).toHaveBeenCalledWith('prepare_preview', { source: 'S-1' })
     expect(video().getAttribute('src')).toBe('asset:///tmp/preview.mp4')
   })
@@ -157,7 +157,7 @@ describe('ClipEditor', () => {
     })
     await show()
     video().dispatchEvent(new Event('error'))
-    await settle(); flushSync()
+    await nextTask(); flushSync()
     expect(video().getAttribute('src')).toBe('http://127.0.0.1:4100/tmp/preview.mp4')
     video().dispatchEvent(new Event('error'))
     flushSync()
@@ -261,7 +261,7 @@ describe('ClipEditor', () => {
     caption.dispatchEvent(new Event('input', { bubbles: true }))
     flushSync()
     sendBtn().click()
-    await settle(); flushSync()
+    await nextTask(); flushSync()
     expect(invoke).toHaveBeenCalledWith('send_clip', {
       request: { source: 'S-1', channel_id: 'C1', spans: [{ start_ms: 0, end_ms: 10_000 }], preset: 'sharp', caption: 'ace', game_id: 'G1' },
     })
@@ -274,7 +274,7 @@ describe('ClipEditor', () => {
     invoke.mockImplementation(async (cmd) => { if (cmd === 'send_clip') throw 'One clip at a time.'; return undefined })
     const { onClose } = await show()
     sendBtn().click()
-    await settle(); flushSync()
+    await nextTask(); flushSync()
     expect(document.querySelector('[role=alert]')?.textContent).toContain('One clip at a time.')
     expect(onClose).not.toHaveBeenCalled()
     expect(invoke).not.toHaveBeenCalledWith('close_clip_source', expect.anything())
@@ -283,7 +283,7 @@ describe('ClipEditor', () => {
   it('closing without sending releases the source', async () => {
     const { onClose } = await show()
     btn('Close').click()
-    await settle()
+    await nextTask()
     expect(invoke).toHaveBeenCalledWith('close_clip_source', { source: 'S-1' })
     expect(invoke).not.toHaveBeenCalledWith('send_clip', expect.anything())
     expect(onClose).toHaveBeenCalledTimes(1)

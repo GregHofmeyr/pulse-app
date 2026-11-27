@@ -20,6 +20,7 @@ import { app, resetState } from '../lib/store.svelte'
 import { emptyState } from '../lib/state'
 import type { Server } from '../lib/protocol/Server'
 import type { InvitePreview } from '../lib/protocol/InvitePreview'
+import { flushMicrotasks } from '../lib/testSettle'
 
 const BN = 'b'.repeat(64)
 const ST = 'c'.repeat(64)
@@ -27,10 +28,6 @@ const alex = { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: nu
 const server = (over: Partial<Server> = {}): Server => ({ id: 'S1', name: 'Alpha', icon_hash: null, owner_id: 'U1', ...over })
 
 let cmp: ReturnType<typeof mount> | undefined
-const settle = async () => {
-  for (let i = 0; i < 6; i++) await Promise.resolve()
-  flushSync()
-}
 const calls = (cmd: string) => invoke.mock.calls.filter((c) => c[0] === cmd).map((c) => c[1])
 const button = (text: string, root: ParentNode = document) => [...root.querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent?.trim() === text)
 
@@ -145,10 +142,10 @@ describe('Server settings › Overview (#55)', () => {
     expect(document.querySelector<HTMLImageElement>('.content .server-banner img')!.src).toContain(BN)
     expect(document.querySelector<HTMLImageElement>('.content .icon img.chip')!.src).toContain(ST)
     button('Remove banner')!.click()
-    await settle()
+    await flushMicrotasks(6)
     expect(calls('set_server_banner')).toEqual([{ serverId: 'S1', hash: null }])
     button('Remove icon')!.click()
-    await settle()
+    await flushMicrotasks(6)
     expect(calls('set_server_icon')).toEqual([{ serverId: 'S1', hash: null }])
   })
 
@@ -163,13 +160,13 @@ describe('Server settings › Overview (#55)', () => {
     flushSync()
     expect(button('Save')!.disabled).toBe(false)
     button('Save')!.click()
-    await settle()
+    await flushMicrotasks(6)
     expect(calls('rename_server')).toEqual([{ serverId: 'S1', name: 'Lounge' }])
     field.value = 'Beta'
     field.dispatchEvent(new Event('input', { bubbles: true }))
     flushSync()
     field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
-    await settle()
+    await flushMicrotasks(6)
     expect(calls('rename_server')).toEqual([{ serverId: 'S1', name: 'Lounge' }, { serverId: 'S1', name: 'Beta' }])
   })
 
@@ -177,7 +174,7 @@ describe('Server settings › Overview (#55)', () => {
     handlers.set_server_banner = () => Promise.reject({ message: 'Only the server\'s owner can change its banner.' })
     openSettings(server({ banner_hash: BN }))
     button('Remove banner')!.click()
-    await settle()
+    await flushMicrotasks(6)
     expect(document.querySelector('.content [role=alert]')!.textContent).toContain('owner can change its banner')
   })
 })
@@ -190,7 +187,7 @@ describe('invite cards and the Invite dialog', () => {
     cmp = mount(ServerInviteCard, { target: document.body, props: { code: p.code } })
     flushSync()
     FakeIntersectionObserver.set(document.querySelector('[data-server-invite]')!, true)
-    await settle()
+    await flushMicrotasks(6)
   }
 
   it("the card shows the server's banner (its still until it may move)", async () => {

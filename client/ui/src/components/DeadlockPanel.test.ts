@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 // A member's Deadlock section on their profile card (#390): rank, last match, heroes, games with you and best duo;
 // nothing at all when the server has nothing (or can't be asked).
-import { flushSync, mount, tick, unmount } from 'svelte'
+import { flushSync, mount, unmount } from 'svelte'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const invoke = vi.fn(async (_cmd: string, _args?: unknown): Promise<unknown> => undefined)
@@ -10,13 +10,10 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: (cmd: string, args?: never) => 
 import DeadlockPanel from './DeadlockPanel.svelte'
 import { app } from '../lib/store.svelte'
 import { emptyState } from '../lib/state'
+import { settle } from '../lib/testSettle'
 
 const HASH = 'ef'.repeat(32)
 let cmp: ReturnType<typeof mount> | undefined
-const settle = async () => {
-  for (let i = 0; i < 4; i++) await tick()
-  flushSync()
-}
 beforeEach(() => {
   invoke.mockReset()
   app.state = { ...emptyState(), people: { U3: { user: { id: 'U3', username: 'kim', display_name: '', avatar_hash: null } } } as never }
@@ -41,7 +38,7 @@ describe('DeadlockPanel', () => {
       best_duo: { user_id: 'U3', matches: 5, wins: 4 },
     })
     open()
-    await settle()
+    await settle(4)
     expect(invoke).toHaveBeenCalledWith('deadlock_profile', { serverId: 'S1', userId: 'U1' })
     expect(document.querySelector('[data-deadlock-rank]')!.textContent).toContain('Oracle 3')
     expect(document.querySelector('[data-deadlock-last]')!.textContent).toContain('Infernus · 12 / 3 / 8 · Win')
@@ -53,12 +50,12 @@ describe('DeadlockPanel', () => {
   it('nothing to show, or no answer: no section', async () => {
     invoke.mockResolvedValue({ rank: null, last_match: null, heroes: [], with_you: null, best_duo: null })
     open()
-    await settle()
+    await settle(4)
     expect(document.querySelector('[data-deadlock-panel]')).toBeNull()
     unmount(cmp!)
     invoke.mockRejectedValue(new Error('older server'))
     open()
-    await settle()
+    await settle(4)
     expect(document.querySelector('[data-deadlock-panel]')).toBeNull()
   })
 })

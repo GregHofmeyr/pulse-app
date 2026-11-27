@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 // A message's files (#57): the image grid and viewer, players, file cards and the run-programs warning.
-import { flushSync, mount, tick, unmount } from 'svelte'
+import { flushSync, mount, unmount } from 'svelte'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const calls: { cmd: string; args: unknown }[] = []
@@ -21,6 +21,7 @@ import { forgetAttachmentLinks } from '../lib/attachmentLinks'
 import { downloads } from '../lib/downloads.svelte'
 import type { Attachment } from '../lib/protocol/Attachment'
 import type { Message } from '../lib/protocol/Message'
+import { settle } from '../lib/testSettle'
 
 let current: Attachment[] = []
 let saveAnswer: () => Promise<string | null> = async () => '/home/kim/Downloads/report.pdf'
@@ -36,10 +37,6 @@ let cmp: ReturnType<typeof mount> | undefined
 function show(atts: Attachment[]) {
   current = atts
   cmp = mount(MessageFiles, { target: document.body, props: { message: message(atts) } })
-  flushSync()
-}
-const settle = async () => {
-  for (let i = 0; i < 5; i++) await tick()
   flushSync()
 }
 

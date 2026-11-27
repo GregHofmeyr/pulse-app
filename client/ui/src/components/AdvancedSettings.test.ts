@@ -6,13 +6,13 @@ const invoke = vi.fn(async (_cmd: string, _args?: unknown): Promise<unknown> => 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (cmd: string, args?: never) => invoke(cmd, args) }))
 
 import AdvancedSettings from './AdvancedSettings.svelte'
+import { nextTask } from '../lib/testSettle'
 
 let cmp: ReturnType<typeof mount> | undefined
 const show = () => {
   cmp = mount(AdvancedSettings, { target: document.body })
   flushSync()
 }
-const settle = () => new Promise((r) => setTimeout(r, 0))
 const calls = (cmd: string) => invoke.mock.calls.filter((c) => c[0] === cmd)
 const button = (t: string) => [...document.querySelectorAll('button')].find((b) => b.textContent === t)
 const click = (t: string) => { button(t)!.click(); flushSync() }
@@ -46,7 +46,7 @@ describe('AdvancedSettings: sign out other devices', () => {
     show()
     click('Sign out all other devices')
     click('Sign out')
-    await settle(); flushSync()
+    await nextTask(); flushSync()
     expect(calls('logout_others')).toHaveLength(1)
     expect(document.body.textContent).toContain('Signed out 3 other devices')
   })
@@ -56,7 +56,7 @@ describe('AdvancedSettings: sign out other devices', () => {
     show()
     click('Sign out all other devices')
     click('Sign out')
-    await settle(); flushSync()
+    await nextTask(); flushSync()
     expect(document.body.textContent).toContain('Signed out 1 other device')
     expect(document.body.textContent).not.toContain('1 other devices')
   })
@@ -66,7 +66,7 @@ describe('AdvancedSettings: sign out other devices', () => {
     show()
     click('Sign out all other devices')
     click('Sign out')
-    await settle(); flushSync()
+    await nextTask(); flushSync()
     expect(document.body.textContent).toContain('No other devices were signed in')
   })
 
@@ -75,7 +75,7 @@ describe('AdvancedSettings: sign out other devices', () => {
     show()
     click('Sign out all other devices')
     click('Sign out')
-    await settle(); flushSync()
+    await nextTask(); flushSync()
     expect(document.querySelector('[role="alert"]')?.textContent).toContain("couldn't connect")
   })
 })
@@ -92,7 +92,7 @@ describe('AdvancedSettings: send crash reports automatically', () => {
   it('shows the saved setting (on by default)', async () => {
     answer(true)
     show()
-    await settle(); flushSync()
+    await nextTask(); flushSync()
     expect(box().checked).toBe(true)
     expect(document.body.textContent).toMatch(/asked/i) // the hint says what off means
   })
@@ -100,16 +100,16 @@ describe('AdvancedSettings: send crash reports automatically', () => {
   it('shows off when it was turned off', async () => {
     answer(false)
     show()
-    await settle(); flushSync()
+    await nextTask(); flushSync()
     expect(box().checked).toBe(false)
   })
 
   it('turning it off saves that', async () => {
     answer(true)
     show()
-    await settle(); flushSync()
+    await nextTask(); flushSync()
     box().click()
-    await settle(); flushSync()
+    await nextTask(); flushSync()
     expect(calls('set_report_settings')).toEqual([['set_report_settings', { settings: { auto_send_crashes: false } }]])
     expect(box().checked).toBe(false)
   })
@@ -121,9 +121,9 @@ describe('AdvancedSettings: send crash reports automatically', () => {
       return undefined
     })
     show()
-    await settle(); flushSync()
+    await nextTask(); flushSync()
     box().click()
-    await settle(); flushSync()
+    await nextTask(); flushSync()
     expect(box().checked).toBe(true)
     expect(document.querySelector('[role="alert"]')?.textContent).toContain('disk full')
   })

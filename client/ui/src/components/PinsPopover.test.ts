@@ -13,6 +13,7 @@ import PinsPopover from './PinsPopover.svelte'
 import { app, handleReady, resetState } from '../lib/store.svelte'
 import { applyEvent } from '../lib/state'
 import { testMe, testReady } from '../lib/testReady'
+import { flushMicrotasks } from '../lib/testSettle'
 
 const sam = { id: 'U2', username: 'sam', display_name: 'sam', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
 const NOW = Date.parse('2026-11-09T10:00:00.000Z')
@@ -32,11 +33,10 @@ const list = [
 let cmp: ReturnType<typeof mount> | undefined
 const onJump = vi.fn()
 const onClose = vi.fn()
-const settle = async () => { for (let i = 0; i < 5; i++) await Promise.resolve(); flushSync() }
 async function show() {
   cmp = mount(PinsPopover, { target: document.body, props: { channelId: 'C1', serverId: 'S1', onJump, onClose } })
   flushSync()
-  await settle()
+  await flushMicrotasks()
 }
 const rows = () => [...document.querySelectorAll<HTMLElement>('.pin')]
 const button = (row: HTMLElement, label: string) => [...row.querySelectorAll('button')].find((b) => b.textContent?.trim() === label)!
@@ -78,7 +78,7 @@ describe('PinsPopover (#178)', () => {
     button(rows()[1], 'Jump').click()
     expect(onJump).toHaveBeenCalledWith(expect.objectContaining({ id: 'M1' }))
     button(rows()[0], 'Unpin').click()
-    await settle()
+    await flushMicrotasks()
     expect(invoke).toHaveBeenCalledWith('unpin_message', { messageId: 'M2' })
   })
 
@@ -86,7 +86,7 @@ describe('PinsPopover (#178)', () => {
     await show()
     invoke.mockImplementation(async (c: string) => { if (c === 'unpin_message') throw 'nope' })
     button(rows()[0], 'Unpin').click()
-    await settle()
+    await flushMicrotasks()
     expect(document.querySelector('[role=alert]')?.textContent).toBe('nope')
   })
 
@@ -107,7 +107,7 @@ describe('PinsPopover (#178)', () => {
     invoke.mockClear()
     app.state = { ...app.state, pins: {} } // what Ready does
     flushSync()
-    await settle()
+    await flushMicrotasks()
     expect(invoke).toHaveBeenCalledWith('list_pins', { channelId: 'C1' })
     expect(rows()).toHaveLength(2)
   })
@@ -143,7 +143,7 @@ describe('PinsPopover in quotes and clips channels (#257)', () => {
     }))
     cmp = mount(PinsPopover, { target: document.body, props: { channelId, serverId: 'S1', onJump, onClose } })
     flushSync()
-    return settle()
+    return flushMicrotasks()
   }
 
   it("a quote reads as its words and who said them; Jump shows it", async () => {
@@ -182,7 +182,7 @@ describe('PinsPopover in quotes and clips channels (#257)', () => {
     button(a, 'Open').click()
     expect(onJump).toHaveBeenCalledWith(expect.objectContaining({ id: 'K2' }))
     button(b, 'Unpin').click()
-    await settle()
+    await flushMicrotasks()
     expect(invoke).toHaveBeenCalledWith('unpin_message', { messageId: 'K3' })
   })
 

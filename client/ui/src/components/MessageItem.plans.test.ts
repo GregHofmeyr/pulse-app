@@ -2,7 +2,7 @@
 // A plan in the chat (#387): the card (title, your-time when, place, note), answering (yours in the accent, again
 // takes it back), who picked what, a cancelled plan, its creator's Edit plan and Cancel plan in the message's menu,
 // Add to calendar, the forecast (only within reach, only while Plan something is on) and the reminder line.
-import { flushSync, mount, tick, unmount } from 'svelte'
+import { flushSync, mount, unmount } from 'svelte'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Message } from '../lib/protocol/Message'
 import type { Plan } from '../lib/protocol/Plan'
@@ -15,6 +15,7 @@ import { app, ui } from '../lib/store.svelte'
 import { emptyState } from '../lib/state'
 import { resetPlans } from '../lib/plans.svelte'
 import { planPrefs } from '../lib/planPrefs.svelte'
+import { flushMicrotasks } from '../lib/testSettle'
 
 const NOW = Date.parse('2026-11-16T10:00:00.000Z')
 const plan = (over: Partial<Plan> = {}): Plan => ({
@@ -56,7 +57,6 @@ function reshow(mine = false) {
 const card = () => document.querySelector<HTMLElement>('.plan')!
 const rsvp = (label: string) => [...card().querySelectorAll<HTMLButtonElement>('button.rsvp')].find((b) => b.textContent!.includes(label))!
 const menuItems = () => [...document.querySelectorAll<HTMLButtonElement>('[role=menu][aria-label="Message actions"] > [role=menuitem]')].map((b) => b.textContent!.trim())
-async function settle() { for (let i = 0; i < 5; i++) await Promise.resolve(); await tick() }
 
 beforeEach(() => {
   vi.useFakeTimers()
@@ -90,7 +90,7 @@ describe('the plan card', () => {
     show(msg(plan({ going: ['U3'] })))
     invoke.mockResolvedValueOnce(plan({ going: ['U3', 'U1'], maybe: ['U4'] }))
     rsvp('Going').click()
-    await settle()
+    await flushMicrotasks(6)
     expect(invoke).toHaveBeenCalledWith('rsvp_plan', { messageId: 'M1', rsvp: 'going' })
     reshow()
     expect(rsvp('Going').getAttribute('aria-pressed')).toBe('true')
@@ -101,7 +101,7 @@ describe('the plan card', () => {
 
     invoke.mockResolvedValueOnce(plan({ going: ['U3'] }))
     rsvp('Going').click()
-    await settle()
+    await flushMicrotasks(6)
     // the last answer sent (someone this state doesn't have is looked up meanwhile, #486)
     expect(invoke.mock.calls.filter((c) => c[0] === 'rsvp_plan').at(-1)).toEqual(['rsvp_plan', { messageId: 'M1', rsvp: null }])
   })
@@ -110,7 +110,7 @@ describe('the plan card', () => {
     show(msg(plan()))
     invoke.mockRejectedValueOnce('this plan was cancelled')
     rsvp('Maybe').click()
-    await settle()
+    await flushMicrotasks(6)
     expect(card().querySelector('[role=alert]')!.textContent).toBe('this plan was cancelled')
   })
 
@@ -141,7 +141,7 @@ describe('the plan card', () => {
     show(msg(plan()))
     invoke.mockResolvedValueOnce('/home/alex/Braai.ics')
     card().querySelector<HTMLButtonElement>('.add')!.click()
-    await settle()
+    await flushMicrotasks(6)
     expect(invoke).toHaveBeenCalledWith('save_plan_ics', { messageId: 'M1', title: "Braai at kim's" })
   })
 })
@@ -150,7 +150,7 @@ describe('the forecast', () => {
   it('within reach: asked of the server once and shown', async () => {
     invoke.mockImplementation(async (cmd: string) => (cmd === 'plan_forecast' ? { place: 'Cape Town, South Africa', date: '2026-11-20', code: 61, temp_max: 24.6, temp_min: 14.2, rain_chance: 70 } : undefined))
     show(msg(plan()))
-    await settle()
+    await flushMicrotasks(6)
     flushSync()
     expect(invoke.mock.calls.filter(([c]) => c === 'plan_forecast')).toEqual([['plan_forecast', { messageId: 'M1' }]])
     expect(card().querySelector('.forecast')!.textContent).toContain('Rain · 14°–25° · 70% chance of rain')
@@ -162,13 +162,13 @@ describe('the forecast', () => {
       return undefined
     })
     show(msg(plan()))
-    await settle()
+    await flushMicrotasks(6)
     flushSync()
     const retry = card().querySelector<HTMLButtonElement>('.forecast button.retry')!
     expect(card().querySelector('.forecast')!.textContent).toContain("Couldn't get the forecast.")
     invoke.mockImplementation(async (cmd: string) => (cmd === 'plan_forecast' ? { place: 'Cape Town, South Africa', date: '2026-11-20', code: 0, temp_max: 25, temp_min: 15, rain_chance: 0 } : undefined))
     retry.click()
-    await settle()
+    await flushMicrotasks(6)
     flushSync()
     expect(invoke.mock.calls.filter(([c]) => c === 'plan_forecast').length).toBe(2)
     expect(card().querySelector('.retry')).toBeNull()
@@ -177,14 +177,14 @@ describe('the forecast', () => {
 
   it('not for a plan beyond reach, one without a place, or with Plan something off', async () => {
     show(msg(plan({ starts_at: '2026-12-30T10:00:00.000Z' })))
-    await settle()
+    await flushMicrotasks(6)
     unmount(cmp!)
     show(msg(plan({ place: null }), { id: 'M2' }))
-    await settle()
+    await flushMicrotasks(6)
     unmount(cmp!)
     planPrefs.on = false
     show(msg(plan(), { id: 'M3' }))
-    await settle()
+    await flushMicrotasks(6)
     cmp = undefined
     expect(invoke.mock.calls.filter(([c]) => c === 'plan_forecast')).toEqual([])
   })
@@ -210,7 +210,7 @@ describe("its creator's menu", () => {
     invoke.mockResolvedValueOnce(plan({ title: 'Braai (moved)' }))
     const save = [...form.querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent === 'Save changes')!
     save.click()
-    await settle()
+    await flushMicrotasks(6)
     const call = invoke.mock.calls.find(([c]) => c === 'edit_plan')!
     expect(call[1]).toMatchObject({ messageId: 'M1', request: { title: 'Braai (moved)', starts_at: '2026-11-20T16:30:00.000Z', place: 'Cape Town', note: 'bring ice' } })
     expect((call[1] as { request: object }).request).not.toHaveProperty('ends_at')
@@ -222,7 +222,7 @@ describe("its creator's menu", () => {
     flushSync()
     invoke.mockResolvedValueOnce(plan({ cancelled_at: '2026-11-16T10:00:00.000Z' }))
     ;[...document.querySelectorAll<HTMLButtonElement>('[role=menuitem]')].find((b) => b.textContent!.trim() === 'Cancel plan')!.click()
-    await settle()
+    await flushMicrotasks(6)
     expect(invoke).toHaveBeenCalledWith('cancel_plan', { messageId: 'M1' })
     expect(app.state.messages.C1[0].plan!.cancelled_at).toBe('2026-11-16T10:00:00.000Z')
     unmount(cmp!)

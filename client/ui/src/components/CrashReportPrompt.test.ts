@@ -15,13 +15,13 @@ vi.mock('@tauri-apps/api/event', () => ({
 
 import CrashReportPrompt from './CrashReportPrompt.svelte'
 import { resetState, startListening, ui } from '../lib/store.svelte'
+import { settleTask } from '../lib/testSettle'
 
 let cmp: ReturnType<typeof mount> | undefined
 const show = () => {
   cmp = mount(CrashReportPrompt, { target: document.body })
   flushSync()
 }
-const settle = async () => { await new Promise((r) => setTimeout(r, 0)); flushSync() }
 const calls = (cmd: string) => invoke.mock.calls.filter((c) => c[0] === cmd)
 const button = (t: string) => [...document.querySelectorAll('button')].find((b) => b.textContent === t)
 const click = (t: string) => { button(t)!.click(); flushSync() }
@@ -59,7 +59,7 @@ describe('held crash report prompt', () => {
     ui.heldReport = 'crash'
     show()
     click('Send')
-    await settle()
+    await settleTask(0)
     expect(calls('send_held_report')).toHaveLength(1)
     expect(calls('discard_held_report')).toHaveLength(0)
     expect(ui.heldReport).toBeNull()
@@ -72,7 +72,7 @@ describe('held crash report prompt', () => {
     ui.heldReport = 'crash'
     show()
     click('Send')
-    await settle()
+    await settleTask(0)
     expect(ui.heldReport).toBe('crash')
     expect(document.querySelector('[role="alert"]')?.textContent).toMatch(/kept on this computer/)
     expect(button('Send')).toBeTruthy()
@@ -83,7 +83,7 @@ describe('held crash report prompt', () => {
     ui.heldReport = 'crash'
     show()
     click("Don't send")
-    await settle()
+    await settleTask(0)
     expect(calls('discard_held_report')).toHaveLength(1)
     expect(calls('send_held_report')).toHaveLength(0)
     expect(ui.heldReport).toBeNull()
