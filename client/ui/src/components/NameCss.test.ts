@@ -37,7 +37,13 @@ describe('Name CSS', () => {
 
   it('inline_names_dont_grow_the_line', () => {
     expect(body(css, '.name.flow')).toMatch(/margin-block:\s*calc\(-1 \* var\(--name-pad, \.14em\)\)/)
-    expect(readFileSync(resolve(__dirname, 'WheelLine.svelte'), 'utf8')).toMatch(/<Name [^>]*\bflow\b/)
+    // every Name mid-sentence ("X is spinning ...", "X spun ..."); the other sites are labels on a row of their own
+    // (message meta, reply, quote speaker, clip person zone, composer option) and keep their padding
+    for (const f of ['WheelLine.svelte', 'QuietSpinCard.svelte']) {
+      const names = readFileSync(resolve(__dirname, f), 'utf8').match(/<Name [^>]*>/g) ?? []
+      expect(names.length, f).toBeGreaterThan(0)
+      for (const n of names) expect(n, f).toMatch(/\bflow\b/)
+    }
   })
 
   it('a font keeps its own scale', () => {
