@@ -88,7 +88,11 @@
     e.stopPropagation()
   }
 
+  // A press on a slot that travels past the drag threshold in any direction is not a click, whether or not railDrag
+  // (x only) began a drag: the click that follows is dropped.
+  let travelled = false
   function slotPress(e: PointerEvent) {
+    travelled = false
     const el = (e.target as Element).closest?.<HTMLElement>('[data-badge]')
     slotDown = e.button === 0 && el ? { key: el.dataset.badge!, x: e.clientX, y: e.clientY } : null
   }
@@ -101,6 +105,13 @@
     if (!dragging && far(tileDown, e)) dragging = tileDown.key
     if (dragging) over = inside(e)
   }
+  function slotClick(key: string) {
+    if (travelled) {
+      travelled = false
+      return
+    }
+    toggle(key)
+  }
   function released(e: PointerEvent) {
     const s = slotDown
     const t = tileDown
@@ -108,6 +119,11 @@
     const key = dragging
     dragging = null
     over = false
+    if (s) {
+      travelled = far(s, e)
+      // the click comes right after the release; if it never does, a later one is a fresh click
+      if (travelled) setTimeout(() => (travelled = false), 0)
+    }
     // a slot pulled out of the row comes off the card (railDrag has already settled any reorder)
     if (s && far(s, e) && !inside(e) && held.has(s.key) && shown.includes(s.key)) {
       own()
@@ -143,7 +159,7 @@
           {#if key && b}
             {@const d = badgeStore.def(key)}
             <li>
-              <button type="button" class="slot" data-badge={key} aria-label="{nameOf(key)}: take off your card" data-tip="{nameOf(key)} · drag to move, click to take off" onkeydown={(e) => slotKeys(e, key)} onclick={() => toggle(key)}>
+              <button type="button" class="slot" data-badge={key} aria-label="{nameOf(key)}: take off your card" data-tip="{nameOf(key)} · drag to move, click to take off" onkeydown={(e) => slotKeys(e, key)} onclick={() => slotClick(key)}>
                 <BadgeIcon icon={d?.icon ?? '🏆'} art={d?.art} rarity={b.rarity} tier={b.tier} tiers={d?.tiers.length ?? 1} first={b.first_earner} hidden={b.hidden} size="case" label={nameOf(key)} />
               </button>
             </li>

@@ -116,6 +116,22 @@ describe('the Badges section', () => {
     expect(st.showcase).toEqual(['b', 'a'])
   })
 
+  it('a_vertical_wiggle_inside_the_row_keeps_the_badge', () => {
+    show()
+    layout()
+    const a = q('.slots [data-badge="a"]')
+    pointer('pointerdown', a, 40, 40)
+    pointer('pointermove', q('.slots'), 40, 70)
+    pointer('pointerup', q('.slots'), 40, 70)
+    click(a)
+    expect(st.showcase).toEqual(['a', 'b'])
+    // a plain click afterwards still takes it off
+    pointer('pointerdown', a, 40, 40)
+    pointer('pointerup', a, 40, 40)
+    click(a)
+    expect(st.showcase).toEqual(['b'])
+  })
+
   it('drag_out_removes', () => {
     show()
     layout()
