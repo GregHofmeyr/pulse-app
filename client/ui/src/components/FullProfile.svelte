@@ -19,6 +19,7 @@
   import { personMenuAt, type PersonMenuAt } from '../lib/participantMenu'
   import PersonMenu from './PersonMenu.svelte'
   import type { NameChange } from '../lib/protocol/NameChange'
+  import { statShown } from '../lib/cardStats'
   import { formatMemberSince, formatVoice } from '../lib/profileFormat'
   import type { CardProfile } from '../lib/protocol/CardProfile'
 
@@ -121,8 +122,8 @@
         <section class="board">
           <h2>Stats</h2>
           <dl>
-            <div><dt>Voice</dt><dd>{formatVoice(stats.voice_seconds)}</dd></div>
-            <div><dt>Member since</dt><dd>{formatMemberSince(stats.member_since)}</dd></div>
+            {#if statShown(stats.shown, 'voice')}<div><dt>Voice</dt><dd>{formatVoice(stats.voice_seconds)}</dd></div>{/if}
+            {#if statShown(stats.shown, 'member_since')}<div><dt>Member since</dt><dd>{formatMemberSince(stats.member_since)}</dd></div>{/if}
             {#if stats.top_reaction}
               {@const key = stats.top_reaction}
               {@const c = key.startsWith('custom:') ? customOf(key) : undefined}

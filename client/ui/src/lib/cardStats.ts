@@ -13,3 +13,6 @@ export const CARD_STAT_LABELS: Record<CardStat, string> = {
 
 /** The shown stats, in order: no choice (null) is all of them in the server's order. */
 export const shownStats = (cardStats: string[] | null): string[] => (cardStats ?? [...CARD_STATS])
+
+/** Whether a stat line shows: the owner's `shown` keys when the server sends them, else every line. */
+export const statShown = (shown: readonly string[] | null | undefined, key: string): boolean => !shown || shown.includes(key)
