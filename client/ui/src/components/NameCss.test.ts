@@ -24,6 +24,16 @@ describe('Name CSS', () => {
     expect(body(css, ".name[data-fx]")).not.toMatch(/overflow/)
   })
 
+  it('interactive_names_keep_their_vertical_room', () => {
+    const b = body(css, 'button.name')
+    expect(b).not.toMatch(/(^|[;\s])padding:/)
+    expect(b).not.toMatch(/(^|[;\s])margin:/)
+    expect(b).not.toMatch(/padding-block/)
+    expect(b).not.toMatch(/margin-block/)
+    expect(b).toMatch(/padding-inline:\s*0/)
+    expect(b).toMatch(/margin-inline:\s*0/)
+  })
+
   it('tall_fonts_get_more_room', () => {
     const tall = NAME_FONTS.filter((f) => f.tall)
     expect(tall.map((f) => f.key)).toEqual(expect.arrayContaining(['pacifico', 'kaushan-script', 'caveat', 'cormorant-garamond']))

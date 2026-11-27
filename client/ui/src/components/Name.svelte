@@ -59,7 +59,7 @@
   /* line height in the card's own em: still the parent's 1.4 */
   .name.flow { margin-block: calc(-1 * var(--name-pad, .14em)); }
   .name.card { font-size: calc(1.15em * var(--name-scale, 1)); line-height: calc(1.4em / (1.15 * var(--name-scale, 1))); }
-  button.name { background: none; border: 0; padding: 0; margin: 0; font-family: inherit; font-weight: inherit; color: inherit; cursor: pointer; text-align: left; }
+  button.name { background: none; border: 0; padding-inline: 0; margin-inline: 0; font-family: inherit; font-weight: inherit; color: inherit; cursor: pointer; text-align: left; }
   button.name:hover { text-decoration: underline; }
 
   /* ---- Name effects (#468): a still look everywhere; the moving one plays on hover, or with .fx-play (the editor,
