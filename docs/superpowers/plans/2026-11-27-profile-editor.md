@@ -9,8 +9,9 @@ anywhere.
 **Architecture:**
 - The draft, upload and save logic in `ProfileSettings.svelte` moves into one state module that the new editor
   shell and its sections share. The UI splits into focused components under `client/ui/src/components/profileEditor/`.
-- Card stats is the only server change: one nullable column, an additive request field and an additive card field,
-  with the server leaving hidden stats out of what others receive.
+- Card stats is the only server change: one nullable column, an additive request field and an additive
+  `ProfileStats.shown` field. For a hidden stat the server sends a neutral value to others, so no real value leaks
+  and old clients still parse the profile.
 
 **Tech Stack:** Svelte 5 (runes), Vitest + Testing Library, Tauri 2 client; Rust axum + SQLite (sqlx) server;
 `pulse-protocol` with ts-rs bindings (`just gen-types`).
@@ -358,25 +359,31 @@ the new files). Server: `server/migrations/0087_card_stats.sql`, `server/src/pro
 
 **Files:**
 - Create: `server/migrations/0087_card_stats.sql`
-- Modify: `protocol/src/rest.rs` (`CardProfile`, `UpdateProfileRequest`, `ProfileStats`),
+- Modify: `protocol/src/rest.rs` (`UpdateProfileRequest`, `ProfileStats`),
   `server/src/profiles/mod.rs` (`load_profile`, the update parsing near `ring_key`),
   `server/src/profiles/routes.rs` (the `UPDATE users` statement), `server/src/blocks.rs` (the emptied profile),
   `deploy/README.md`
-- Test: `server/tests/profiles.rs`
+- Test: `server/tests/profiles.rs`, plus a protocol test in `protocol/src/rest.rs` (`#[cfg(test)]`)
 
 **Interfaces:**
 - Produces:
   - `pub const CARD_STATS: [&str; 4] = ["member_since", "voice", "steam_completion", "steam_recent"]` in
     `server/src/profiles/mod.rs`, with a literal copy in the client test.
-  - `CardProfile.stats: Option<Vec<String>>`: shown keys in order; `None` means the default (all, in that order).
-    `#[serde(default, skip_serializing_if = "Option::is_none")]`, `#[ts(optional)]`.
-  - `UpdateProfileRequest.card_stats: Option<Vec<String>>`: absent keeps the current setting. A list equal to the
-    default stores NULL. Unknown or duplicate keys are rejected with "Unknown card stat." or "A card stat can be
-    listed once.".
-  - `ProfileStats.voice_seconds: Option<u64>` and `member_since: Option<String>`, both
-    `#[serde(default, skip_serializing_if = "Option::is_none")]`. The server leaves out hidden ones when
-    `viewer != user`. Steam fields become `None` when hidden.
-  - Migration: `ALTER TABLE users ADD COLUMN card_stats TEXT;` (a JSON array, NULL means the default).
+  - **`voice_seconds: u64` and `member_since: String` stay required.** The 0.2.20 client deserialises `Profile` in
+    Rust (`client/src-tauri/src/api.rs` ~2055), so omitting either would break the whole card for it.
+  - `ProfileStats.shown: Option<Vec<String>>`: the owner's chosen stats, shown keys in order.
+    `#[serde(default, skip_serializing_if = "Option::is_none")]`, `#[ts(optional)]`. Absent means today's behaviour
+    (the old server, or no setting saved).
+  - Viewing someone else (`viewer != user`): a hidden `voice` is sent as `voice_seconds: 0`, and a hidden
+    `member_since` as `member_since: ""`. Hidden Steam stats are `None`, so omitted. `shown` lists only the visible
+    keys, in order. No real value of a hidden stat leaves the server.
+  - Viewing yourself (your own profile, the one the editor loads): real values for every stat, plus `shown` as
+    your full saved setting, so the editor can toggle each one.
+  - `UpdateProfileRequest.card_stats: Option<Vec<String>>` (the shown keys in order): absent keeps the current
+    setting, and a list equal to the default (all four, in `CARD_STATS` order) stores NULL. Unknown or duplicate
+    keys are rejected with "Unknown card stat." or "A card stat can be listed once.". An empty list is allowed
+    (hide them all).
+  - Migration: `ALTER TABLE users ADD COLUMN card_stats TEXT;` (a JSON array of shown keys, NULL means the default).
 - Then run `just gen-types`.
 
 - [ ] **Step 1: Write the failing tests** in `server/tests/profiles.rs`:
@@ -384,10 +391,15 @@ the new files). Server: `server/migrations/0087_card_stats.sql`, `server/src/pro
   - `save_card_stats_order_and_subset`
   - `default_list_stores_null`
   - `unknown_or_duplicate_key_rejected`
-  - `hidden_stats_left_out_for_others`: alex hides voice and member_since; sam's view has neither, and alex's own
-    view has both.
+  - `hidden_stats_neutral_for_others`: alex shows only `steam_recent`. Sam's view has `voice_seconds == 0`,
+    `member_since == ""`, no `steam_completion` and `shown == ["steam_recent"]`. Alex's own view has the real voice
+    seconds and created date, and `shown == ["steam_recent"]`.
   - `steam_stat_shown_only_while_shared_even_if_on`
   - `absent_field_keeps_setting`
+  - `old_client_shape_still_parses` (in `protocol/src/rest.rs` tests): take the server's JSON for a profile with
+    hidden stats (`voice_seconds: 0`, `member_since: ""`, `shown` present) and deserialise it into a copy of
+    today's `ProfileStats` shape (a test-local struct with only today's fields and no `deny_unknown_fields`). It
+    parses.
 - [ ] **Step 2: Run them and see them fail:** `<low-load prefix> cargo test -p pulse-server --test profiles card_stats`.
 - [ ] **Step 3: Implement**, with the rollback note in `deploy/README.md`: `ALTER TABLE users DROP COLUMN card_stats;`.
 - [ ] **Step 4: Run** the profiles tests, `cargo test -p pulse-protocol`, `just gen-types` (commit the regenerated
@@ -399,19 +411,21 @@ the new files). Server: `server/migrations/0087_card_stats.sql`, `server/src/pro
 **Files:**
 - Create: `components/profileEditor/CardStatsSection.svelte`
 - Modify: `lib/profileDraft.ts` (`Draft.cardStats: string[] | null`, `draftFrom`, `toRequest`, `previewCard`,
-  `isDirty`), `components/ProfileCard.svelte` (render stats in `card.stats` order, skip absent values)
+  `isDirty`), `components/ProfileCard.svelte` (render only `stats.shown`, in order, when present; today's rows when absent)
 - Test: `CardStatsSection.test.ts`, `lib/profileDraft.test.ts`, `ProfileCard.test.ts`
 
 **Interfaces:**
-- Consumes: Task 11's fields and `CARD_STATS` order (the literal copy in `lib/cardStats.ts`, checked against the
-  server list by a test).
+- Consumes: Task 11's `ProfileStats.shown`, `UpdateProfileRequest.card_stats` and the `CARD_STATS` order (a
+  literal copy in `lib/cardStats.ts`, checked against the server list by a test). `Draft.cardStats` comes from
+  `profile.stats.shown` (`null` when absent).
 
 - [ ] **Step 1: Write the failing tests.**
   - `rows_with_switch_and_drag_handle`
   - `toggle_and_reorder_update_card_live`
   - `toRequest_sends_card_stats_only_when_changed`
-  - `profile_card_respects_order_and_skips_missing`
-  - `old_server_without_stats_field_shows_today_default`
+  - `profile_card_renders_only_shown_in_order`: with `shown` present, only those rows render, in that order, so a
+    neutral 0 or `""` for a hidden stat never shows.
+  - `old_server_without_shown_shows_today_default`
 - [ ] **Step 2: Run them and see them fail.**
 - [ ] **Step 3: Implement** with `railDrag` (`item: 'stat'`).
 - [ ] **Step 4: Run** the tests, the whole UI suite and `pnpm check`.
@@ -421,9 +435,9 @@ the new files). Server: `server/migrations/0087_card_stats.sql`, `server/src/pro
 
 ## Spec gaps settled here
 
-- **Hidden voice and member-since stats:** these fields become optional in `ProfileStats`, so the server can truly
-  leave them out. A 0.2.20 client viewing someone who hid one may show a blank value until it updates. That's
-  accepted, because the server ships first and the clients follow the same week.
-- **Card stats keys and storage:** a JSON array in `users.card_stats`, keyed as in `CARD_STATS`.
+- **Hidden voice and member-since stats:** these stay required in the protocol (0.2.20 parses `Profile` in Rust).
+  Others get a neutral `0` or `""` plus the additive `ProfileStats.shown` list, and the new client renders only
+  `shown`. A 0.2.20 client shows "0 min" or a blank date for a hidden stat until it updates. That's accepted.
+- **Card stats keys and storage:** a JSON array of shown keys in `users.card_stats`, keyed as in `CARD_STATS`.
 - **Name clipping method:** vertical padding inside the name box, plus `overflow-clip-margin` on every name. Tall
   fonts are flagged in `lib/nameFonts.ts`, and rows switch from fixed heights to `min-height`.
