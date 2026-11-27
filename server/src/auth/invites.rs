@@ -1,5 +1,5 @@
 use pulse_protocol::ids::UserId;
-use rand::Rng;
+use rand::RngExt;
 use sqlx::{SqliteConnection, SqlitePool};
 
 const ALPHABET: &[u8] = b"abcdefghjkmnpqrstuvwxyz23456789";

@@ -4,7 +4,7 @@ use anyhow::{anyhow, bail};
 use chacha20poly1305::aead::{Aead, KeyInit, Payload};
 use chacha20poly1305::{ChaCha20Poly1305, Nonce};
 use pulse_protocol::ids::UserId;
-use rand::{Rng, RngCore};
+use rand::{Rng, RngExt};
 use sha2::{Digest, Sha256};
 use totp_rs::{Algorithm, Builder, Secret};
 

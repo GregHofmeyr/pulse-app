@@ -4,7 +4,7 @@ use argon2::password_hash::{PasswordHasher, PasswordVerifier};
 /// argon2id with library defaults (v19, m=19456, t=2, p=1, 32-byte output), 16-byte random salt.
 pub fn hash(password: &str) -> anyhow::Result<String> {
     let mut salt = [0u8; 16];
-    rand::RngCore::fill_bytes(&mut rand::rng(), &mut salt);
+    rand::Rng::fill_bytes(&mut rand::rng(), &mut salt);
     Argon2::default()
         .hash_password_with_salt(password.as_bytes(), &salt)
         .map(|h| h.to_string())

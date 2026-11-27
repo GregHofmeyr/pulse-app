@@ -14,7 +14,7 @@ use pulse_protocol::rest::{
     LoginMfaRequest, RecoveryCodesResponse, SessionResponse, TwoFactorCodeRequest,
     TwoFactorEnabledResponse, TwoFactorSetupRequest, TwoFactorSetupResponse, TwoFactorStatus,
 };
-use rand::RngCore;
+use rand::Rng;
 use sha2::{Digest, Sha256};
 use sqlx::{SqliteConnection, SqlitePool};
 

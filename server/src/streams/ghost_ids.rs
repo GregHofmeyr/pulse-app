@@ -2,7 +2,7 @@
 //! and never derived from the user id, with `#v` / `#a` for the two stream-room connections.
 
 use pulse_protocol::rest::StreamRole;
-use rand::RngCore;
+use rand::Rng;
 
 /// RFC 4648 base32, lowercase, no padding.
 pub fn base32(bytes: &[u8]) -> String {

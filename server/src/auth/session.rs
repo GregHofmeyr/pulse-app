@@ -3,7 +3,7 @@
 use base64::Engine;
 use jiff::{SignedDuration, Timestamp};
 use pulse_protocol::ids::UserId;
-use rand::RngCore;
+use rand::Rng;
 use sha2::{Digest, Sha256};
 use sqlx::{SqliteConnection, SqlitePool};
 
